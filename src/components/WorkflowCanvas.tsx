@@ -1055,6 +1055,9 @@ export function WorkflowCanvas() {
         nodeDragThreshold={5}
         zoomOnScroll={false}
         zoomOnPinch={true}
+        minZoom={0.1}
+        maxZoom={4}
+        defaultZoom={1}
         panActivationKeyCode="Space"
         onWheel={handleWheel}
         className="bg-neutral-900"
