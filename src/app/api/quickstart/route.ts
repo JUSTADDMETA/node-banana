@@ -148,11 +148,11 @@ export async function POST(request: NextRequest) {
     const startTime = Date.now();
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-3-flash-preview",
       contents: prompt,
       config: {
         temperature: 0.3, // Lower for more consistent JSON output
-        maxOutputTokens: 4096,
+        maxOutputTokens: 16384, // Increased for complex workflows with many nodes
       },
     });
 
