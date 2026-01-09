@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { GenerateRequest, GenerateResponse, ModelType, SelectedModel, ProviderType } from "@/types";
 import { GenerationInput, GenerationOutput, ProviderModel } from "@/lib/providers/types";
+import { uploadImageForUrl, shouldUseImageUrl, deleteImages } from "@/lib/images";
 
 export const maxDuration = 300; // 5 minute timeout for API calls
 export const dynamic = 'force-dynamic'; // Ensure this route is always dynamic
@@ -567,96 +568,150 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Build generation input
-      const genInput: GenerationInput = {
-        model: {
-          id: selectedModel!.modelId,
-          name: selectedModel!.displayName,
-          provider: "replicate",
-          capabilities: ["text-to-image"],
-          description: null,
-        },
-        prompt,
-        images,
-        parameters,
-      };
+      // Process images: convert large images to URLs for provider to fetch
+      const baseUrl = new URL(request.url).origin;
+      const uploadedImageIds: string[] = [];
+      const processedImages: string[] = [];
 
-      const result = await generateWithReplicate(requestId, replicateApiKey, genInput);
-
-      if (!result.success) {
-        return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: result.error || "Generation failed",
-          },
-          { status: 500 }
-        );
+      if (images && images.length > 0) {
+        for (const image of images) {
+          if (shouldUseImageUrl(image)) {
+            const { url, id } = uploadImageForUrl(image, baseUrl);
+            uploadedImageIds.push(id);
+            processedImages.push(url);
+            console.log(`[API:${requestId}] Converted large image to URL: ${url}`);
+          } else {
+            processedImages.push(image);
+            console.log(`[API:${requestId}] Using base64 directly (small image)`);
+          }
+        }
       }
 
-      // Return first output image
-      const outputImage = result.outputs?.[0]?.data;
-      if (!outputImage) {
-        return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: "No image in generation output",
+      try {
+        // Build generation input
+        const genInput: GenerationInput = {
+          model: {
+            id: selectedModel!.modelId,
+            name: selectedModel!.displayName,
+            provider: "replicate",
+            capabilities: ["text-to-image"],
+            description: null,
           },
-          { status: 500 }
-        );
-      }
+          prompt,
+          images: processedImages,
+          parameters,
+        };
 
-      return NextResponse.json<GenerateResponse>({
-        success: true,
-        image: outputImage,
-      });
+        const result = await generateWithReplicate(requestId, replicateApiKey, genInput);
+
+        if (!result.success) {
+          return NextResponse.json<GenerateResponse>(
+            {
+              success: false,
+              error: result.error || "Generation failed",
+            },
+            { status: 500 }
+          );
+        }
+
+        // Return first output image
+        const outputImage = result.outputs?.[0]?.data;
+        if (!outputImage) {
+          return NextResponse.json<GenerateResponse>(
+            {
+              success: false,
+              error: "No image in generation output",
+            },
+            { status: 500 }
+          );
+        }
+
+        return NextResponse.json<GenerateResponse>({
+          success: true,
+          image: outputImage,
+        });
+      } finally {
+        // Clean up uploaded images
+        if (uploadedImageIds.length > 0) {
+          deleteImages(uploadedImageIds);
+          console.log(`[API:${requestId}] Cleaned up ${uploadedImageIds.length} uploaded images`);
+        }
+      }
     }
 
     if (provider === "fal") {
       // Get fal.ai API key from request headers (optional - fal.ai works without key but rate limited)
       const falApiKey = request.headers.get("X-Fal-API-Key");
 
-      // Build generation input
-      const genInput: GenerationInput = {
-        model: {
-          id: selectedModel!.modelId,
-          name: selectedModel!.displayName,
-          provider: "fal",
-          capabilities: ["text-to-image"],
-          description: null,
-        },
-        prompt,
-        images,
-        parameters,
-      };
+      // Process images: convert large images to URLs for provider to fetch
+      const baseUrl = new URL(request.url).origin;
+      const uploadedImageIds: string[] = [];
+      const processedImages: string[] = [];
 
-      const result = await generateWithFal(requestId, falApiKey, genInput);
-
-      if (!result.success) {
-        return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: result.error || "Generation failed",
-          },
-          { status: 500 }
-        );
+      if (images && images.length > 0) {
+        for (const image of images) {
+          if (shouldUseImageUrl(image)) {
+            const { url, id } = uploadImageForUrl(image, baseUrl);
+            uploadedImageIds.push(id);
+            processedImages.push(url);
+            console.log(`[API:${requestId}] Converted large image to URL: ${url}`);
+          } else {
+            processedImages.push(image);
+            console.log(`[API:${requestId}] Using base64 directly (small image)`);
+          }
+        }
       }
 
-      // Return first output image
-      const outputImage = result.outputs?.[0]?.data;
-      if (!outputImage) {
-        return NextResponse.json<GenerateResponse>(
-          {
-            success: false,
-            error: "No image in generation output",
+      try {
+        // Build generation input
+        const genInput: GenerationInput = {
+          model: {
+            id: selectedModel!.modelId,
+            name: selectedModel!.displayName,
+            provider: "fal",
+            capabilities: ["text-to-image"],
+            description: null,
           },
-          { status: 500 }
-        );
-      }
+          prompt,
+          images: processedImages,
+          parameters,
+        };
 
-      return NextResponse.json<GenerateResponse>({
-        success: true,
-        image: outputImage,
-      });
+        const result = await generateWithFal(requestId, falApiKey, genInput);
+
+        if (!result.success) {
+          return NextResponse.json<GenerateResponse>(
+            {
+              success: false,
+              error: result.error || "Generation failed",
+            },
+            { status: 500 }
+          );
+        }
+
+        // Return first output image
+        const outputImage = result.outputs?.[0]?.data;
+        if (!outputImage) {
+          return NextResponse.json<GenerateResponse>(
+            {
+              success: false,
+              error: "No image in generation output",
+            },
+            { status: 500 }
+          );
+        }
+
+        return NextResponse.json<GenerateResponse>({
+          success: true,
+          image: outputImage,
+        });
+      } finally {
+        // Clean up uploaded images
+        if (uploadedImageIds.length > 0) {
+          deleteImages(uploadedImageIds);
+          console.log(`[API:${requestId}] Cleaned up ${uploadedImageIds.length} uploaded images`);
+        }
+      }
     }
 
     // Default: Use Gemini
