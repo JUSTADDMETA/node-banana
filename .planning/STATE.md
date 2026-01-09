@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-09)
 ## Current Position
 
 Phase: 3 of 6 (Generate Node Refactor)
-Plan: 0 of 3 in current phase
-Status: Ready to start Phase 3
-Last activity: 2026-01-09 - Completed 02-03-PLAN.md (Model caching)
+Plan: 1 of 3 in current phase
+Status: In progress
+Last activity: 2026-01-09 - Completed 03-01-PLAN.md (Rename NanoBanana to GenerateImage)
 
-Progress: [=================================] 33% (5/15 plans)
+Progress: [======================================] 40% (6/15 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
-- Average duration: 6 min
-- Total execution time: 0.5 hours
+- Total plans completed: 6
+- Average duration: 5.5 min
+- Total execution time: 0.55 hours
 
 **By Phase:**
 
@@ -29,9 +29,10 @@ Progress: [=================================] 33% (5/15 plans)
 |-------|-------|-------|----------|
 | 1. Provider Infrastructure | 2/2 | 14 min | 7 min |
 | 2. Model Discovery | 3/3 | 14 min | 4.7 min |
+| 3. Generate Node Refactor | 1/3 | 5 min | 5 min |
 
 **Recent Trend:**
-- Last 5 plans: 2 min, 4 min, 5 min, 5 min
+- Last 5 plans: 4 min, 5 min, 5 min, 5 min
 - Trend: stable
 
 ## Accumulated Context
@@ -53,6 +54,9 @@ Recent decisions affecting current work:
 - fal.ai category maps directly to ModelCapability (no inference)
 - 10-minute cache TTL for model lists
 - Unified API at /api/models with header-based auth
+- Provider dropdown shows Gemini always, others only if API key configured
+- Aspect ratio/resolution controls shown only for Gemini provider
+- Backward compatibility via aliases: NanoBananaNode, saveNanoBananaDefaults
 
 ### Deferred Issues
 
@@ -65,6 +69,6 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-09
-Stopped at: Completed Phase 2 (02-03-PLAN.md)
+Stopped at: Completed 03-01-PLAN.md (GenerateImageNode with provider/model selector)
 Resume file: None
-Next action: Plan Phase 3 (03-01-PLAN.md - Rename NanoBanana to Generate)
+Next action: Execute 03-02-PLAN.md (Provider-specific execution in generate API route)

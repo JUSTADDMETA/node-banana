@@ -52,7 +52,7 @@ Plans:
 **Design decision**: Separate nodes for image vs video generation (GenerateVideo added in Phase 6)
 
 Plans:
-- [ ] 03-01: Rename NanoBanana to GenerateImage, add model selector (image models only)
+- [x] 03-01: Rename NanoBanana to GenerateImage, add model selector (image models only)
 - [ ] 03-02: Provider-specific execution in generate API route
 - [ ] 03-03: Backward compatibility for existing workflows
 
@@ -98,7 +98,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Provider Infrastructure | 2/2 | Complete | 2026-01-09 |
 | 2. Model Discovery | 3/3 | Complete | 2026-01-09 |
-| 3. Generate Node Refactor | 0/3 | Not started | - |
+| 3. Generate Node Refactor | 1/3 | In progress | - |
 | 4. Model Search Dialog | 0/2 | Not started | - |
 | 5. Image URL Server | 0/2 | Not started | - |
 | 6. Video & Polish | 0/4 | Not started | - |
