@@ -276,7 +276,7 @@ export function ModelSearchDialog({
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
       onClick={handleBackdropClick}
     >
-      <div className="relative bg-neutral-800 border border-neutral-700 rounded-lg shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col mx-4">
+      <div className="relative bg-neutral-800 border border-neutral-700 rounded-lg shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col mx-4">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-700">
           <h2 className="text-lg font-semibold text-neutral-100">
