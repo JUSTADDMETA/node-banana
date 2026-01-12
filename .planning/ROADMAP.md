@@ -146,21 +146,43 @@ Plans:
 Plans:
 - [x] 11-01: Provider badges on nodes and header UI streamlining
 
-#### Phase 12: Model Improvements
+#### Phase 12: Model Improvements ✅
 
 **Goal**: Verify Replicate image models work, extend model cache TTL
 **Depends on**: Phase 11
 **Research**: Likely (Replicate API behavior verification)
 **Research topics**: Replicate image model endpoints, cache invalidation strategies
+**Plans**: 1 plan
+
+Plans:
+- [x] 12-01: Extended cache TTL, fixed isImageInput, fixed stale node data in execution
+
+#### Phase 13: Fix Duplicate Generations
+
+**Goal**: Fix image deduplication - generations folder has duplicate images due to hashing failure
+**Depends on**: Phase 12
+**Research**: Likely (investigate current hashing implementation)
+**Research topics**: Current save-generation hashing logic, why duplicates are being created
 **Plans**: TBD
 
 Plans:
-- [ ] 12-01: TBD (run /gsd:plan-phase 12 to break down)
+- [ ] 13-01: TBD (run /gsd:plan-phase 13 to break down)
+
+#### Phase 14: Fix Drag-Connect Node Creation Bugs
+
+**Goal**: Fix bugs with nodes created via drag-connect: (1) connection vanishes after selecting model from browser, (2) defaults to Gemini with missing model selector in header
+**Depends on**: Phase 13
+**Research**: Unlikely (React Flow connection state, node creation flow)
+**Research topics**: Connection state during node creation, model selection callbacks, createDefaultNodeData initialization
+**Plans**: TBD
+
+Plans:
+- [ ] 14-01: TBD (run /gsd:plan-phase 14 to break down)
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -175,4 +197,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 9. Video History | v1.1 | 1/1 | Complete | 2026-01-12 |
 | 10. Node Autosizing | v1.1 | 1/1 | Complete | 2026-01-12 |
 | 11. UI Polish | v1.1 | 1/1 | Complete | 2026-01-12 |
-| 12. Model Improvements | v1.1 | 0/? | Not started | - |
+| 12. Model Improvements | v1.1 | 1/1 | Complete | 2026-01-12 |
+| 13. Fix Duplicate Generations | v1.1 | 0/? | Not started | - |
+| 14. Fix Drag-Connect Node Creation Bugs | v1.1 | 0/? | Not started | - |

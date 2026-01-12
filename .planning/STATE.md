@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-01-09)
 
 **Core value:** Provider infrastructure that dynamically discovers models from external APIs, enabling users to access hundreds of image/video generation models without hardcoding schemas.
-**Current focus:** Phase 12 - Model Improvements
+**Current focus:** Phase 13 - Fix Duplicate Generations
 
 ## Current Position
 
-Phase: 11 of 12 (UI Polish)
+Phase: 12 of 14 (Model Improvements)
 Plan: 1 of 1 complete
 Status: Phase complete
-Last activity: 2026-01-12 - Completed 11-01-PLAN.md
+Last activity: 2026-01-12 - Completed Phase 12 fixes
 
-Progress: █████░░░░░ 42%
+Progress: ██████░░░░ 50%
 
 ## Performance Metrics
 
@@ -60,7 +60,7 @@ Recent decisions affecting current work:
 - fal.ai API key optional (works without but rate limited)
 - fal.ai auth header: "Key {apiKey}" format (not Bearer)
 - fal.ai category maps directly to ModelCapability (no inference)
-- 10-minute cache TTL for model lists
+- 1-hour cache TTL for model lists (extended from 10 min)
 - Unified API at /api/models with header-based auth
 - Provider dropdown shows Gemini always, others only if API key configured
 - Aspect ratio/resolution controls shown only for Gemini provider
@@ -86,6 +86,9 @@ Recent decisions affecting current work:
 - Node titles show only model name (no "Generate Image/Video" prefix)
 - BaseNode supports titlePrefix prop for icon prepending
 - Header aligned for saved/unsaved states with same icon layout
+- isImageInput() uses word-boundary checks (not substring) to avoid matching num_images
+- Workflow execution gets fresh node data from store (not stale captured array)
+- regenerateNode includes parameters in request body
 
 ### Deferred Issues
 
@@ -100,10 +103,12 @@ Recent decisions affecting current work:
 
 - v1.0 Multi-Provider Support shipped: 6 phases (Phase 1-6), 15 plans
 - Milestone v1.1 Improvements created: 6 phases (Phase 7-12), improvements and polish
+- Phase 13 added: Fix duplicate generations (hashing failure investigation)
+- Phase 14 added: Fix drag-connect node creation bugs (consolidated from two phases)
 
 ## Session Continuity
 
 Last session: 2026-01-12
-Stopped at: Phase 11 UI Polish completed
+Stopped at: Phase 12 Model Improvements completed
 Resume file: None
-Next action: Plan Phase 12 (Model Improvements)
+Next action: Plan Phase 13 (Fix Duplicate Generations)

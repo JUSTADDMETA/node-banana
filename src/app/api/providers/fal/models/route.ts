@@ -105,18 +105,12 @@ type ModelsResponse = ModelsSuccessResponse | ModelsErrorResponse;
 export async function GET(
   request: NextRequest
 ): Promise<NextResponse<ModelsResponse>> {
-  const requestId = Math.random().toString(36).substring(7);
-  console.log(`[fal.ai:${requestId}] Models request started`);
-
   // Get optional API key from header or query param
   const apiKey =
     request.headers.get("X-API-Key") ||
     request.nextUrl.searchParams.get("api_key");
 
   const searchQuery = request.nextUrl.searchParams.get("search");
-  console.log(
-    `[fal.ai:${requestId}] ${searchQuery ? `Searching: "${searchQuery}"` : "Listing all models"}${apiKey ? " (with API key)" : " (no API key)"}`
-  );
 
   try {
     // Build URL - fetch all active models, filter client-side
@@ -136,11 +130,6 @@ export async function GET(
     const response = await fetch(url, { headers });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(
-        `[fal.ai:${requestId}] API error ${response.status}: ${errorText}`
-      );
-
       if (response.status === 401) {
         return NextResponse.json<ModelsErrorResponse>(
           {
@@ -165,14 +154,11 @@ export async function GET(
     // Filter to relevant categories and map to ProviderModel
     const models = data.models.filter(isRelevantModel).map(mapToProviderModel);
 
-    console.log(`[fal.ai:${requestId}] Returning ${models.length} models`);
-
     return NextResponse.json<ModelsSuccessResponse>({
       success: true,
       models,
     });
   } catch (error) {
-    console.error(`[fal.ai:${requestId}] Fetch error:`, error);
     return NextResponse.json<ModelsErrorResponse>(
       {
         success: false,

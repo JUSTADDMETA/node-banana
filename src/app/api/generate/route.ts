@@ -36,15 +36,8 @@ async function generateWithGemini(
   resolution?: string,
   useGoogleSearch?: boolean
 ): Promise<NextResponse<GenerateResponse>> {
-  console.log(`[API:${requestId}] Request parameters:`);
-  console.log(`[API:${requestId}]   - Model: ${model} -> ${MODEL_MAP[model]}`);
-  console.log(`[API:${requestId}]   - Images count: ${images?.length || 0}`);
-  console.log(`[API:${requestId}]   - Prompt length: ${prompt?.length || 0} chars`);
-  console.log(`[API:${requestId}]   - Aspect Ratio: ${aspectRatio || 'default'}`);
-  console.log(`[API:${requestId}]   - Resolution: ${resolution || 'default'}`);
-  console.log(`[API:${requestId}]   - Google Search: ${useGoogleSearch || false}`);
+  console.log(`[API:${requestId}] Gemini generation - Model: ${model}, Images: ${images?.length || 0}, Prompt: ${prompt?.length || 0} chars`);
 
-  console.log(`[API:${requestId}] Extracting image data...`);
   // Extract base64 data and MIME types from data URLs
   const imageData = (images || []).map((image, idx) => {
     if (image.includes("base64,")) {
@@ -52,19 +45,17 @@ async function generateWithGemini(
       // Extract MIME type from header (e.g., "data:image/png;" -> "image/png")
       const mimeMatch = header.match(/data:([^;]+)/);
       const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
-      console.log(`[API:${requestId}]   Image ${idx + 1}: ${mimeType}, ${(data.length / 1024).toFixed(2)}KB base64`);
+      console.log(`[API:${requestId}]   Image ${idx + 1}: ${mimeType}, ${(data.length / 1024).toFixed(1)}KB`);
       return { data, mimeType };
     }
-    console.log(`[API:${requestId}]   Image ${idx + 1}: No base64 header, assuming PNG, ${(image.length / 1024).toFixed(2)}KB`);
+    console.log(`[API:${requestId}]   Image ${idx + 1}: raw, ${(image.length / 1024).toFixed(1)}KB`);
     return { data: image, mimeType: "image/png" };
   });
 
   // Initialize Gemini client
-  console.log(`[API:${requestId}] Initializing Gemini client...`);
   const ai = new GoogleGenAI({ apiKey });
 
   // Build request parts array with prompt and all images
-  console.log(`[API:${requestId}] Building request parts...`);
   const requestParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
     { text: prompt },
     ...imageData.map(({ data, mimeType }) => ({
@@ -74,10 +65,8 @@ async function generateWithGemini(
       },
     })),
   ];
-  console.log(`[API:${requestId}] Request parts count: ${requestParts.length} (1 text + ${imageData.length} images)`);
 
   // Build config object based on model capabilities
-  console.log(`[API:${requestId}] Building generation config...`);
   const config: Record<string, unknown> = {
     responseModalities: ["IMAGE", "TEXT"],
   };
@@ -87,7 +76,6 @@ async function generateWithGemini(
     config.imageConfig = {
       aspectRatio,
     };
-    console.log(`[API:${requestId}]   Added aspect ratio: ${aspectRatio}`);
   }
 
   // Add resolution only for Nano Banana Pro
@@ -96,23 +84,17 @@ async function generateWithGemini(
       config.imageConfig = {};
     }
     (config.imageConfig as Record<string, unknown>).imageSize = resolution;
-    console.log(`[API:${requestId}]   Added resolution: ${resolution}`);
   }
 
   // Add tools array for Google Search (only Nano Banana Pro)
   const tools = [];
   if (model === "nano-banana-pro" && useGoogleSearch) {
     tools.push({ googleSearch: {} });
-    console.log(`[API:${requestId}]   Added Google Search tool`);
   }
 
-  console.log(`[API:${requestId}] Final config:`, JSON.stringify(config, null, 2));
-  if (tools.length > 0) {
-    console.log(`[API:${requestId}] Tools:`, JSON.stringify(tools, null, 2));
-  }
+  console.log(`[API:${requestId}] Config: ${JSON.stringify(config)}`);
 
   // Make request to Gemini
-  console.log(`[API:${requestId}] Calling Gemini API...`);
   const geminiStartTime = Date.now();
 
   const response = await ai.models.generateContent({
@@ -128,16 +110,13 @@ async function generateWithGemini(
   });
 
   const geminiDuration = Date.now() - geminiStartTime;
-  console.log(`[API:${requestId}] Gemini API call completed in ${geminiDuration}ms`);
+  console.log(`[API:${requestId}] Gemini API completed in ${geminiDuration}ms`);
 
   // Extract image from response
-  console.log(`[API:${requestId}] Processing response...`);
   const candidates = response.candidates;
-  console.log(`[API:${requestId}] Candidates count: ${candidates?.length || 0}`);
 
   if (!candidates || candidates.length === 0) {
-    console.error(`[API:${requestId}] No candidates in response`);
-    console.error(`[API:${requestId}] Full response:`, JSON.stringify(response, null, 2));
+    console.error(`[API:${requestId}] No candidates in Gemini response`);
     return NextResponse.json<GenerateResponse>(
       {
         success: false,
@@ -148,11 +127,10 @@ async function generateWithGemini(
   }
 
   const parts = candidates[0].content?.parts;
-  console.log(`[API:${requestId}] Parts count in first candidate: ${parts?.length || 0}`);
+  console.log(`[API:${requestId}] Response parts: ${parts?.length || 0}`);
 
   if (!parts) {
-    console.error(`[API:${requestId}] No parts in candidate content`);
-    console.error(`[API:${requestId}] Candidate:`, JSON.stringify(candidates[0], null, 2));
+    console.error(`[API:${requestId}] No parts in Gemini candidate content`);
     return NextResponse.json<GenerateResponse>(
       {
         success: false,
@@ -162,51 +140,40 @@ async function generateWithGemini(
     );
   }
 
-  // Log all parts
-  parts.forEach((part, idx) => {
-    const partKeys = Object.keys(part);
-    console.log(`[API:${requestId}] Part ${idx + 1}: ${partKeys.join(', ')}`);
-  });
-
   // Find image part in response
   for (const part of parts) {
     if (part.inlineData && part.inlineData.data) {
       const mimeType = part.inlineData.mimeType || "image/png";
       const imgData = part.inlineData.data;
-      const imageSizeKB = (imgData.length / 1024).toFixed(2);
-      console.log(`[API:${requestId}] Found image in response: ${mimeType}, ${imageSizeKB}KB base64`);
+      const imageSizeKB = (imgData.length / 1024).toFixed(1);
+
+      console.log(`[API:${requestId}] Output image: ${mimeType}, ${imageSizeKB}KB`);
 
       const dataUrl = `data:${mimeType};base64,${imgData}`;
-      const dataUrlSizeKB = (dataUrl.length / 1024).toFixed(2);
-      console.log(`[API:${requestId}] Data URL size: ${dataUrlSizeKB}KB`);
 
       const responsePayload = { success: true, image: dataUrl };
       const responseSize = JSON.stringify(responsePayload).length;
       const responseSizeMB = (responseSize / (1024 * 1024)).toFixed(2);
-      console.log(`[API:${requestId}] Total response payload size: ${responseSizeMB}MB`);
 
       if (responseSize > 4.5 * 1024 * 1024) {
-        console.warn(`[API:${requestId}] Response size (${responseSizeMB}MB) is approaching Next.js 5MB limit!`);
+        console.warn(`[API:${requestId}] Response size (${responseSizeMB}MB) approaching Next.js 5MB limit`);
       }
 
-      console.log(`[API:${requestId}] SUCCESS - Returning image`);
+      console.log(`[API:${requestId}] SUCCESS - Returning ${responseSizeMB}MB payload`);
 
       // Create response with explicit headers to handle large payloads
       const resp = NextResponse.json<GenerateResponse>(responsePayload);
       resp.headers.set('Content-Type', 'application/json');
       resp.headers.set('Content-Length', responseSize.toString());
 
-      console.log(`[API:${requestId}] Response headers set, returning...`);
       return resp;
     }
   }
 
   // If no image found, check for text error
-  console.warn(`[API:${requestId}] No image found in parts, checking for text...`);
   for (const part of parts) {
     if (part.text) {
-      console.error(`[API:${requestId}] Model returned text instead of image`);
-      console.error(`[API:${requestId}] Text preview: "${part.text.substring(0, 200)}"`);
+      console.error(`[API:${requestId}] Gemini returned text instead of image: ${part.text.substring(0, 100)}`);
       return NextResponse.json<GenerateResponse>(
         {
           success: false,
@@ -217,8 +184,7 @@ async function generateWithGemini(
     }
   }
 
-  console.error(`[API:${requestId}] No image or text found in response`);
-  console.error(`[API:${requestId}] All parts:`, JSON.stringify(parts, null, 2));
+  console.error(`[API:${requestId}] No image or text found in Gemini response`);
   return NextResponse.json<GenerateResponse>(
     {
       success: false,
@@ -237,7 +203,7 @@ const INPUT_PATTERNS: Record<string, string[]> = {
   negativePrompt: ["negative_prompt", "negative", "neg_prompt", "negative_text"],
 
   // Image inputs
-  image: ["image_url", "image", "first_frame", "start_image", "init_image",
+  image: ["image_url", "image_urls", "image", "first_frame", "start_image", "init_image",
           "reference_image", "input_image", "source_image", "img", "photo"],
 
   // Video/media settings
@@ -264,6 +230,8 @@ const INPUT_PATTERNS: Record<string, string[]> = {
 interface InputMapping {
   // Maps our generic names to model-specific parameter names
   paramMap: Record<string, string>;
+  // Track which params expect array types
+  arrayParams: Set<string>;
 }
 
 /**
@@ -272,8 +240,9 @@ interface InputMapping {
  */
 function getInputMappingFromSchema(schema: Record<string, unknown> | undefined): InputMapping {
   const paramMap: Record<string, string> = {};
+  const arrayParams = new Set<string>();
 
-  if (!schema) return { paramMap };
+  if (!schema) return { paramMap, arrayParams };
 
   try {
     // Navigate to input schema properties
@@ -282,25 +251,36 @@ function getInputMappingFromSchema(schema: Record<string, unknown> | undefined):
     const input = schemas?.Input as Record<string, unknown> | undefined;
     const properties = input?.properties as Record<string, unknown> | undefined;
 
-    if (!properties) return { paramMap };
+    if (!properties) return { paramMap, arrayParams };
 
     const propertyNames = Object.keys(properties);
 
     // For each input type pattern, find the matching schema property
     for (const [genericName, patterns] of Object.entries(INPUT_PATTERNS)) {
       for (const pattern of patterns) {
+        let matchedParam: string | null = null;
+
         // Check for exact match first
         if (properties[pattern]) {
-          paramMap[genericName] = pattern;
-          break;
+          matchedParam = pattern;
+        } else {
+          // Check for case-insensitive partial match
+          const match = propertyNames.find(name =>
+            name.toLowerCase().includes(pattern.toLowerCase()) ||
+            pattern.toLowerCase().includes(name.toLowerCase())
+          );
+          if (match) {
+            matchedParam = match;
+          }
         }
-        // Check for case-insensitive partial match
-        const match = propertyNames.find(name =>
-          name.toLowerCase().includes(pattern.toLowerCase()) ||
-          pattern.toLowerCase().includes(name.toLowerCase())
-        );
-        if (match) {
-          paramMap[genericName] = match;
+
+        if (matchedParam) {
+          paramMap[genericName] = matchedParam;
+          // Check if this property expects an array type
+          const property = properties[matchedParam] as Record<string, unknown>;
+          if (property?.type === "array") {
+            arrayParams.add(genericName);
+          }
           break;
         }
       }
@@ -309,7 +289,7 @@ function getInputMappingFromSchema(schema: Record<string, unknown> | undefined):
     // Schema parsing failed
   }
 
-  return { paramMap };
+  return { paramMap, arrayParams };
 }
 
 /**
@@ -320,10 +300,7 @@ async function generateWithReplicate(
   apiKey: string,
   input: GenerationInput
 ): Promise<GenerationOutput> {
-  console.log(`[API:${requestId}] Generating with Replicate...`);
-  console.log(`[API:${requestId}]   - Model: ${input.model.id}`);
-  console.log(`[API:${requestId}]   - Prompt length: ${input.prompt.length} chars`);
-  console.log(`[API:${requestId}]   - Images count: ${input.images?.length || 0}`);
+  console.log(`[API:${requestId}] Replicate generation - Model: ${input.model.id}, Images: ${input.images?.length || 0}, Prompt: ${input.prompt.length} chars`);
 
   const REPLICATE_API_BASE = "https://api.replicate.com/v1";
 
@@ -359,6 +336,7 @@ async function generateWithReplicate(
   }
 
   const hasDynamicInputs = input.dynamicInputs && Object.keys(input.dynamicInputs).length > 0;
+  console.log(`[API:${requestId}] Model version: ${version}, Dynamic inputs: ${hasDynamicInputs ? Object.keys(input.dynamicInputs!).join(", ") : "none"}`);
 
   // Build input for the prediction
   const predictionInput: Record<string, unknown> = {
@@ -368,47 +346,37 @@ async function generateWithReplicate(
   // Add dynamic inputs if provided (these come from schema-mapped connections)
   if (hasDynamicInputs) {
     Object.assign(predictionInput, input.dynamicInputs);
-    console.log(`[API:${requestId}] Using dynamic inputs:`, Object.keys(input.dynamicInputs!).join(", "));
   } else {
     // Fallback: use schema to map generic input names to model-specific parameter names
     const schema = modelData.latest_version?.openapi_schema as Record<string, unknown> | undefined;
-    const { paramMap } = getInputMappingFromSchema(schema);
-    console.log(`[API:${requestId}] Schema parameter mapping:`, JSON.stringify(paramMap));
+    const { paramMap, arrayParams } = getInputMappingFromSchema(schema);
 
     // Map prompt input
     if (input.prompt) {
       const promptParam = paramMap.prompt || "prompt";
       predictionInput[promptParam] = input.prompt;
-      console.log(`[API:${requestId}] Added prompt as '${promptParam}'`);
     }
 
-    // Map image input
+    // Map image input - use array or string format based on schema
     if (input.images && input.images.length > 0) {
       const imageParam = paramMap.image || "image";
-      predictionInput[imageParam] = input.images[0];
-      console.log(`[API:${requestId}] Added image as '${imageParam}' (${input.images[0].substring(0, 50)}...)`);
+      if (arrayParams.has("image")) {
+        predictionInput[imageParam] = input.images;
+      } else {
+        predictionInput[imageParam] = input.images[0];
+      }
     }
 
     // Map any parameters that might need renaming
     if (input.parameters) {
       for (const [key, value] of Object.entries(input.parameters)) {
-        // Check if this parameter has a schema mapping
         const mappedKey = paramMap[key] || key;
-        if (mappedKey !== key) {
-          console.log(`[API:${requestId}] Mapped parameter '${key}' → '${mappedKey}'`);
-        }
         predictionInput[mappedKey] = value;
       }
     }
   }
 
-  // Log parameters being passed
-  if (input.parameters && Object.keys(input.parameters).length > 0) {
-    console.log(`[API:${requestId}] Custom parameters:`, JSON.stringify(input.parameters));
-  }
-
   // Create a prediction
-  console.log(`[API:${requestId}] Creating Replicate prediction...`);
   const createResponse = await fetch(`${REPLICATE_API_BASE}/predictions`, {
     method: "POST",
     headers: {
@@ -446,6 +414,7 @@ async function generateWithReplicate(
   }
 
   const prediction = await createResponse.json();
+  console.log(`[API:${requestId}] Prediction created: ${prediction.id}`);
 
   // Poll for completion
   const maxWaitTime = 5 * 60 * 1000; // 5 minutes
@@ -453,6 +422,7 @@ async function generateWithReplicate(
   const startTime = Date.now();
 
   let currentPrediction = prediction;
+  let lastStatus = "";
 
   while (
     currentPrediction.status !== "succeeded" &&
@@ -485,12 +455,14 @@ async function generateWithReplicate(
     }
 
     currentPrediction = await pollResponse.json();
-    console.log(`[API:${requestId}] Prediction status: ${currentPrediction.status}`);
+    if (currentPrediction.status !== lastStatus) {
+      console.log(`[API:${requestId}] Prediction status: ${currentPrediction.status}`);
+      lastStatus = currentPrediction.status;
+    }
   }
 
   if (currentPrediction.status === "failed") {
     const failureReason = currentPrediction.error || "Prediction failed";
-    console.error(`[API:${requestId}] Replicate prediction failed: ${failureReason}`);
     return {
       success: false,
       error: `${input.model.name}: ${failureReason}`,
@@ -525,7 +497,7 @@ async function generateWithReplicate(
 
   // Fetch the first output and convert to base64
   const mediaUrl = outputUrls[0];
-  console.log(`[API:${requestId}] Fetching output from: ${mediaUrl}`);
+  console.log(`[API:${requestId}] Fetching output from: ${mediaUrl.substring(0, 80)}...`);
   const mediaResponse = await fetch(mediaUrl);
 
   if (!mediaResponse.ok) {
@@ -543,14 +515,11 @@ async function generateWithReplicate(
   const mediaSizeBytes = mediaArrayBuffer.byteLength;
   const mediaSizeMB = mediaSizeBytes / (1024 * 1024);
 
-  // Log warning for large files
-  if (mediaSizeMB > 10) {
-    console.warn(`[API:${requestId}] Large output file: ${mediaSizeMB.toFixed(2)}MB`);
-  }
+  console.log(`[API:${requestId}] Output: ${contentType}, ${mediaSizeMB.toFixed(2)}MB`);
 
   // For very large videos (>20MB), return URL directly instead of base64
   if (isVideo && mediaSizeMB > 20) {
-    console.log(`[API:${requestId}] Replicate video generation successful (URL only, too large for base64)`);
+    console.log(`[API:${requestId}] SUCCESS - Returning URL for large video`);
     return {
       success: true,
       outputs: [
@@ -564,8 +533,8 @@ async function generateWithReplicate(
   }
 
   const mediaBase64 = Buffer.from(mediaArrayBuffer).toString("base64");
+  console.log(`[API:${requestId}] SUCCESS - Returning ${isVideo ? "video" : "image"}`);
 
-  console.log(`[API:${requestId}] Replicate ${isVideo ? "video" : "image"} generation successful`);
   return {
     success: true,
     outputs: [
@@ -580,51 +549,98 @@ async function generateWithReplicate(
 
 /**
  * Fetch fal.ai model schema and extract input parameter mappings
+ * Uses the Model Search API with OpenAPI expansion (same as /api/models/[modelId])
  */
-async function getFalInputMapping(modelId: string): Promise<InputMapping> {
+async function getFalInputMapping(modelId: string, apiKey: string | null): Promise<InputMapping> {
   const paramMap: Record<string, string> = {};
+  const arrayParams = new Set<string>();
 
   try {
-    // fal.ai OpenAPI schema endpoint
-    const schemaResponse = await fetch(`https://fal.run/${modelId}/openapi.json`);
-    if (!schemaResponse.ok) return { paramMap };
+    // Use fal.ai Model Search API with OpenAPI expansion
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+      headers["Authorization"] = `Key ${apiKey}`;
+    }
 
-    const schema = await schemaResponse.json();
+    const url = `https://api.fal.ai/v1/models?endpoint_id=${encodeURIComponent(modelId)}&expand=openapi-3.0`;
+    const response = await fetch(url, { headers });
 
-    // Navigate to input schema properties
-    const components = schema.components as Record<string, unknown> | undefined;
-    const schemas = components?.schemas as Record<string, unknown> | undefined;
-    const input = schemas?.Input as Record<string, unknown> | undefined;
-    const properties = input?.properties as Record<string, unknown> | undefined;
+    if (!response.ok) {
+      return { paramMap, arrayParams };
+    }
 
-    if (!properties) return { paramMap };
+    const data = await response.json();
+    const modelData = data.models?.[0];
+    if (!modelData?.openapi) {
+      return { paramMap, arrayParams };
+    }
 
-    const propertyNames = Object.keys(properties);
+    // Extract input schema from OpenAPI spec (same logic as /api/models/[modelId])
+    const spec = modelData.openapi;
+    let inputSchema: Record<string, unknown> | null = null;
 
-    // For each input type pattern, find the matching schema property
-    for (const [genericName, patterns] of Object.entries(INPUT_PATTERNS)) {
-      for (const pattern of patterns) {
-        // Check for exact match first
-        if (properties[pattern]) {
-          paramMap[genericName] = pattern;
+    for (const pathObj of Object.values(spec.paths || {})) {
+      const postOp = (pathObj as Record<string, unknown>)?.post as Record<string, unknown> | undefined;
+      const reqBody = postOp?.requestBody as Record<string, unknown> | undefined;
+      const content = reqBody?.content as Record<string, Record<string, unknown>> | undefined;
+      const jsonContent = content?.["application/json"];
+
+      if (jsonContent?.schema) {
+        const schema = jsonContent.schema as Record<string, unknown>;
+        if (schema.$ref && typeof schema.$ref === "string") {
+          const refPath = schema.$ref.replace("#/components/schemas/", "");
+          inputSchema = spec.components?.schemas?.[refPath] as Record<string, unknown>;
+          break;
+        } else if (schema.properties) {
+          inputSchema = schema;
           break;
         }
-        // Check for case-insensitive partial match
-        const match = propertyNames.find(name =>
-          name.toLowerCase().includes(pattern.toLowerCase()) ||
-          pattern.toLowerCase().includes(name.toLowerCase())
-        );
-        if (match) {
-          paramMap[genericName] = match;
+      }
+    }
+
+    if (!inputSchema) {
+      return { paramMap, arrayParams };
+    }
+
+    const properties = inputSchema.properties as Record<string, unknown> | undefined;
+    if (!properties) return { paramMap, arrayParams };
+
+    // Match properties to INPUT_PATTERNS and detect array types
+    const propertyNames = Object.keys(properties);
+    for (const [genericName, patterns] of Object.entries(INPUT_PATTERNS)) {
+      for (const pattern of patterns) {
+        let matchedParam: string | null = null;
+
+        // Check for exact match first
+        if (properties[pattern]) {
+          matchedParam = pattern;
+        } else {
+          // Check for case-insensitive partial match
+          const match = propertyNames.find(name =>
+            name.toLowerCase().includes(pattern.toLowerCase()) ||
+            pattern.toLowerCase().includes(name.toLowerCase())
+          );
+          if (match) {
+            matchedParam = match;
+          }
+        }
+
+        if (matchedParam) {
+          paramMap[genericName] = matchedParam;
+          // Check if this property expects an array type
+          const property = properties[matchedParam] as Record<string, unknown>;
+          if (property?.type === "array") {
+            arrayParams.add(genericName);
+          }
           break;
         }
       }
     }
   } catch {
-    // Schema fetch failed
+    // Schema parsing failed - continue with empty mapping
   }
 
-  return { paramMap };
+  return { paramMap, arrayParams };
 }
 
 /**
@@ -635,15 +651,12 @@ async function generateWithFal(
   apiKey: string | null,
   input: GenerationInput
 ): Promise<GenerationOutput> {
-  console.log(`[API:${requestId}] Generating with fal.ai...`);
-  console.log(`[API:${requestId}]   - Model: ${input.model.id}`);
-  console.log(`[API:${requestId}]   - Prompt length: ${input.prompt.length} chars`);
-  console.log(`[API:${requestId}]   - Images count: ${input.images?.length || 0}`);
-  console.log(`[API:${requestId}]   - Dynamic inputs: ${input.dynamicInputs ? Object.keys(input.dynamicInputs).join(", ") : "none"}`);
-  console.log(`[API:${requestId}]   - API key: ${apiKey ? "provided" : "not provided (using rate-limited access)"}`);
+  console.log(`[API:${requestId}] fal.ai generation - Model: ${input.model.id}, Images: ${input.images?.length || 0}, Prompt: ${input.prompt.length} chars`);
 
   const modelId = input.model.id;
   const hasDynamicInputs = input.dynamicInputs && Object.keys(input.dynamicInputs).length > 0;
+  console.log(`[API:${requestId}] Dynamic inputs: ${hasDynamicInputs ? Object.keys(input.dynamicInputs!).join(", ") : "none"}, API key: ${apiKey ? "yes" : "no"}`);
+
 
   // Build request body
   // If we have dynamic inputs, they take precedence (they already contain prompt, image_url, etc.)
@@ -658,39 +671,33 @@ async function generateWithFal(
     for (const [key, value] of Object.entries(input.dynamicInputs!)) {
       if (value !== null && value !== undefined && value !== '') {
         filteredInputs[key] = value;
-      } else {
-        console.log(`[API:${requestId}] Skipping empty dynamic input: ${key}`);
       }
     }
     Object.assign(requestBody, filteredInputs);
-    console.log(`[API:${requestId}] Using dynamic inputs:`, Object.keys(filteredInputs).join(", ") || "(none after filtering)");
   } else {
     // Fallback: use schema to map generic input names to model-specific parameter names
-    const { paramMap } = await getFalInputMapping(modelId);
-    console.log(`[API:${requestId}] Schema parameter mapping:`, JSON.stringify(paramMap));
+    const { paramMap, arrayParams } = await getFalInputMapping(modelId, apiKey);
 
     // Map prompt input
     if (input.prompt) {
       const promptParam = paramMap.prompt || "prompt";
       requestBody[promptParam] = input.prompt;
-      console.log(`[API:${requestId}] Added prompt as '${promptParam}'`);
     }
 
-    // Map image input
+    // Map image input - use array or string format based on schema
     if (input.images && input.images.length > 0) {
       const imageParam = paramMap.image || "image_url";
-      requestBody[imageParam] = input.images[0];
-      console.log(`[API:${requestId}] Added image as '${imageParam}' (${input.images[0].substring(0, 50)}...)`);
+      if (arrayParams.has("image")) {
+        requestBody[imageParam] = input.images;
+      } else {
+        requestBody[imageParam] = input.images[0];
+      }
     }
 
     // Map any parameters that might need renaming
     if (input.parameters) {
       for (const [key, value] of Object.entries(input.parameters)) {
-        // Check if this parameter has a schema mapping
         const mappedKey = paramMap[key] || key;
-        if (mappedKey !== key) {
-          console.log(`[API:${requestId}] Mapped parameter '${key}' → '${mappedKey}'`);
-        }
         requestBody[mappedKey] = value;
       }
     }
@@ -705,17 +712,7 @@ async function generateWithFal(
   }
 
   // POST to fal.run/{modelId}
-  console.log(`[API:${requestId}] Calling fal.ai API...`);
-  // Log the full request body (truncate large values like images)
-  const logBody = { ...requestBody };
-  for (const [key, value] of Object.entries(logBody)) {
-    if (typeof value === 'string' && value.length > 100) {
-      logBody[key] = `${value.substring(0, 100)}... (${value.length} chars)`;
-    }
-  }
-  console.log(`[API:${requestId}] Request body keys:`, Object.keys(requestBody));
-  console.log(`[API:${requestId}] Request body (truncated):`, JSON.stringify(logBody, null, 2));
-
+  console.log(`[API:${requestId}] Calling fal.ai API with inputs: ${Object.keys(requestBody).join(", ")}`);
   const response = await fetch(`https://fal.run/${modelId}`, {
     method: "POST",
     headers,
@@ -724,7 +721,6 @@ async function generateWithFal(
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[API:${requestId}] fal.ai error response (${response.status}):`, errorText);
 
     let errorDetail = errorText || `HTTP ${response.status}`;
     try {
@@ -746,10 +742,8 @@ async function generateWithFal(
       } else if (typeof errorJson.error === 'string') {
         errorDetail = errorJson.error;
       }
-      console.error(`[API:${requestId}] Parsed error detail:`, errorDetail);
     } catch {
       // Keep original text if not JSON
-      console.error(`[API:${requestId}] Error response is not JSON`);
     }
 
     // Handle rate limits
@@ -780,7 +774,6 @@ async function generateWithFal(
   if (result.video && result.video.url) {
     mediaUrl = result.video.url;
     isVideoModel = true;
-    console.log(`[API:${requestId}] Found video URL in response`);
   } else if (result.images && Array.isArray(result.images) && result.images.length > 0) {
     mediaUrl = result.images[0].url;
   } else if (result.image && result.image.url) {
@@ -791,7 +784,7 @@ async function generateWithFal(
   }
 
   if (!mediaUrl) {
-    console.error(`[API:${requestId}] No media URL found in fal.ai response:`, JSON.stringify(result, null, 2));
+    console.error(`[API:${requestId}] No media URL found in fal.ai response`);
     return {
       success: false,
       error: "No media URL in response",
@@ -799,7 +792,7 @@ async function generateWithFal(
   }
 
   // Fetch the media and convert to base64
-  console.log(`[API:${requestId}] Fetching output from: ${mediaUrl}`);
+  console.log(`[API:${requestId}] Fetching output from: ${mediaUrl.substring(0, 80)}...`);
   const mediaResponse = await fetch(mediaUrl);
 
   if (!mediaResponse.ok) {
@@ -817,14 +810,11 @@ async function generateWithFal(
   const mediaSizeBytes = mediaArrayBuffer.byteLength;
   const mediaSizeMB = mediaSizeBytes / (1024 * 1024);
 
-  // Log warning for large files
-  if (mediaSizeMB > 10) {
-    console.warn(`[API:${requestId}] Large output file: ${mediaSizeMB.toFixed(2)}MB`);
-  }
+  console.log(`[API:${requestId}] Output: ${contentType}, ${mediaSizeMB.toFixed(2)}MB`);
 
   // For very large videos (>20MB), return URL directly instead of base64
   if (isVideo && mediaSizeMB > 20) {
-    console.log(`[API:${requestId}] fal.ai video generation successful (URL only, too large for base64)`);
+    console.log(`[API:${requestId}] SUCCESS - Returning URL for large video`);
     return {
       success: true,
       outputs: [
@@ -838,8 +828,8 @@ async function generateWithFal(
   }
 
   const mediaBase64 = Buffer.from(mediaArrayBuffer).toString("base64");
+  console.log(`[API:${requestId}] SUCCESS - Returning ${isVideo ? "video" : "image"}`);
 
-  console.log(`[API:${requestId}] fal.ai ${isVideo ? "video" : "image"} generation successful`);
   return {
     success: true,
     outputs: [
@@ -855,10 +845,8 @@ async function generateWithFal(
 export async function POST(request: NextRequest) {
   const requestId = Math.random().toString(36).substring(7);
   console.log(`\n[API:${requestId}] ========== NEW GENERATE REQUEST ==========`);
-  console.log(`[API:${requestId}] Timestamp: ${new Date().toISOString()}`);
 
   try {
-    console.log(`[API:${requestId}] Parsing request body...`);
     const body: MultiProviderGenerateRequest = await request.json();
     const {
       images,
@@ -883,7 +871,6 @@ export async function POST(request: NextRequest) {
     );
 
     if (!hasPrompt && !hasImages && !hasImageInputs) {
-      console.error(`[API:${requestId}] Validation failed: missing prompt and no image inputs`);
       return NextResponse.json<GenerateResponse>(
         {
           success: false,
@@ -893,11 +880,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[API:${requestId}] Validation: hasPrompt=${hasPrompt}, hasImages=${hasImages}, hasImageInputs=${hasImageInputs}`);
-
     // Determine which provider to use
     const provider: ProviderType = selectedModel?.provider || "gemini";
-    console.log(`[API:${requestId}] Provider: ${provider}`);
+    console.log(`[API:${requestId}] Provider: ${provider}, Model: ${selectedModel?.modelId || model}`);
 
     // Route to appropriate provider
     if (provider === "replicate") {
@@ -915,9 +900,6 @@ export async function POST(request: NextRequest) {
 
       // Keep Data URIs as-is since localhost URLs won't work (provider can't reach them)
       const processedImages: string[] = images ? [...images] : [];
-      if (processedImages.length > 0) {
-        console.log(`[API:${requestId}] Keeping ${processedImages.length} image(s) as Data URIs for Replicate`);
-      }
 
       // Process dynamicInputs: filter empty values, keep Data URIs
       let processedDynamicInputs: Record<string, string> | undefined = undefined;
@@ -929,18 +911,12 @@ export async function POST(request: NextRequest) {
 
           // Skip empty/null/undefined values
           if (value === null || value === undefined || value === '') {
-            console.log(`[API:${requestId}] Skipping empty dynamic input '${key}'`);
             continue;
           }
 
           // Keep the value as-is (Data URIs work with Replicate)
           processedDynamicInputs[key] = value;
-          if (typeof value === 'string' && value.startsWith("data:image")) {
-            console.log(`[API:${requestId}] Keeping Data URI for '${key}' (${value.length} chars)`);
-          }
         }
-
-        console.log(`[API:${requestId}] Processed dynamic inputs:`, Object.keys(processedDynamicInputs).join(", ") || "(none)");
       }
 
       // Build generation input
@@ -1008,34 +984,23 @@ export async function POST(request: NextRequest) {
       // For fal.ai, keep Data URIs as-is since localhost URLs won't work
       // fal.ai accepts Data URIs directly
       const processedImages: string[] = images ? [...images] : [];
-      if (processedImages.length > 0) {
-        console.log(`[API:${requestId}] Keeping ${processedImages.length} image(s) as Data URIs for fal.ai`);
-      }
 
-      // Process dynamicInputs: filter empty values and convert large images to URLs
+      // Process dynamicInputs: filter empty values
       let processedDynamicInputs: Record<string, string> | undefined = undefined;
 
       if (dynamicInputs) {
         processedDynamicInputs = {};
-        // For fal.ai, keep Data URIs as-is since localhost URLs won't work
-        // fal.ai accepts Data URIs directly for image inputs
         for (const key of Object.keys(dynamicInputs)) {
           const value = dynamicInputs[key];
 
           // Skip empty/null/undefined values
           if (value === null || value === undefined || value === '') {
-            console.log(`[API:${requestId}] Skipping empty dynamic input '${key}'`);
             continue;
           }
 
           // Keep the value as-is (Data URIs work with fal.ai)
           processedDynamicInputs[key] = value;
-          if (typeof value === 'string' && value.startsWith("data:image")) {
-            console.log(`[API:${requestId}] Keeping Data URI for '${key}' (${value.length} chars)`);
-          }
         }
-
-        console.log(`[API:${requestId}] Processed dynamic inputs:`, Object.keys(processedDynamicInputs).join(", ") || "(none)");
       }
 
       // Build generation input
@@ -1101,7 +1066,6 @@ export async function POST(request: NextRequest) {
     const geminiApiKey = request.headers.get("X-Gemini-API-Key") || process.env.GEMINI_API_KEY;
 
     if (!geminiApiKey) {
-      console.error(`[API:${requestId}] No Gemini API key configured`);
       return NextResponse.json<GenerateResponse>(
         {
           success: false,
@@ -1122,66 +1086,30 @@ export async function POST(request: NextRequest) {
       useGoogleSearch
     );
   } catch (error) {
-    console.error(`[API:${requestId}] EXCEPTION CAUGHT IN API ROUTE`);
-    console.error(`[API:${requestId}] Error type:`, error?.constructor?.name);
-    console.error(`[API:${requestId}] Error toString:`, String(error));
-
-    // Extract detailed error information
+    // Extract error information
     let errorMessage = "Generation failed";
     let errorDetails = "";
 
     if (error instanceof Error) {
       errorMessage = error.message;
-      errorDetails = error.stack || "";
-      console.error(`[API:${requestId}] Error message:`, errorMessage);
-      console.error(`[API:${requestId}] Error stack:`, error.stack);
-
-      // Check for specific error types
       if ("cause" in error && error.cause) {
-        console.error(`[API:${requestId}] Error cause:`, error.cause);
-        errorDetails += `\nCause: ${JSON.stringify(error.cause)}`;
+        errorDetails = JSON.stringify(error.cause);
       }
     }
 
     // Try to extract more details from API errors
     if (error && typeof error === "object") {
       const apiError = error as Record<string, unknown>;
-      console.error(`[API:${requestId}] Error object keys:`, Object.keys(apiError));
-
       if (apiError.status) {
-        console.error(`[API:${requestId}] Error status:`, apiError.status);
-        errorDetails += `\nStatus: ${apiError.status}`;
+        errorDetails += ` Status: ${apiError.status}`;
       }
       if (apiError.statusText) {
-        console.error(`[API:${requestId}] Error statusText:`, apiError.statusText);
-        errorDetails += `\nStatusText: ${apiError.statusText}`;
-      }
-      if (apiError.errorDetails) {
-        console.error(`[API:${requestId}] Error errorDetails:`, apiError.errorDetails);
-        errorDetails += `\nDetails: ${JSON.stringify(apiError.errorDetails)}`;
-      }
-      if (apiError.response) {
-        try {
-          console.error(`[API:${requestId}] Error response:`, apiError.response);
-          errorDetails += `\nResponse: ${JSON.stringify(apiError.response)}`;
-        } catch {
-          errorDetails += `\nResponse: [unable to stringify]`;
-        }
-      }
-
-      // Log entire error object for debugging
-      try {
-        console.error(`[API:${requestId}] Full error object:`, JSON.stringify(apiError, null, 2));
-      } catch {
-        console.error(`[API:${requestId}] Could not stringify full error object`);
+        errorDetails += ` ${apiError.statusText}`;
       }
     }
 
-    console.error(`[API:${requestId}] Compiled error details:`, errorDetails);
-
     // Handle rate limiting
     if (errorMessage.includes("429")) {
-      console.error(`[API:${requestId}] Rate limit error detected`);
       return NextResponse.json<GenerateResponse>(
         {
           success: false,
@@ -1191,11 +1119,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.error(`[API:${requestId}] Returning 500 error response`);
+    console.error(`[API:${requestId}] Generation error: ${errorMessage}${errorDetails ? ` (${errorDetails.substring(0, 200)})` : ""}`);
     return NextResponse.json<GenerateResponse>(
       {
         success: false,
-        error: `${errorMessage}${errorDetails ? ` | Details: ${errorDetails.substring(0, 500)}` : ""}`,
+        error: errorMessage,
       },
       { status: 500 }
     );

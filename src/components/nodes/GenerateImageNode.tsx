@@ -72,23 +72,22 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
     const providers: { id: ProviderType; name: string }[] = [];
     // Gemini is always available
     providers.push({ id: "gemini", name: "Gemini" });
-    // Add other enabled providers
+    // fal.ai is always available (works without key but rate limited)
+    providers.push({ id: "fal", name: "fal.ai" });
+    // Add Replicate if configured
     if (providerSettings.providers.replicate?.enabled && providerSettings.providers.replicate?.apiKey) {
       providers.push({ id: "replicate", name: "Replicate" });
-    }
-    if (providerSettings.providers.fal?.enabled && providerSettings.providers.fal?.apiKey) {
-      providers.push({ id: "fal", name: "fal.ai" });
     }
     return providers;
   }, [providerSettings]);
 
   // Check if external providers (Replicate/Fal) are enabled
+  // fal.ai is always available (works without key but rate limited)
   const hasExternalProviders = useMemo(() => {
     const hasReplicate = providerSettings.providers.replicate?.enabled &&
                          providerSettings.providers.replicate?.apiKey;
-    const hasFal = providerSettings.providers.fal?.enabled &&
-                   providerSettings.providers.fal?.apiKey;
-    return !!(hasReplicate || hasFal);
+    // fal.ai is always available
+    return !!(hasReplicate || true);
   }, [providerSettings]);
 
   const isGeminiOnly = !hasExternalProviders;

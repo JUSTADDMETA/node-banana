@@ -5,6 +5,7 @@ import { useWorkflowStore } from "@/store/workflowStore";
 import { NodeType, ProviderType } from "@/types";
 import { useReactFlow } from "@xyflow/react";
 import { ModelSearchDialog } from "./modals/ModelSearchDialog";
+import { EnvStatusResponse } from "@/app/api/env-status/route";
 
 // Get the center of the React Flow pane in screen coordinates
 function getPaneCenter() {
@@ -184,10 +185,19 @@ export function FloatingActionBar() {
   const [runMenuOpen, setRunMenuOpen] = useState(false);
   const runMenuRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
+  const [envStatus, setEnvStatus] = useState<EnvStatusResponse | null>(null);
 
   // Defer client-only rendering to avoid hydration mismatch
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  // Fetch environment status to check for API keys in .env
+  useEffect(() => {
+    fetch("/api/env-status")
+      .then((res) => res.json())
+      .then((data: EnvStatusResponse) => setEnvStatus(data))
+      .catch(() => setEnvStatus(null));
   }, []);
 
   const { valid, errors } = validateWorkflow();
@@ -253,8 +263,8 @@ export function FloatingActionBar() {
         {/* Provider model browser icons */}
         <div className="w-px h-5 bg-neutral-600 mx-1.5" />
 
-        {/* Replicate icon - only show if API key is configured */}
-        {mounted && providerSettings.providers.replicate?.apiKey && (
+        {/* Replicate icon - show if API key is configured via env or project settings */}
+        {mounted && (providerSettings.providers.replicate?.apiKey || envStatus?.replicate) && (
           <ProviderIconButton
             provider="replicate"
             onClick={() => setModelSearchOpen(true, "replicate")}

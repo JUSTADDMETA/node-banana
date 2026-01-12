@@ -116,16 +116,12 @@ type ModelsResponse = ModelsSuccessResponse | ModelsErrorResponse;
 export async function GET(
   request: NextRequest
 ): Promise<NextResponse<ModelsResponse>> {
-  const requestId = Math.random().toString(36).substring(7);
-  console.log(`[Replicate:${requestId}] Models request started`);
-
   // Get API key from header or query param
   const apiKey =
     request.headers.get("X-API-Key") ||
     request.nextUrl.searchParams.get("api_key");
 
   if (!apiKey) {
-    console.log(`[Replicate:${requestId}] Missing API key`);
     return NextResponse.json<ModelsErrorResponse>(
       {
         success: false,
@@ -136,9 +132,6 @@ export async function GET(
   }
 
   const searchQuery = request.nextUrl.searchParams.get("search");
-  console.log(
-    `[Replicate:${requestId}] ${searchQuery ? `Searching: "${searchQuery}"` : "Listing all models"}`
-  );
 
   try {
     let url: string;
@@ -158,11 +151,6 @@ export async function GET(
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(
-        `[Replicate:${requestId}] API error ${response.status}: ${errorText}`
-      );
-
       if (response.status === 401) {
         return NextResponse.json<ModelsErrorResponse>(
           {
@@ -188,7 +176,6 @@ export async function GET(
       const data: ReplicateSearchResponse = await response.json();
       // Defensive null check - search API may return different structure
       if (!data.results) {
-        console.log(`[Replicate:${requestId}] Search returned no results array`);
         return NextResponse.json<ModelsSuccessResponse>({
           success: true,
           models: [],
@@ -199,7 +186,6 @@ export async function GET(
       const data: ReplicateModelsResponse = await response.json();
       // Defensive null check for list endpoint as well
       if (!data.results) {
-        console.log(`[Replicate:${requestId}] List returned no results array`);
         return NextResponse.json<ModelsSuccessResponse>({
           success: true,
           models: [],
@@ -208,14 +194,11 @@ export async function GET(
       models = data.results.map(mapToProviderModel);
     }
 
-    console.log(`[Replicate:${requestId}] Returning ${models.length} models`);
-
     return NextResponse.json<ModelsSuccessResponse>({
       success: true,
       models,
     });
   } catch (error) {
-    console.error(`[Replicate:${requestId}] Fetch error:`, error);
     return NextResponse.json<ModelsErrorResponse>(
       {
         success: false,

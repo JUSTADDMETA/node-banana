@@ -29,6 +29,7 @@ const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 // Image input property patterns
 const IMAGE_INPUT_PATTERNS = [
   "image_url",
+  "image_urls",
   "image",
   "first_frame",
   "last_frame",
@@ -104,9 +105,19 @@ function toLabel(name: string): string {
  * Check if property is an image input
  */
 function isImageInput(name: string): boolean {
-  return IMAGE_INPUT_PATTERNS.some(
-    (pattern) => name === pattern || name.endsWith("_" + pattern) || name.includes("image")
-  );
+  // Check explicit patterns first
+  if (IMAGE_INPUT_PATTERNS.includes(name)) {
+    return true;
+  }
+
+  // Check for "image" as a word boundary:
+  // - ends with _image (e.g., start_image, control_image)
+  // - starts with image_ (e.g., image_url, image_urls)
+  // - contains _image_ (e.g., tail_image_url)
+  // But NOT num_images (no underscore before "image")
+  return name.endsWith("_image") ||
+         name.startsWith("image_") ||
+         name.includes("_image_");
 }
 
 /**
@@ -283,13 +294,11 @@ async function fetchFalSchema(
 
   // Use fal.ai Model Search API with OpenAPI expansion
   const url = `https://api.fal.ai/v1/models?endpoint_id=${encodeURIComponent(modelId)}&expand=openapi-3.0`;
-  console.log(`[fetchFalSchema] Fetching schema from: ${url}`);
 
   const response = await fetch(url, { headers });
 
   if (!response.ok) {
     // Return empty params if API fails so generation still works
-    console.log(`[fetchFalSchema] Model Search API returned ${response.status}`);
     return { parameters: [], inputs: [] };
   }
 
@@ -298,7 +307,6 @@ async function fetchFalSchema(
   // Response is { models: [{ openapi: {...}, ... }] }
   const modelData = data.models?.[0];
   if (!modelData?.openapi) {
-    console.log(`[fetchFalSchema] No OpenAPI schema in response for ${modelId}`);
     return { parameters: [], inputs: [] };
   }
 
@@ -332,7 +340,6 @@ async function fetchFalSchema(
   }
 
   if (!inputSchema) {
-    console.log(`[fetchFalSchema] Could not find input schema in OpenAPI spec`);
     return { parameters: [], inputs: [] };
   }
 
@@ -412,14 +419,10 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ modelId: string }> }
 ): Promise<NextResponse<SchemaResponse>> {
-  const requestId = Math.random().toString(36).substring(7);
-
   // Await params before accessing properties
   const { modelId } = await params;
   const decodedModelId = decodeURIComponent(modelId);
   const provider = request.nextUrl.searchParams.get("provider") as ProviderType | null;
-
-  console.log(`[ModelSchema:${requestId}] Fetching schema for ${decodedModelId} (provider: ${provider})`);
 
   if (!provider || (provider !== "replicate" && provider !== "fal")) {
     return NextResponse.json<SchemaErrorResponse>(
@@ -435,7 +438,6 @@ export async function GET(
   const cacheKey = `${provider}:${decodedModelId}`;
   const cached = schemaCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    console.log(`[ModelSchema:${requestId}] Cache hit, returning ${cached.parameters.length} parameters, ${cached.inputs.length} inputs`);
     return NextResponse.json<SchemaSuccessResponse>({
       success: true,
       parameters: cached.parameters,
@@ -469,7 +471,6 @@ export async function GET(
     // Cache the result
     schemaCache.set(cacheKey, { ...result, timestamp: Date.now() });
 
-    console.log(`[ModelSchema:${requestId}] Returning ${result.parameters.length} parameters, ${result.inputs.length} inputs`);
     return NextResponse.json<SchemaSuccessResponse>({
       success: true,
       parameters: result.parameters,
@@ -478,7 +479,7 @@ export async function GET(
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    console.error(`[ModelSchema:${requestId}] Error: ${errorMessage}`);
+    console.error(`[ModelSchema] Error fetching ${decodedModelId}: ${errorMessage}`);
     return NextResponse.json<SchemaErrorResponse>(
       {
         success: false,

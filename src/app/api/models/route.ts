@@ -306,9 +306,6 @@ async function fetchFalModels(
 export async function GET(
   request: NextRequest
 ): Promise<NextResponse<ModelsResponse>> {
-  const requestId = Math.random().toString(36).substring(7);
-  console.log(`[Models:${requestId}] Unified models request started`);
-
   // Parse query params
   const providerFilter = request.nextUrl.searchParams.get("provider") as
     | ProviderType
@@ -323,13 +320,6 @@ export async function GET(
   // Get API keys from headers, falling back to env variables
   const replicateKey = request.headers.get("X-Replicate-Key") || process.env.REPLICATE_API_KEY || null;
   const falKey = request.headers.get("X-Fal-Key") || process.env.FAL_API_KEY || null;
-
-  console.log(
-    `[Models:${requestId}] Provider filter: ${providerFilter || "all"}, Search: ${searchQuery || "none"}, Refresh: ${refresh}`
-  );
-  console.log(
-    `[Models:${requestId}] Keys: Replicate=${replicateKey ? "yes" : "no"}, Fal=${falKey ? "yes" : "no"}`
-  );
 
   // Determine which providers to fetch from
   const providersToFetch: ProviderType[] = [];
@@ -352,7 +342,6 @@ export async function GET(
   }
 
   if (providersToFetch.length === 0) {
-    console.log(`[Models:${requestId}] No providers available`);
     return NextResponse.json<ModelsErrorResponse>(
       {
         success: false,
@@ -387,16 +376,10 @@ export async function GET(
         models = cached;
         fromCache = true;
         anyFromCache = true;
-        console.log(
-          `[Models:${requestId}] ${provider}: Using cached models (${cached.length})`
-        );
 
         // For Replicate, apply client-side search filtering on cached models
         if (provider === "replicate" && searchQuery) {
           models = filterModelsBySearch(models, searchQuery);
-          console.log(
-            `[Models:${requestId}] ${provider}: Filtered to ${models.length} models for search "${searchQuery}"`
-          );
         }
       }
     }
@@ -410,32 +393,21 @@ export async function GET(
           const allReplicateModels = await fetchReplicateModels(replicateKey!);
           // Cache the full list
           setCachedModels(cacheKey, allReplicateModels);
-          console.log(
-            `[Models:${requestId}] ${provider}: Fetched ${allReplicateModels.length} models from API`
-          );
           // Apply search filter if needed
           models = searchQuery
             ? filterModelsBySearch(allReplicateModels, searchQuery)
             : allReplicateModels;
-          if (searchQuery) {
-            console.log(
-              `[Models:${requestId}] ${provider}: Filtered to ${models.length} models for search "${searchQuery}"`
-            );
-          }
         } else if (provider === "fal") {
           models = await fetchFalModels(falKey, searchQuery);
           // Cache the results (fal.ai handles search server-side)
           setCachedModels(cacheKey, models);
-          console.log(
-            `[Models:${requestId}] ${provider}: Fetched ${models.length} models from API`
-          );
         } else {
           models = [];
         }
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
-        console.error(`[Models:${requestId}] ${provider}: Error - ${errorMessage}`);
+        console.error(`[Models] ${provider}: ${errorMessage}`);
         errors.push(`${provider}: ${errorMessage}`);
         providerResults[provider] = {
           success: false,
@@ -458,7 +430,6 @@ export async function GET(
   // Check if we got any models
   if (allModels.length === 0 && errors.length === providersToFetch.length) {
     // All providers failed
-    console.log(`[Models:${requestId}] All providers failed`);
     return NextResponse.json<ModelsErrorResponse>(
       {
         success: false,
@@ -474,9 +445,6 @@ export async function GET(
     filteredModels = allModels.filter((model) =>
       model.capabilities.some((cap) => capabilitiesFilter.includes(cap))
     );
-    console.log(
-      `[Models:${requestId}] Filtered to ${filteredModels.length} models with capabilities: ${capabilitiesFilter.join(", ")}`
-    );
   }
 
   // Sort models by provider, then by name
@@ -486,10 +454,6 @@ export async function GET(
     }
     return a.name.localeCompare(b.name);
   });
-
-  console.log(
-    `[Models:${requestId}] Returning ${filteredModels.length} models from ${Object.keys(providerResults).length} providers`
-  );
 
   const response: ModelsSuccessResponse = {
     success: true,

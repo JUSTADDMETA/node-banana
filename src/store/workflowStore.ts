@@ -1097,7 +1097,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             });
 
             try {
-              const nodeData = node.data as NanoBananaNodeData;
+              // Get fresh node data from store (not stale data from sorted array)
+              const freshNode = get().nodes.find((n) => n.id === node.id);
+              const nodeData = (freshNode?.data || node.data) as NanoBananaNodeData;
               const providerSettingsState = get().providerSettings;
 
               const requestPayload = {
@@ -1293,7 +1295,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
               return;
             }
 
-            const nodeData = node.data as GenerateVideoNodeData;
+            // Get fresh node data from store (not stale data from sorted array)
+            const freshVideoNode = get().nodes.find((n) => n.id === node.id);
+            const nodeData = (freshVideoNode?.data || node.data) as GenerateVideoNodeData;
 
             if (!nodeData.selectedModel?.modelId) {
               logger.error('node.error', 'generateVideo node missing model selection', {
@@ -1806,7 +1810,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
     try {
       if (node.type === "nanoBanana") {
-        const nodeData = node.data as NanoBananaNodeData;
+        // Get fresh node data from store
+        const freshNode = get().nodes.find((n) => n.id === nodeId);
+        const nodeData = (freshNode?.data || node.data) as NanoBananaNodeData;
         const providerSettingsState = get().providerSettings;
         const provider = nodeData.selectedModel?.provider || "gemini";
 
@@ -1876,6 +1882,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             model: nodeData.model,
             useGoogleSearch: nodeData.useGoogleSearch,
             selectedModel: nodeData.selectedModel,
+            parameters: nodeData.parameters,
           }),
         });
 
@@ -2064,7 +2071,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
           });
         }
       } else if (node.type === "generateVideo") {
-        const nodeData = node.data as GenerateVideoNodeData;
+        // Get fresh node data from store
+        const freshVideoNode = get().nodes.find((n) => n.id === nodeId);
+        const nodeData = (freshVideoNode?.data || node.data) as GenerateVideoNodeData;
         const providerSettingsState = get().providerSettings;
 
         // Get fresh connected inputs
@@ -2140,6 +2149,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
             images,
             prompt: text,
             selectedModel: nodeData.selectedModel,
+            parameters: nodeData.parameters,
           }),
         });
 
