@@ -269,7 +269,9 @@ describe("/api/generate route", () => {
       expect(data.success).toBe(true);
       expect(mockGenerateContent).toHaveBeenCalledWith(
         expect.objectContaining({
-          tools: [{ googleSearch: {} }],
+          config: expect.objectContaining({
+            tools: [{ googleSearch: {} }],
+          }),
         })
       );
     });
@@ -292,8 +294,10 @@ describe("/api/generate route", () => {
       expect(data.success).toBe(true);
       // For nano-banana, tools should not be included even if useGoogleSearch is true
       expect(mockGenerateContent).toHaveBeenCalledWith(
-        expect.not.objectContaining({
-          tools: expect.anything(),
+        expect.objectContaining({
+          config: expect.not.objectContaining({
+            tools: expect.anything(),
+          }),
         })
       );
     });
@@ -316,7 +320,9 @@ describe("/api/generate route", () => {
       expect(data.success).toBe(true);
       expect(mockGenerateContent).toHaveBeenCalledWith(
         expect.objectContaining({
-          tools: [{ googleSearch: { searchTypes: { imageSearch: {} } } }],
+          config: expect.objectContaining({
+            tools: [{ googleSearch: { searchTypes: { imageSearch: {} } } }],
+          }),
         })
       );
     });
@@ -340,7 +346,9 @@ describe("/api/generate route", () => {
       expect(data.success).toBe(true);
       expect(mockGenerateContent).toHaveBeenCalledWith(
         expect.objectContaining({
-          tools: [{ googleSearch: { searchTypes: { webSearch: {}, imageSearch: {} } } }],
+          config: expect.objectContaining({
+            tools: [{ googleSearch: { searchTypes: { webSearch: {}, imageSearch: {} } } }],
+          }),
         })
       );
     });
@@ -363,7 +371,9 @@ describe("/api/generate route", () => {
       expect(data.success).toBe(true);
       expect(mockGenerateContent).toHaveBeenCalledWith(
         expect.objectContaining({
-          tools: [{ googleSearch: { searchTypes: { webSearch: {} } } }],
+          config: expect.objectContaining({
+            tools: [{ googleSearch: { searchTypes: { webSearch: {} } } }],
+          }),
         })
       );
     });
@@ -388,7 +398,9 @@ describe("/api/generate route", () => {
       // nano-banana-pro should use old format, ignoring useImageSearch
       expect(mockGenerateContent).toHaveBeenCalledWith(
         expect.objectContaining({
-          tools: [{ googleSearch: {} }],
+          config: expect.objectContaining({
+            tools: [{ googleSearch: {} }],
+          }),
         })
       );
     });
@@ -438,7 +450,7 @@ describe("/api/generate route", () => {
       });
     });
 
-    it("should return 500 when API key missing", async () => {
+    it("should return 401 when API key missing", async () => {
       delete process.env.GEMINI_API_KEY;
 
       const request = createMockPostRequest({
@@ -449,7 +461,7 @@ describe("/api/generate route", () => {
       const response = await POST(request);
       const data = await response.json();
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(401);
       expect(data.success).toBe(false);
       expect(data.error).toContain("API key not configured");
     });

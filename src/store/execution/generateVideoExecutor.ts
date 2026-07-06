@@ -29,8 +29,10 @@ export async function executeGenerateVideo(
     providerSettings,
     addIncurredCost,
     generationsPath,
+    getEdges,
     getNodes,
     trackSaveGeneration,
+    appendOutputGalleryVideo,
   } = ctx;
 
   const { useStoredFallback = false } = options;
@@ -172,6 +174,22 @@ export async function executeGenerateVideo(
           videoHistory: updatedHistory,
           selectedVideoHistoryIndex: 0,
         });
+
+        // Push this result to downstream outputGallery nodes so a batch run
+        // collects every item, not just the final one (mirrors the image path).
+        // executeOutputGallery de-dupes, so the final item is not double-added.
+        if (outputContent) {
+          const currentEdges = getEdges();
+          const currentNodes = getNodes();
+          currentEdges
+            .filter((e) => e.source === node.id)
+            .forEach((e) => {
+              const target = currentNodes.find((n) => n.id === e.target);
+              if (target?.type === "outputGallery") {
+                appendOutputGalleryVideo(target.id, outputContent);
+              }
+            });
+        }
 
         // Track cost
         if (modelToUse.provider === "fal" && modelToUse.pricing) {

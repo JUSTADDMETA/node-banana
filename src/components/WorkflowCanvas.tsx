@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, useEffect, DragEvent, useMemo } from "react";
+import { useCallback, useRef, useState, useEffect, DragEvent, useMemo, type ComponentType } from "react";
 import {
   ReactFlow,
   Background,
@@ -44,6 +44,8 @@ import {
   VideoTrimNode,
   VideoFrameGrabNode,
   RemoveBackgroundNode,
+  ImageResizeNode,
+  GifEncoderNode,
   RouterNode,
   SwitchNode,
   ConditionalSwitchNode,
@@ -73,7 +75,7 @@ import { PromptConstructorEditorModal } from "./modals/PromptConstructorEditorMo
 import { resolveTextSourcesThroughRouters } from "@/store/utils/connectedInputs";
 import { wouldCreateCycle } from "@/store/utils/executionUtils";
 import { parseVarTags } from "@/utils/parseVarTags";
-import { AnnotationModal } from "./AnnotationModal";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { ModelSearchDialog } from "./modals/ModelSearchDialog";
 import { LLMFallbackPopover } from "./nodes/LLMFallbackPopover";
 import { browseRegistry } from "@/utils/browseRegistry";
@@ -84,7 +86,7 @@ import { useAnnotationStore } from "@/store/annotationStore";
 import { TutorialOverlay } from "./onboarding/TutorialOverlay";
 import { useFTUXStore } from "@/store/ftuxStore";
 
-const nodeTypes: NodeTypes = {
+const rawNodeTypes: NodeTypes = {
   imageInput: ImageInputNode,
   audioInput: AudioInputNode,
   videoInput: VideoInputNode,
@@ -106,11 +108,39 @@ const nodeTypes: NodeTypes = {
   videoTrim: VideoTrimNode,
   videoFrameGrab: VideoFrameGrabNode,
   removeBackground: RemoveBackgroundNode,
+  imageResize: ImageResizeNode,
+  gifEncoder: GifEncoderNode,
   router: RouterNode,
   switch: SwitchNode,
   conditionalSwitch: ConditionalSwitchNode,
   glbViewer: GLBViewerNode,
 };
+
+// Wrap every node component in a per-node error boundary so a single
+// throwing node (e.g. malformed data from a loaded workflow) renders a small
+// fallback card instead of unmounting the entire canvas/app.
+const withNodeErrorBoundary = (
+  type: string,
+  NodeComponent: ComponentType<Record<string, unknown>>
+): ComponentType<Record<string, unknown>> => {
+  const Wrapped = (props: Record<string, unknown>) => (
+    <ErrorBoundary label={type}>
+      <NodeComponent {...props} />
+    </ErrorBoundary>
+  );
+  Wrapped.displayName = `NodeErrorBoundary(${type})`;
+  return Wrapped;
+};
+
+const nodeTypes: NodeTypes = Object.fromEntries(
+  Object.entries(rawNodeTypes).map(([type, NodeComponent]) => [
+    type,
+    withNodeErrorBoundary(
+      type,
+      NodeComponent as ComponentType<Record<string, unknown>>
+    ),
+  ])
+) as NodeTypes;
 
 const edgeTypes: EdgeTypes = {
   editable: EditableEdge,
@@ -186,6 +216,9 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
     case "videoFrameGrab":
       return { inputs: ["video"], outputs: ["image"] };
     case "removeBackground":
+    case "imageResize":
+      return { inputs: ["image"], outputs: ["image"] };
+    case "gifEncoder":
       return { inputs: ["image"], outputs: ["image"] };
     case "router":
       return { inputs: ["image", "text", "video", "audio", "3d", "easeCurve", "generic-input"], outputs: ["image", "text", "video", "audio", "3d", "easeCurve", "generic-output"] };
@@ -474,6 +507,8 @@ export function WorkflowCanvas() {
     videoTrim: 'Video Trim',
     videoFrameGrab: 'Frame Grab',
     removeBackground: 'Remove Background',
+    imageResize: 'Image Resize',
+    gifEncoder: 'GIF Encoder',
     router: 'Router',
     switch: 'Switch',
     conditionalSwitch: 'Conditional Switch',
@@ -1154,25 +1189,33 @@ export function WorkflowCanvas() {
     }
   }, [loadWorkflow, showToast, captureSnapshot]);
 
-  // Create lightweight workflow state for chat (strip base64 images)
-  const chatWorkflowState = useMemo(() => {
-    const strippedNodes = stripBinaryData(nodes);
-    return {
-      nodes: strippedNodes.map(n => ({
+  // Create lightweight workflow state for chat (strip base64 images).
+  // Keep a ref to the raw nodes/edges and expose the stripped payload lazily via
+  // getters, so the expensive stripBinaryData/remap only runs when the value is
+  // actually read (at chat send time, when ChatPanel serializes it) rather than
+  // on every drag frame or execution-status tick.
+  const chatWorkflowRawRef = useRef({ nodes, edges });
+  chatWorkflowRawRef.current = { nodes, edges };
+  const chatWorkflowState = useMemo(() => ({
+    get nodes() {
+      const strippedNodes = stripBinaryData(chatWorkflowRawRef.current.nodes);
+      return strippedNodes.map(n => ({
         id: n.id,
         type: n.type,
         position: n.position,
         data: n.data,
-      })),
-      edges: edges.map(e => ({
+      }));
+    },
+    get edges() {
+      return chatWorkflowRawRef.current.edges.map(e => ({
         id: e.id,
         source: e.source,
         target: e.target,
         sourceHandle: e.sourceHandle || undefined,
         targetHandle: e.targetHandle || undefined,
-      })),
-    };
-  }, [nodes, edges]);
+      }));
+    },
+  }), []);
 
   // Compute selected node IDs for chat context scoping
   const selectedNodeIds = useMemo(() => nodes.filter(n => n.selected).map(n => n.id), [nodes]);
@@ -1267,6 +1310,12 @@ export function WorkflowCanvas() {
           }
         } else if (nodeType === "nanoBanana" || nodeType === "generateVideo") {
           targetHandleId = "image";
+        } else if (nodeType === "imageResize") {
+          targetHandleId = "image";
+          sourceHandleIdForNewNode = "image";
+        } else if (nodeType === "gifEncoder") {
+          targetHandleId = "image-0";
+          sourceHandleIdForNewNode = "image";
         } else if (nodeType === "imageInput") {
           sourceHandleIdForNewNode = "image";
         }
@@ -1528,6 +1577,8 @@ export function WorkflowCanvas() {
     // Handle workflow execution (Ctrl/Cmd + Enter)
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
+      // Resume-from-pause is handled inside executeWorkflow when no explicit
+      // start node is given.
       executeWorkflow();
       return;
     }
@@ -1620,6 +1671,8 @@ export function WorkflowCanvas() {
             videoTrim: { width: 360, height: 360 },
             videoFrameGrab: { width: 320, height: 320 },
             removeBackground: { width: 320, height: 320 },
+            imageResize: { width: 320, height: 360 },
+            gifEncoder: { width: 480, height: 380 },
             router: { width: 200, height: 80 },
             switch: { width: 220, height: 120 },
             conditionalSwitch: { width: 260, height: 180 },
@@ -1724,19 +1777,20 @@ export function WorkflowCanvas() {
 
         let currentY = sortedNodes[0].position.y;
 
-        sortedNodes.forEach((node) => {
+        const changes = sortedNodes.map((node) => {
           const nodeHeight = (node.style?.height as number) || (node.measured?.height) || 200;
 
-          onNodesChange([
-            {
-              type: "position",
-              id: node.id,
-              position: { x: alignX, y: currentY },
-            },
-          ]);
+          const change = {
+            type: "position" as const,
+            id: node.id,
+            position: { x: alignX, y: currentY },
+          };
 
           currentY += nodeHeight + STACK_GAP;
+          return change;
         });
+
+        onNodesChange(changes);
       } else if (event.key === "h" || event.key === "H") {
         // Stack horizontally - sort by current x position to maintain relative order
         const sortedNodes = [...selectedNodes].sort((a, b) => a.position.x - b.position.x);
@@ -1746,19 +1800,20 @@ export function WorkflowCanvas() {
 
         let currentX = sortedNodes[0].position.x;
 
-        sortedNodes.forEach((node) => {
+        const changes = sortedNodes.map((node) => {
           const nodeWidth = (node.style?.width as number) || (node.measured?.width) || 220;
 
-          onNodesChange([
-            {
-              type: "position",
-              id: node.id,
-              position: { x: currentX, y: alignY },
-            },
-          ]);
+          const change = {
+            type: "position" as const,
+            id: node.id,
+            position: { x: currentX, y: alignY },
+          };
 
           currentX += nodeWidth + STACK_GAP;
+          return change;
         });
+
+        onNodesChange(changes);
       } else if (event.key === "g" || event.key === "G") {
         // Arrange as grid
         const count = selectedNodes.length;
@@ -1785,21 +1840,21 @@ export function WorkflowCanvas() {
         );
 
         // Position each node in the grid
-        sortedNodes.forEach((node, index) => {
+        const changes = sortedNodes.map((node, index) => {
           const col = index % cols;
           const row = Math.floor(index / cols);
 
-          onNodesChange([
-            {
-              type: "position",
-              id: node.id,
-              position: {
-                x: startX + col * (maxWidth + STACK_GAP),
-                y: startY + row * (maxHeight + STACK_GAP),
-              },
+          return {
+            type: "position" as const,
+            id: node.id,
+            position: {
+              x: startX + col * (maxWidth + STACK_GAP),
+              y: startY + row * (maxHeight + STACK_GAP),
             },
-          ]);
+          };
         });
+
+        onNodesChange(changes);
       }
   }, [nodes, onNodesChange, copySelectedNodes, pasteNodes, clearClipboard, clipboard, getViewport, addNode, updateNodeData, executeWorkflow, setShortcutsDialogOpen, undo, redo]);
 
@@ -2236,6 +2291,10 @@ export function WorkflowCanvas() {
                 return "#38bdf8"; // sky-400 (image from video)
               case "removeBackground":
                 return "#2dd4bf"; // teal-400 (background removal)
+              case "imageResize":
+                return "#0d9488"; // teal-600 (image utility)
+              case "gifEncoder":
+                return "#f472b6"; // pink-400 (animated output)
               case "router":
                 return "#6b7280"; // neutral-500 (gray/slate utility theme)
               case "switch":
@@ -2524,8 +2583,9 @@ export function WorkflowCanvas() {
         />
       )}
 
-      {/* AnnotationModal is globally managed by annotationStore */}
-      <AnnotationModal />
+      {/* AnnotationModal is globally managed by annotationStore and mounted
+          once at the app root (src/app/page.tsx) to avoid duplicate keydown
+          listeners firing shortcuts twice. */}
 
       {/* Tutorial overlay */}
       <TutorialOverlay />

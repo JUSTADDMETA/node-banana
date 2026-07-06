@@ -21,6 +21,8 @@ import {
   VideoTrimNodeData,
   VideoFrameGrabNodeData,
   RemoveBackgroundNodeData,
+  ImageResizeNodeData,
+  GifEncoderNodeData,
   PromptNodeData,
   ArrayNodeData,
   PromptConstructorNodeData,
@@ -120,6 +122,10 @@ export function getSourceOutput(
     return { type: "image", value: (sourceNode.data as VideoFrameGrabNodeData).outputImage };
   } else if (sourceNode.type === "removeBackground") {
     return { type: "image", value: (sourceNode.data as RemoveBackgroundNodeData).outputImage };
+  } else if (sourceNode.type === "imageResize") {
+    return { type: "image", value: (sourceNode.data as ImageResizeNodeData).outputImage };
+  } else if (sourceNode.type === "gifEncoder") {
+    return { type: "image", value: (sourceNode.data as GifEncoderNodeData).outputGif };
   } else if (sourceNode.type === "glbViewer") {
     return { type: "image", value: (sourceNode.data as GLBViewerNodeData).capturedImage };
   }
@@ -338,6 +344,12 @@ export function getConnectedInputsPure(
         // Active output (or paused): ConditionalSwitch is a gate — trigger downstream but don't pass data through
         return;
       }
+
+      // Settings edges into an EaseCurve target handle carry only the curve/
+      // settings, not a video. The dedicated extraction below (targetHandle ===
+      // "easeCurve") handles them. Processing them here would push the source
+      // node's outputVideo into videos[] and ease the wrong video.
+      if (edge.targetHandle === "easeCurve") return;
 
       const handleId = edge.targetHandle;
       const { type, value } = getSourceOutput(

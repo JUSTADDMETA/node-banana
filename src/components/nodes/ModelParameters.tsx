@@ -77,6 +77,11 @@ function ModelParametersInner({
   onInputsLoaded,
 }: ModelParametersProps) {
   const [schema, setSchema] = useState<ModelParameter[]>([]);
+  // Tracks which `${provider}:${modelId}` the current `schema` belongs to.
+  // Prevents the defaults effect from writing a previous model's defaults into
+  // freshly-cleared parameters during the render where modelId changes but the
+  // async schema fetch hasn't updated `schema` yet.
+  const [schemaKey, setSchemaKey] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Use stable selector for API keys to prevent unnecessary re-fetches
@@ -86,15 +91,19 @@ function ModelParametersInner({
   useEffect(() => {
     if (!modelId) {
       setSchema([]);
+      setSchemaKey("");
       onInputsLoaded?.([]);
       return;
     }
+
+    const currentKey = `${provider}:${modelId}`;
 
     const fetchSchema = async () => {
       // Check localStorage cache first
       const cached = getCachedSchema(modelId, provider);
       if (cached) {
         setSchema(cached.parameters);
+        setSchemaKey(currentKey);
         onInputsLoaded?.(cached.inputs);
         return;
       }
@@ -132,6 +141,7 @@ function ModelParametersInner({
         const params = data.parameters || [];
         const inputs = data.inputs || [];
         setSchema(params);
+        setSchemaKey(currentKey);
 
         // Cache the successful result
         setCachedSchema(modelId, provider, params, inputs);
@@ -144,6 +154,7 @@ function ModelParametersInner({
         console.error("Failed to fetch model schema:", err);
         setError(err instanceof Error ? err.message : "Failed to fetch schema");
         setSchema([]);
+        setSchemaKey(currentKey);
       } finally {
         setIsLoading(false);
       }
@@ -154,6 +165,12 @@ function ModelParametersInner({
 
   // Pre-populate schema defaults into parameters
   useEffect(() => {
+    // Guard: only apply defaults when `schema` belongs to the currently
+    // selected model. On model switch the parent clears `parameters` to {}
+    // synchronously, but `schema` (fetched async) still holds the previous
+    // model's schema for one render — applying it here would write the old
+    // model's defaults back into the new model's parameters.
+    if (schemaKey !== `${provider}:${modelId}`) return;
     if (schema.length === 0) return;
     const defaults: Record<string, unknown> = {};
     let hasNewDefaults = false;
@@ -166,7 +183,7 @@ function ModelParametersInner({
     if (hasNewDefaults) {
       onParametersChange({ ...parameters, ...defaults });
     }
-  }, [schema, parameters, onParametersChange]);
+  }, [schema, schemaKey, modelId, provider, parameters, onParametersChange]);
 
   // Notify parent to resize node when schema loads
   useEffect(() => {

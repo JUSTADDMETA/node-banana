@@ -21,6 +21,8 @@ import {
   VideoTrimNodeData,
   VideoFrameGrabNodeData,
   RemoveBackgroundNodeData,
+  ImageResizeNodeData,
+  GifEncoderNodeData,
   RouterNodeData,
   SwitchNodeData,
   ConditionalSwitchNodeData,
@@ -31,6 +33,7 @@ import {
   MODEL_DISPLAY_NAMES,
 } from "@/types";
 import { loadGenerateImageDefaults, loadNodeDefaults } from "./localStorage";
+import { getEasingBezier } from "@/lib/easing-presets";
 
 /**
  * Default dimensions for each node type.
@@ -58,6 +61,8 @@ export const defaultNodeDimensions: Record<NodeType, { width: number; height: nu
   videoTrim: { width: 360, height: 360 },
   videoFrameGrab: { width: 320, height: 320 },
   removeBackground: { width: 320, height: 320 },
+  imageResize: { width: 320, height: 360 },
+  gifEncoder: { width: 480, height: 380 },
   router: { width: 200, height: 80 },
   switch: { width: 220, height: 120 },
   conditionalSwitch: { width: 260, height: 180 },
@@ -280,7 +285,7 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
       };
     case "easeCurve":
       return {
-        bezierHandles: [0.445, 0.05, 0.55, 0.95], // easeInOutSine preset
+        bezierHandles: getEasingBezier("easeInOutSine"), // [0.37, 0, 0.63, 1] from easing-presets source of truth
         easingPreset: "easeInOutSine",
         inheritedFrom: null,
         outputDuration: 1.5,
@@ -316,6 +321,39 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         error: null,
         progress: 0,
       } as RemoveBackgroundNodeData;
+    case "imageResize":
+      return {
+        sourceImage: null,
+        outputImage: null,
+        mode: "exact",
+        width: 128,
+        height: 128,
+        maxEdge: 128,
+        scalePct: 100,
+        fit: "contain",
+        padColor: "#00000000",
+        format: "png",
+        quality: 0.9,
+        outputDimensions: null,
+        outputBytes: null,
+        status: "idle",
+        error: null,
+      } as ImageResizeNodeData;
+    case "gifEncoder":
+      return {
+        clipOrder: [],
+        outputGif: null,
+        fps: 8,
+        loopCount: 0,
+        colorCount: 128,
+        dither: false,
+        targetMaxBytes: 128 * 1024,
+        outputBytes: null,
+        outputDimensions: null,
+        status: "idle",
+        error: null,
+        progress: 0,
+      } as GifEncoderNodeData;
     case "router":
       return {} as RouterNodeData;
     case "switch":
