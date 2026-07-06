@@ -24,6 +24,7 @@ import { executeLlmGenerate } from "./llmGenerateExecutor";
 import { executeSplitGrid } from "./splitGridExecutor";
 import { executeVideoStitch, executeEaseCurve, executeVideoTrim, executeVideoFrameGrab } from "./videoProcessingExecutors";
 import { executeRemoveBackground } from "./removeBackgroundExecutor";
+import { executeImageResize, executeGifEncoder } from "./imageProcessingExecutors";
 import { executeGenerateAudio } from "./generateAudioExecutor";
 
 export interface ExecuteNodeOptions {
@@ -118,6 +119,12 @@ export async function executeNode(
       break;
     case "removeBackground":
       await executeRemoveBackground(ctx);
+      break;
+    case "imageResize":
+      await executeImageResize(ctx);
+      break;
+    case "gifEncoder":
+      await executeGifEncoder(ctx);
       break;
   }
 }
