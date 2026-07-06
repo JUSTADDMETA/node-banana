@@ -24,6 +24,17 @@ export async function removeImageBackground(
 ): Promise<string> {
   const { removeBackground } = await import("@imgly/background-removal");
 
+  // NOTE (memory tradeoff): @imgly/background-removal memoizes its
+  // onnxruntime-web WASM session keyed on the config (notably `model`). This
+  // means the model weights are downloaded and initialized once per distinct
+  // model and then cached for fast subsequent runs — but that cache is also
+  // *retained* for the lifetime of the browser session. Switching between the
+  // quality tiers (isnet_quint8 ~44MB, isnet_fp16 ~88MB, isnet ~170MB) therefore
+  // accumulates a separate session per model (potentially ~300MB total) with no
+  // way to release it: the library exposes no session-dispose API. We keep the
+  // memoization (caching is desirable for repeated removals at the same
+  // quality) and simply avoid gratuitous model switching in the UI rather than
+  // attempting a manual teardown that the library does not support.
   const config = {
     model: options?.model ?? "isnet_fp16",
     output: {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useState, useEffect, useMemo } from "react";
 import { Handle, Position, NodeProps, Node, useReactFlow } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
 import { ModelParameters } from "./ModelParameters";
@@ -9,8 +9,7 @@ import { deduplicatedFetch } from "@/utils/deduplicatedFetch";
 import { GenerateVideoNodeData, ProviderType, SelectedModel, ModelInputDef } from "@/types";
 import { ProviderModel, ModelCapability } from "@/lib/providers/types";
 import { ModelSearchDialog } from "@/components/modals/ModelSearchDialog";
-import { useToast } from "@/components/Toast";
-import { getVideoDimensions, calculateNodeSizePreservingHeight } from "@/utils/nodeDimensions";
+import { getVideoDimensions } from "@/utils/nodeDimensions";
 import { ProviderBadge } from "./ProviderBadge";
 import { useVideoBlobUrl } from "@/hooks/useVideoBlobUrl";
 import { useVideoAutoplay } from "@/hooks/useVideoAutoplay";
@@ -21,6 +20,10 @@ import { browseRegistry } from "@/utils/browseRegistry";
 import { downloadMedia } from "@/utils/downloadMedia";
 import { useShowHandleLabels } from "@/hooks/useShowHandleLabels";
 import { HandleLabel } from "./HandleLabel";
+import { useLoadGenerationById } from "@/hooks/useLoadGenerationById";
+import { useGenerationCarousel } from "@/hooks/useGenerationCarousel";
+import { useErrorToast } from "@/hooks/useErrorToast";
+import { useAutoResizeOnMedia } from "@/hooks/useAutoResizeOnMedia";
 
 // Video generation capabilities
 const VIDEO_CAPABILITIES: ModelCapability[] = ["text-to-video", "image-to-video", "audio-to-video"];
@@ -52,12 +55,10 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   // Use stable selector for API keys to prevent unnecessary re-fetches
   const { geminiApiKey, replicateApiKey, falApiKey, kieApiKey, replicateEnabled, kieEnabled } = useProviderApiKeys();
-  const generationsPath = useWorkflowStore((state) => state.generationsPath);
   const [externalModels, setExternalModels] = useState<ProviderModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelsFetchError, setModelsFetchError] = useState<string | null>(null);
   const [isBrowseDialogOpen, setIsBrowseDialogOpen] = useState(false);
-  const [isLoadingCarouselVideo, setIsLoadingCarouselVideo] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"primary" | "fallback">("primary");
 
   useEffect(() => {
@@ -241,79 +242,25 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
   }, [id, regenerateNode]);
 
   // Load video by ID from generations folder
-  const loadVideoById = useCallback(async (videoId: string) => {
-    if (!generationsPath) {
-      console.error("Generations path not configured");
-      return null;
-    }
-
-    try {
-      const response = await fetch("/api/load-generation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          directoryPath: generationsPath,
-          imageId: videoId,
-        }),
-      });
-
-      const result = await response.json();
-      if (!result.success) {
-        // Missing videos are expected when refs point to deleted/moved files
-        console.log(`Video not found: ${videoId}`);
-        return null;
-      }
-      return result.video || result.image;
-    } catch (error) {
-      console.warn("Error loading video:", error);
-      return null;
-    }
-  }, [generationsPath]);
+  const loadVideoById = useLoadGenerationById("video", "Video");
 
   // Carousel navigation handlers
-  const handleCarouselPrevious = useCallback(async () => {
-    const history = nodeData.videoHistory || [];
-    if (history.length === 0 || isLoadingCarouselVideo) return;
-
-    const currentIndex = nodeData.selectedVideoHistoryIndex || 0;
-    const newIndex = currentIndex === 0 ? history.length - 1 : currentIndex - 1;
-    const videoItem = history[newIndex];
-
-    setIsLoadingCarouselVideo(true);
-    const video = await loadVideoById(videoItem.id);
-    setIsLoadingCarouselVideo(false);
-
-    if (video) {
-      updateNodeData(id, {
-        outputVideo: video,
-        selectedVideoHistoryIndex: newIndex,
-        status: "idle",
-        error: null,
-      });
-    }
-  }, [id, nodeData.videoHistory, nodeData.selectedVideoHistoryIndex, isLoadingCarouselVideo, loadVideoById, updateNodeData]);
-
-  const handleCarouselNext = useCallback(async () => {
-    const history = nodeData.videoHistory || [];
-    if (history.length === 0 || isLoadingCarouselVideo) return;
-
-    const currentIndex = nodeData.selectedVideoHistoryIndex || 0;
-    const newIndex = (currentIndex + 1) % history.length;
-    const videoItem = history[newIndex];
-
-    setIsLoadingCarouselVideo(true);
-    const video = await loadVideoById(videoItem.id);
-    setIsLoadingCarouselVideo(false);
-
-    if (video) {
-      updateNodeData(id, {
-        outputVideo: video,
-        selectedVideoHistoryIndex: newIndex,
-        status: "idle",
-        error: null,
-      });
-    }
-  }, [id, nodeData.videoHistory, nodeData.selectedVideoHistoryIndex, isLoadingCarouselVideo, loadVideoById, updateNodeData]);
+  const {
+    isLoading: isLoadingCarouselVideo,
+    handlePrevious: handleCarouselPrevious,
+    handleNext: handleCarouselNext,
+  } = useGenerationCarousel({
+    nodeId: id,
+    history: nodeData.videoHistory,
+    currentIndex: nodeData.selectedVideoHistoryIndex,
+    loadFn: loadVideoById,
+    buildUpdate: (video, newIndex) => ({
+      outputVideo: video,
+      selectedVideoHistoryIndex: newIndex,
+      status: "idle",
+      error: null,
+    }),
+  });
 
   // Handle model selection from browse dialog
   const handleBrowseModelSelect = useCallback((model: ProviderModel) => {
@@ -346,51 +293,11 @@ export function GenerateVideoNode({ id, data, selected }: NodeProps<GenerateVide
 
   const hasCarouselVideos = (nodeData.videoHistory || []).length > 1;
 
-  // Track previous status to detect error transitions
-  const prevStatusRef = useRef(nodeData.status);
-
-  // Show toast when error occurs
-  useEffect(() => {
-    if (nodeData.status === "error" && prevStatusRef.current !== "error" && nodeData.error) {
-      useToast.getState().show("Video generation failed", "error", true, nodeData.error);
-    }
-    prevStatusRef.current = nodeData.status;
-  }, [nodeData.status, nodeData.error]);
+  // Show toast when generation fails
+  useErrorToast(nodeData.status, nodeData.error, "Video generation failed");
 
   // Auto-resize node when output video changes
-  const prevOutputVideoRef = useRef<string | null>(null);
-  useEffect(() => {
-    // Only resize when outputVideo transitions from null/different to a new value
-    if (!nodeData.outputVideo || nodeData.outputVideo === prevOutputVideoRef.current) {
-      prevOutputVideoRef.current = nodeData.outputVideo ?? null;
-      return;
-    }
-    prevOutputVideoRef.current = nodeData.outputVideo;
-
-    // Use requestAnimationFrame to avoid React Flow update conflicts
-    requestAnimationFrame(() => {
-      getVideoDimensions(nodeData.outputVideo!).then((dims) => {
-        if (!dims) return;
-
-        const aspectRatio = dims.width / dims.height;
-
-        setNodes((nodes) =>
-          nodes.map((node) => {
-            if (node.id !== id) return node;
-
-            // Preserve user's manually set height if present
-            const currentHeight = typeof node.style?.height === 'number'
-              ? node.style.height
-              : undefined;
-
-            const newSize = calculateNodeSizePreservingHeight(aspectRatio, currentHeight);
-
-            return { ...node, style: { ...node.style, width: newSize.width, height: newSize.height } };
-          })
-        );
-      });
-    });
-  }, [id, nodeData.outputVideo, setNodes]);
+  useAutoResizeOnMedia(id, nodeData.outputVideo, getVideoDimensions);
 
   return (
     <>

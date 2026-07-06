@@ -11,6 +11,9 @@ import { ProviderModel, ModelCapability } from "@/lib/providers/types";
 // localStorage cache for models (persists across dev server restarts)
 const MODELS_CACHE_KEY = "node-banana-models-cache";
 const MODELS_CACHE_TTL = 48 * 60 * 60 * 1000; // 48 hours
+// Cap the number of cached entries to avoid unbounded localStorage growth.
+// Entries are pruned LRU-style (oldest timestamp first) on write.
+const MODELS_CACHE_MAX_ENTRIES = 20;
 
 interface ModelsCacheEntry {
   models: ProviderModel[];
@@ -33,12 +36,52 @@ function getCachedModels(cacheKey: string): ModelsCacheEntry | null {
 
 function setCachedModels(cacheKey: string, models: ProviderModel[], availableProviders?: string[]) {
   try {
-    const cache = JSON.parse(localStorage.getItem(MODELS_CACHE_KEY) || "{}");
-    cache[cacheKey] = { models, availableProviders, timestamp: Date.now() };
+    const cache: Record<string, ModelsCacheEntry> = JSON.parse(
+      localStorage.getItem(MODELS_CACHE_KEY) || "{}"
+    );
+    const now = Date.now();
+
+    // Prune expired entries so the cache doesn't accumulate stale data forever.
+    for (const key of Object.keys(cache)) {
+      const entry = cache[key];
+      if (!entry || now - entry.timestamp >= MODELS_CACHE_TTL) {
+        delete cache[key];
+      }
+    }
+
+    cache[cacheKey] = { models, availableProviders, timestamp: now };
+
+    // Cap total entries (LRU): drop oldest by timestamp until under the limit.
+    const keys = Object.keys(cache);
+    if (keys.length > MODELS_CACHE_MAX_ENTRIES) {
+      keys
+        .sort((a, b) => cache[a].timestamp - cache[b].timestamp)
+        .slice(0, keys.length - MODELS_CACHE_MAX_ENTRIES)
+        .forEach((key) => delete cache[key]);
+    }
+
     localStorage.setItem(MODELS_CACHE_KEY, JSON.stringify(cache));
   } catch {
     // Ignore cache errors
   }
+}
+
+// Build a short, stable hash of the configured providers so the cache key
+// changes when API keys are added/removed (otherwise the "all" view keeps
+// serving a stale list that omits a newly-configured provider).
+function getProvidersHash(providers: {
+  replicate: boolean;
+  fal: boolean;
+  kie: boolean;
+  wavespeed: boolean;
+}): string {
+  // Fixed order keeps the hash deterministic across renders.
+  return [
+    providers.replicate ? "r" : "",
+    providers.fal ? "f" : "",
+    providers.kie ? "k" : "",
+    providers.wavespeed ? "w" : "",
+  ].join("");
 }
 
 // Provider icons — all normalized to w-3.5 h-3.5 with viewBoxes cropped to fill consistently
@@ -185,8 +228,15 @@ export function ModelSearchDialog({
     // Increment version to track this request
     const thisVersion = ++requestVersionRef.current;
 
-    // Build cache key from filters
-    const cacheKey = `${providerFilter}:${capabilityFilter}:${debouncedSearch}`;
+    // Build cache key from filters + configured providers (so the key changes
+    // when an API key is added/removed and the "all" view can't go stale).
+    const providersHash = getProvidersHash({
+      replicate: !!replicateApiKey,
+      fal: !!falApiKey,
+      kie: !!kieApiKey,
+      wavespeed: !!wavespeedApiKey,
+    });
+    const cacheKey = `${providersHash}:${providerFilter}:${capabilityFilter}:${debouncedSearch}`;
 
     // Check localStorage cache first (skip when bypassing)
     if (!bypassCache) {
@@ -255,8 +305,12 @@ export function ModelSearchDialog({
 
       if (data.success && data.models) {
         setModels(data.models);
-        // Cache the successful result (including available providers)
-        setCachedModels(cacheKey, data.models, data.availableProviders);
+        // Only cache browse results (empty search), not per-keystroke search
+        // fragments — otherwise every distinct debounced string stores a full
+        // model list and the cache grows unbounded.
+        if (!debouncedSearch) {
+          setCachedModels(cacheKey, data.models, data.availableProviders);
+        }
         // Update server-reported available providers
         if (data.availableProviders) {
           setServerAvailableProviders(data.availableProviders);

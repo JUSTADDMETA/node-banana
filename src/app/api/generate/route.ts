@@ -15,12 +15,13 @@ import { GenerateRequest, GenerateResponse, ModelType, SelectedModel, ProviderTy
 import { GenerationInput, ModelCapability } from "@/lib/providers/types";
 import { generateWithGemini, generateWithGeminiVideo } from "./providers/gemini";
 import { generateWithReplicate } from "./providers/replicate";
-import { clearFalInputMappingCache as _clearFalInputMappingCache, generateWithFalQueue } from "./providers/fal";
+import { generateWithFalQueue } from "./providers/fal";
 import { submitKieTask } from "./providers/kie";
 import { generateWithWaveSpeed } from "./providers/wavespeed";
+import { buildMediaResponse } from "./shared";
 
 // Re-export for backward compatibility (test file imports from route)
-export const clearFalInputMappingCache = _clearFalInputMappingCache;
+export { clearFalInputMappingCache } from "./shared";
 
 export const maxDuration = 600; // 10 minute timeout for video generation polling
 export const dynamic = 'force-dynamic'; // Ensure this route is always dynamic
@@ -36,42 +37,6 @@ interface MultiProviderGenerateRequest extends GenerateRequest {
   dynamicInputs?: Record<string, string | string[]>;
 }
 
-
-export function buildMediaResponse(output: { type: string; data: string; url?: string }): NextResponse {
-  if (output.type === "3d") {
-    return NextResponse.json<GenerateResponse>({
-      success: true,
-      model3dUrl: output.url,
-      contentType: "3d",
-    });
-  }
-
-  if (output.type === "video") {
-    const isLarge = !output.data && output.url;
-    return NextResponse.json<GenerateResponse>({
-      success: true,
-      video: isLarge ? undefined : output.data,
-      videoUrl: isLarge ? output.url : undefined,
-      contentType: "video",
-    });
-  }
-
-  if (output.type === "audio") {
-    const isLarge = !output.data && output.url;
-    return NextResponse.json<GenerateResponse>({
-      success: true,
-      audio: isLarge ? undefined : output.data,
-      audioUrl: isLarge ? output.url : undefined,
-      contentType: "audio",
-    });
-  }
-
-  return NextResponse.json<GenerateResponse>({
-    success: true,
-    image: output.data,
-    contentType: "image",
-  });
-}
 
 function capabilitiesForMediaType(mediaType?: string): ModelCapability[] {
   const map: Record<string, ModelCapability[]> = {
@@ -314,7 +279,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Process images - Kie requires URLs, we'll upload base64 images in generateWithKie
+      // Process images - Kie requires URLs, we'll upload base64 images in submitKieTask
       const processedImages: string[] = images ? [...images] : [];
 
       // Process dynamicInputs: filter empty values
@@ -351,7 +316,7 @@ export async function POST(request: NextRequest) {
 
       // Submit task and return immediately — client polls for completion
       try {
-        const { taskId, isVeo } = await submitKieTask(requestId, kieApiKey, genInput);
+        const { taskId } = await submitKieTask(requestId, kieApiKey, genInput);
         return NextResponse.json<GenerateResponse>({
           success: true,
           polling: true,
@@ -461,7 +426,7 @@ export async function POST(request: NextRequest) {
           success: false,
           error: "API key not configured. Add GEMINI_API_KEY to .env.local or configure in Settings.",
         },
-        { status: 500 }
+        { status: 401 }
       );
     }
 
