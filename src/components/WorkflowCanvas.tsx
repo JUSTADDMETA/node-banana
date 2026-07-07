@@ -55,6 +55,7 @@ import {
 const GLBViewerNode = dynamic(() => import("./nodes/GLBViewerNode").then(mod => ({ default: mod.GLBViewerNode })), { ssr: false });
 import { EditableEdge, ReferenceEdge, SharedEdgeGradients } from "./edges";
 import { ConnectionDropMenu, MenuAction } from "./ConnectionDropMenu";
+import { NodeSearchMenu } from "./NodeSearchMenu";
 import { MultiSelectToolbar } from "./MultiSelectToolbar";
 import { EdgeToolbar } from "./EdgeToolbar";
 import { GlobalImageHistory } from "./GlobalImageHistory";
@@ -358,6 +359,10 @@ export function WorkflowCanvas() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [dropType, setDropType] = useState<"image" | "audio" | "workflow" | "node" | null>(null);
   const [connectionDrop, setConnectionDrop] = useState<ConnectionDropState | null>(null);
+  // Searchable "add node" menu shown on double-clicking the empty canvas.
+  const [nodeSearchMenu, setNodeSearchMenu] = useState<
+    { position: { x: number; y: number }; flowPosition: { x: number; y: number } } | null
+  >(null);
   const [isSplitting, setIsSplitting] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isBuildingWorkflow, setIsBuildingWorkflow] = useState(false);
@@ -1474,6 +1479,56 @@ export function WorkflowCanvas() {
     setConnectionDrop(null);
   }, []);
 
+  // Open the searchable "add node" menu at a screen position (double-click or
+  // right-click on the empty canvas).
+  const openNodeSearchMenu = useCallback(
+    (clientX: number, clientY: number) => {
+      if (isModalOpen || tutorialActive) return;
+      setConnectionDrop(null);
+      setNodeSearchMenu({
+        position: { x: clientX, y: clientY },
+        flowPosition: screenToFlowPosition({ x: clientX, y: clientY }),
+      });
+    },
+    [isModalOpen, tutorialActive, screenToFlowPosition]
+  );
+
+  // Double-clicking the empty canvas opens the node search menu.
+  const handlePaneDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      // Only react to double-clicks on the empty pane, not on a node/edge/control.
+      const target = event.target as HTMLElement;
+      if (!target.classList?.contains("react-flow__pane")) return;
+      event.preventDefault();
+      openNodeSearchMenu(event.clientX, event.clientY);
+    },
+    [openNodeSearchMenu]
+  );
+
+  // Right-clicking the empty canvas opens the node search menu (instead of the
+  // browser context menu).
+  const handlePaneContextMenu = useCallback(
+    (event: React.MouseEvent | MouseEvent) => {
+      event.preventDefault();
+      openNodeSearchMenu(event.clientX, event.clientY);
+    },
+    [openNodeSearchMenu]
+  );
+
+  const handleNodeSearchSelect = useCallback(
+    (type: NodeType) => {
+      if (nodeSearchMenu) {
+        addNode(type, nodeSearchMenu.flowPosition);
+      }
+      setNodeSearchMenu(null);
+    },
+    [nodeSearchMenu, addNode]
+  );
+
+  const handleCloseNodeSearch = useCallback(() => {
+    setNodeSearchMenu(null);
+  }, []);
+
   // Get copy/paste functions and clipboard from store
   const copySelectedNodes = useWorkflowStore((state) => state.copySelectedNodes);
   const pasteNodes = useWorkflowStore((state) => state.pasteNodes);
@@ -2175,6 +2230,8 @@ export function WorkflowCanvas() {
         onNodeDragStart={() => { isDraggingNodeRef.current = true; document.documentElement.classList.add("canvas-interacting"); }}
         onNodeDragStop={(event, node) => { isDraggingNodeRef.current = false; document.documentElement.classList.remove("canvas-interacting"); handleNodeDragStop(event, node); }}
         onSelectionChange={handleSelectionChange}
+        onDoubleClick={handlePaneDoubleClick}
+        onPaneContextMenu={handlePaneContextMenu}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         isValidConnection={isValidConnection}
@@ -2210,6 +2267,7 @@ export function WorkflowCanvas() {
         nodeClickDistance={5}
         zoomOnScroll={tutorialActive ? false : false}
         zoomOnPinch={tutorialActive ? false : !isModalOpen}
+        zoomOnDoubleClick={false}
         minZoom={0.1}
         maxZoom={4}
         defaultViewport={{ x: 0, y: 0, zoom: 1 }}
@@ -2433,6 +2491,15 @@ export function WorkflowCanvas() {
           connectionType={connectionDrop.connectionType}
           onSelect={handleMenuSelect}
           onClose={handleCloseDropMenu}
+        />
+      )}
+
+      {/* Node search menu (double-click empty canvas) */}
+      {nodeSearchMenu && (
+        <NodeSearchMenu
+          position={nodeSearchMenu.position}
+          onSelect={handleNodeSearchSelect}
+          onClose={handleCloseNodeSearch}
         />
       )}
 

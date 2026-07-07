@@ -6,7 +6,7 @@ import { NodeType } from "@/types";
 // Actions are special menu items that trigger behavior instead of creating a node
 export type MenuAction = "splitGridImmediate";
 
-interface MenuOption {
+export interface MenuOption {
   type: NodeType | MenuAction;
   label: string;
   icon: React.ReactNode;
@@ -702,6 +702,30 @@ const THREE_D_SOURCE_OPTIONS: MenuOption[] = [
     ),
   },
 ];
+
+// Every addable node type, de-duplicated across all handle-type lists, for the
+// canvas double-click "add node" search menu (NodeSearchMenu). Reuses the icons
+// and labels defined above. Actions (e.g. splitGridImmediate) are excluded since
+// they are connection-specific behaviors, not standalone nodes.
+export const ALL_NODE_OPTIONS: MenuOption[] = (() => {
+  const lists = [
+    IMAGE_SOURCE_OPTIONS, IMAGE_TARGET_OPTIONS,
+    TEXT_SOURCE_OPTIONS, TEXT_TARGET_OPTIONS,
+    VIDEO_SOURCE_OPTIONS, VIDEO_TARGET_OPTIONS,
+    AUDIO_SOURCE_OPTIONS, AUDIO_TARGET_OPTIONS,
+    THREE_D_SOURCE_OPTIONS, THREE_D_TARGET_OPTIONS,
+  ];
+  const seen = new Set<string>();
+  const all: MenuOption[] = [];
+  for (const list of lists) {
+    for (const option of list) {
+      if (option.isAction || seen.has(option.type)) continue;
+      seen.add(option.type);
+      all.push(option);
+    }
+  }
+  return all.sort((a, b) => a.label.localeCompare(b.label));
+})();
 
 interface ConnectionDropMenuProps {
   position: { x: number; y: number };
