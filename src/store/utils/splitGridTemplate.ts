@@ -92,7 +92,14 @@ export function createClassicSplitGridTemplate(
  * node actually built); anything else falls back to the image-only default.
  */
 export function getSplitGridTemplate(data: SplitGridNodeData): SplitGridTemplate {
-  if (data.template) return data.template;
+  // A template whose base node is missing would materialize cells that can
+  // never be populated (and re-materialize on every run) — treat as invalid.
+  if (
+    data.template &&
+    data.template.nodes.some((node) => node.id === data.template!.baseNodeId)
+  ) {
+    return data.template;
+  }
   if (hasLegacyCellsOnly(data)) {
     return createClassicSplitGridTemplate(data.defaultPrompt, data.generateSettings);
   }

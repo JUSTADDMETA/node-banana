@@ -19,6 +19,7 @@ import {
   addEdge,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type NodeTypes,
@@ -113,6 +114,13 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   );
   const idCounterRef = useRef(0);
   const baseNodeId = initialTemplate.baseNodeId;
+  const { fitView } = useReactFlow();
+
+  const refitSoon = useCallback(() => {
+    requestAnimationFrame(() => {
+      fitView({ padding: 0.25, maxZoom: 1, duration: 200 });
+    });
+  }, [fitView]);
 
   // Freeze the main canvas while the editor is open
   useEffect(() => {
@@ -178,8 +186,9 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
           },
         ];
       });
+      refitSoon();
     },
-    [makeTemplateNodeId, setRfNodes]
+    [makeTemplateNodeId, setRfNodes, refitSoon]
   );
 
   const applyPreset = useCallback(
@@ -187,8 +196,9 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
       setRfNodes(templateToRfNodes(template, nodeData.sourceImage));
       setRfEdges(templateToRfEdges(template));
       idCounterRef.current = 0;
+      refitSoon();
     },
-    [nodeData.sourceImage, setRfNodes, setRfEdges]
+    [nodeData.sourceImage, setRfNodes, setRfEdges, refitSoon]
   );
 
   const isValidConnection = useCallback(
@@ -291,7 +301,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
         </div>
 
         {/* Toolbar */}
-        <div className="flex items-center gap-2 px-5 py-2.5 border-b border-neutral-700/40 shrink-0 overflow-x-auto">
+        <div className="flex items-center flex-wrap gap-2 px-5 py-2.5 border-b border-neutral-700/40 shrink-0">
           <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider shrink-0">
             Add node
           </span>
