@@ -81,7 +81,8 @@ export async function executeVideoStitch(ctx: NodeExecutionContext): Promise<voi
       (progress) => {
         if (signal?.aborted) return;
         updateNodeData(node.id, { progress: progress.progress });
-      }
+      },
+      signal
     );
 
     if (signal?.aborted) {
@@ -187,7 +188,8 @@ export async function executeVideoTrim(ctx: NodeExecutionContext): Promise<void>
       (progress) => {
         if (signal?.aborted) return;
         updateNodeData(node.id, { progress: progress.progress });
-      }
+      },
+      signal
     );
 
     if (signal?.aborted) {
@@ -337,7 +339,9 @@ export async function executeEaseCurve(ctx: NodeExecutionContext): Promise<void>
         if (signal?.aborted) return;
         updateNodeData(node.id, { progress: progress.progress });
       },
-      easingFunction
+      easingFunction,
+      undefined, // bitrate — keep default
+      signal
     );
 
     if (signal?.aborted) {
