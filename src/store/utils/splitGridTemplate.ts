@@ -225,8 +225,10 @@ const CLUSTER_GAP = 60;
 const SPLIT_NODE_MARGIN = 100;
 const GROUP_PADDING = 20;
 
-function templateNodeDimensions(type: NodeType): { width: number; height: number } {
-  return defaultNodeDimensions[type] ?? { width: 300, height: 280 };
+function templateNodeDimensions(
+  templateNode: Pick<SplitGridTemplate["nodes"][number], "type" | "size">
+): { width: number; height: number } {
+  return templateNode.size ?? defaultNodeDimensions[templateNode.type] ?? { width: 300, height: 280 };
 }
 
 /**
@@ -244,7 +246,7 @@ export function buildCellInstances(options: BuildCellInstancesOptions): CellInst
   let maxX = -Infinity;
   let maxY = -Infinity;
   for (const templateNode of template.nodes) {
-    const { width, height } = templateNodeDimensions(templateNode.type);
+    const { width, height } = templateNodeDimensions(templateNode);
     minX = Math.min(minX, templateNode.position.x);
     minY = Math.min(minY, templateNode.position.y);
     maxX = Math.max(maxX, templateNode.position.x + width);
@@ -256,7 +258,7 @@ export function buildCellInstances(options: BuildCellInstancesOptions): CellInst
   const splitWidth =
     (splitNode.style?.width as number) ??
     splitNode.measured?.width ??
-    templateNodeDimensions("splitGrid").width;
+    templateNodeDimensions({ type: "splitGrid" }).width;
   const startX = splitNode.position.x + splitWidth + SPLIT_NODE_MARGIN;
   const startY = splitNode.position.y;
 
@@ -277,7 +279,7 @@ export function buildCellInstances(options: BuildCellInstancesOptions): CellInst
     for (const templateNode of template.nodes) {
       const nodeId = makeNodeId(templateNode.type);
       idMap.set(templateNode.id, nodeId);
-      const { width, height } = templateNodeDimensions(templateNode.type);
+      const { width, height } = templateNodeDimensions(templateNode);
       const defaultData = createDefaultNodeData(templateNode.type);
       const data = templateNode.data
         ? ({ ...defaultData, ...templateNode.data } as WorkflowNodeData)

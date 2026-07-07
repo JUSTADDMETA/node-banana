@@ -114,19 +114,8 @@ function seedOverridesFor(type: NodeType): Record<string, unknown> {
   return {};
 }
 
-/**
- * Extra editor-only height for nodes that render an in-flow settings panel,
- * so the panel fits inside the card (and the selection ring wraps it all).
- * Materialized nodes still use the standard defaultNodeDimensions.
- */
-const EDITOR_EXTRA_HEIGHT: Partial<Record<NodeType, number>> = {
-  nanoBanana: 180,
-  llmGenerate: 210,
-};
-
 function editorNodeDimensions(type: NodeType): { width: number; height: number } {
-  const dims = defaultNodeDimensions[type] ?? { width: 300, height: 280 };
-  return { width: dims.width, height: dims.height + (EDITOR_EXTRA_HEIGHT[type] ?? 0) };
+  return defaultNodeDimensions[type] ?? { width: 300, height: 280 };
 }
 
 function templateToRfNodes(
@@ -134,7 +123,8 @@ function templateToRfNodes(
   sourceImage: string | null
 ): TemplateRFNode[] {
   return template.nodes.map((templateNode) => {
-    const dims = editorNodeDimensions(templateNode.type);
+    // Nodes with an in-flow settings panel auto-grow to fit it on mount
+    const dims = templateNode.size ?? editorNodeDimensions(templateNode.type);
     const isBase = templateNode.id === template.baseNodeId;
     let overrides = { ...(templateNode.data ?? {}) };
     // Generate/LLM nodes always show concrete settings, like the main canvas
@@ -176,12 +166,26 @@ function serializeTemplate(
 ): SplitGridTemplate {
   return {
     baseNodeId,
-    nodes: rfNodes.map((node) => ({
-      id: node.id,
-      type: node.data.nodeType,
-      position: { x: node.position.x, y: node.position.y },
-      data: Object.keys(node.data.overrides).length > 0 ? node.data.overrides : undefined,
-    })),
+    nodes: rfNodes.map((node) => {
+      // Persist the node's real size, minus the editor-only settings panel
+      // (real nodes grow their own panel at runtime, like the main canvas)
+      const width =
+        (node.width as number | undefined) ?? (node.style?.width as number | undefined);
+      const rawHeight =
+        (node.height as number | undefined) ?? (node.style?.height as number | undefined);
+      const panelHeight = node.data._editorPanelHeight ?? 0;
+      const size =
+        width && rawHeight
+          ? { width, height: Math.max(80, rawHeight - panelHeight) }
+          : undefined;
+      return {
+        id: node.id,
+        type: node.data.nodeType,
+        position: { x: node.position.x, y: node.position.y },
+        size,
+        data: Object.keys(node.data.overrides).length > 0 ? node.data.overrides : undefined,
+      };
+    }),
     edges: rfEdges
       .filter((edge) => edge.sourceHandle && edge.targetHandle)
       .map((edge) => ({
@@ -308,6 +312,9 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   );
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [dropMenu, setDropMenu] = useState<TemplateDropMenuState | null>(null);
+  // Drags that end over the backdrop synthesize a click on it — only treat a
+  // click as backdrop-close when the pointer also went DOWN on the backdrop
+  const backdropPointerDownRef = useRef(false);
   const idCounterRef = useRef(0);
   const baseNodeId = initialTemplate.baseNodeId;
   const { fitView, screenToFlowPosition } = useReactFlow();
@@ -577,8 +584,14 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
       onWheelCapture={(event) => event.stopPropagation()}
+      onPointerDown={(event) => {
+        backdropPointerDownRef.current = event.target === event.currentTarget;
+      }}
       onClick={(event) => {
-        if (event.target === event.currentTarget) requestClose();
+        if (event.target === event.currentTarget && backdropPointerDownRef.current) {
+          requestClose();
+        }
+        backdropPointerDownRef.current = false;
       }}
     >
       <div className="relative w-[min(1080px,94vw)] h-[min(720px,88vh)] bg-neutral-800 rounded-xl border border-neutral-700 shadow-2xl overflow-clip flex flex-col">

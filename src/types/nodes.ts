@@ -484,6 +484,8 @@ export interface SplitGridTemplateNode {
   id: string;
   type: NodeType;
   position: { x: number; y: number };
+  /** Node dimensions; falls back to defaultNodeDimensions when absent */
+  size?: { width: number; height: number };
   /** Partial node data overrides applied on top of createDefaultNodeData(type) */
   data?: Record<string, unknown>;
 }

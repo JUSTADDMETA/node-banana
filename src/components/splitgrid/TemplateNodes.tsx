@@ -9,8 +9,8 @@
  * browser for the full multi-provider model catalog.
  */
 
-import { createContext, memo, useCallback, useContext, useEffect, useState } from "react";
-import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
+import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { Handle, NodeResizer, Position, useReactFlow, type NodeProps, type Node } from "@xyflow/react";
 import type {
   AspectRatio,
   LLMModelType,
@@ -32,6 +32,8 @@ export interface TemplateNodeData extends Record<string, unknown> {
   overrides: Record<string, unknown>;
   isBase: boolean;
   sourceImage?: string | null;
+  /** Measured settings-panel height, subtracted when persisting node size */
+  _editorPanelHeight?: number;
 }
 
 export type TemplateRFNode = Node<TemplateNodeData, "splitGridTemplateNode">;
@@ -84,6 +86,51 @@ const GEMINI_SELECT_CLASS =
   "nodrag nopan flex-1 min-w-0 text-[11px] py-1 px-2 bg-[#1a1a1a] rounded-md focus:outline-none focus:ring-1 focus:ring-neutral-600 text-white";
 const SLIDER_CLASS =
   "nodrag nopan w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-blue-500";
+
+/**
+ * Grows/shrinks the node to follow its settings panel's measured height —
+ * the same behavior BaseNode gives inline parameter panels on the main
+ * canvas — so panel content is never clipped or scrolled. The measured
+ * height is stashed in node data so persistence can subtract it.
+ */
+function useAutoGrowPanel(nodeId: string) {
+  const { setNodes } = useReactFlow();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const lastHeightRef = useRef(0);
+
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const height = el.offsetHeight;
+      if (height === 0) return;
+      const delta = height - lastHeightRef.current;
+      if (Math.abs(delta) < 2) return;
+      lastHeightRef.current = height;
+      setNodes((nodes) =>
+        nodes.map((node) => {
+          if (node.id !== nodeId) return node;
+          const currentHeight =
+            (node.height as number) ??
+            (node.style?.height as number) ??
+            node.measured?.height ??
+            0;
+          const newHeight = currentHeight + delta;
+          return {
+            ...node,
+            height: newHeight,
+            style: { ...node.style, height: newHeight },
+            data: { ...node.data, _editorPanelHeight: height },
+          };
+        })
+      );
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [nodeId, setNodes]);
+
+  return panelRef;
+}
 
 function handleOffset(handle: TemplateHandleDef, index: number, count: number): string {
   if (handle.top) return handle.top;
@@ -190,6 +237,7 @@ function GenerateBody({ nodeId, overrides }: { nodeId: string; overrides: Record
   const { setOverrides } = useContext(TemplateEditorContext);
   const [isParamsExpanded, setIsParamsExpanded] = useState(true);
   const [isBrowseDialogOpen, setIsBrowseDialogOpen] = useState(false);
+  const panelRef = useAutoGrowPanel(nodeId);
 
   // While the browse dialog is open, Escape must close only the dialog — not
   // bubble to the template modal's own close/discard handler
@@ -280,13 +328,13 @@ function GenerateBody({ nodeId, overrides }: { nodeId: string; overrides: Record
         </div>
 
         {/* Settings panel in-flow so the selection ring wraps the whole node */}
-        <div className="shrink-0 rounded-b-lg overflow-hidden">
+        <div ref={panelRef} className="shrink-0 rounded-b-lg overflow-hidden">
           <InlineParameterPanel
             expanded={isParamsExpanded}
             onToggle={() => setIsParamsExpanded((prev) => !prev)}
             nodeId={`tmpl-${nodeId}`}
           >
-            <div className="nowheel max-h-[200px] overflow-y-auto">
+            <div>
           {isGeminiProvider && currentModelId ? (
             <div className="space-y-1.5 max-w-[280px]">
               <div className="flex items-center gap-2">
@@ -391,6 +439,7 @@ function GenerateBody({ nodeId, overrides }: { nodeId: string; overrides: Record
 function LlmBody({ nodeId, overrides }: { nodeId: string; overrides: Record<string, unknown> }) {
   const { setOverrides } = useContext(TemplateEditorContext);
   const [isParamsExpanded, setIsParamsExpanded] = useState(true);
+  const panelRef = useAutoGrowPanel(nodeId);
 
   const provider = (overrides.provider as LLMProvider | undefined) ?? "google";
   const availableModels = LLM_MODELS[provider] ?? LLM_MODELS.google;
@@ -426,13 +475,13 @@ function LlmBody({ nodeId, overrides }: { nodeId: string; overrides: Record<stri
       </div>
 
       {/* Settings panel in-flow so the selection ring wraps the whole node */}
-      <div className="shrink-0 rounded-b-lg overflow-hidden">
+      <div ref={panelRef} className="shrink-0 rounded-b-lg overflow-hidden">
         <InlineParameterPanel
           expanded={isParamsExpanded}
           onToggle={() => setIsParamsExpanded((prev) => !prev)}
           nodeId={`tmpl-${nodeId}`}
         >
-          <div className="nowheel max-h-[200px] overflow-y-auto space-y-1.5 max-w-[280px]">
+          <div className="space-y-1.5 max-w-[280px]">
             <div className="flex items-center gap-2">
               <label className="text-[11px] text-neutral-400 shrink-0">Provider</label>
               <select value={provider} onChange={handleProviderChange} className={GEMINI_SELECT_CLASS}>
@@ -518,6 +567,14 @@ function TemplateNodeComponent({ id, data, selected }: NodeProps<TemplateRFNode>
 
   return (
     <div className="relative h-full w-full">
+      {/* Same invisible-handle resizer as BaseNode on the main canvas */}
+      <NodeResizer
+        isVisible={selected}
+        minWidth={200}
+        minHeight={120}
+        lineClassName="!border-transparent"
+        handleClassName="!w-5 !h-5 !bg-transparent !border-none"
+      />
       <MiniFloatingHeader
         title={title}
         provider={isGenerate ? selectedModel?.provider ?? "gemini" : undefined}
