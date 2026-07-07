@@ -573,6 +573,8 @@ const GEMINI_VIDEO_MODELS: ProviderModel[] = [
 ];
 
 // OpenAI image models (hardcoded - no public image model discovery API)
+// NOTE: `pricing.amount` is a flat per-run ESTIMATE. OpenAI image pricing varies
+// by size and quality; cost tracking treats this as an approximation.
 const OPENAI_IMAGE_MODELS: ProviderModel[] = [
   {
     id: "gpt-image-2",

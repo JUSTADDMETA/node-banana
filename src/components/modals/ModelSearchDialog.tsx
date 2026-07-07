@@ -488,6 +488,8 @@ export function ModelSearchDialog({
         return "Kie.ai";
       case "wavespeed":
         return "WaveSpeed";
+      case "openai":
+        return "OpenAI";
       default:
         return provider;
     }

@@ -1266,7 +1266,7 @@ function getOpenAiSchema(modelId: string): ExtractedSchema {
   const parameters: ModelParameter[] = [
     { name: "size", type: "string", description: "Output image size", enum: ["1024x1024", "1024x1536", "1536x1024", "auto"], default: "auto" },
     { name: "quality", type: "string", description: "Output quality level", enum: ["low", "medium", "high", "auto"], default: "auto" },
-    { name: "background", type: "string", description: "Background type for generated image", enum: ["transparent", "opaque"], default: "opaque" },
+    { name: "background", type: "string", description: "Background type for generated image", enum: ["transparent", "opaque", "auto"], default: "auto" },
   ];
   const inputs: ModelInput[] = [
     { name: "prompt", type: "text", required: true, label: "Prompt" },

@@ -74,6 +74,7 @@ export async function generateWithOpenAI(
         Authorization: `Bearer ${apiKey}`,
       },
       body: formData,
+      signal: AbortSignal.timeout(120_000),
     });
   } else {
     // JSON payload for text-to-image generations
@@ -97,6 +98,7 @@ export async function generateWithOpenAI(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120_000),
     });
   }
 
