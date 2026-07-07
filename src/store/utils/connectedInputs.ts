@@ -481,5 +481,17 @@ export function validateWorkflowPure(
       }
     });
 
+  // Check split grid nodes have an image to split
+  nodes
+    .filter((n) => n.type === "splitGrid")
+    .forEach((node) => {
+      const imageConnected = edges.some(
+        (e) => e.target === node.id && !e.data?.isLoop && e.targetHandle === "image"
+      );
+      if (!imageConnected) {
+        errors.push(`Split Grid node "${node.id}" missing image input`);
+      }
+    });
+
   return { valid: errors.length === 0, errors };
 }

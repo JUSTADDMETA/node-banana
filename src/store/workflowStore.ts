@@ -15,6 +15,7 @@ import {
   NodeType,
   NanoBananaNodeData,
   OutputGalleryNodeData,
+  SplitGridNodeData,
   WorkflowNodeData,
   ImageHistoryItem,
   NodeGroup,
@@ -65,6 +66,13 @@ import {
   revokeBlobUrl,
 } from "./utils/executionUtils";
 import { getConnectedInputsPure, validateWorkflowPure, type ConnectedInputs } from "./utils/connectedInputs";
+import {
+  buildCellInstances,
+  computeMaterializedKey,
+  getSplitGridCells,
+  getSplitGridTemplate,
+  needsMaterialization,
+} from "./utils/splitGridTemplate";
 import { evaluateRule } from "./utils/ruleEvaluation";
 import { computeDimmedNodes } from "./utils/dimmingUtils";
 import {
@@ -258,6 +266,16 @@ interface WorkflowStore {
   toggleGroupLock: (groupId: string) => void;
   moveGroupNodes: (groupId: string, delta: { x: number; y: number }) => void;
   setNodeGroupId: (nodeId: string, groupId: string | undefined) => void;
+
+  // Split grid operations
+  /**
+   * Instantiates a split-grid node's cell template onto the canvas: one set of
+   * nodes + one group per grid cell, wired together and reference-linked to the
+   * split node. No-ops when the existing cells already match the current
+   * rows/cols/template configuration, and (unless `force`) when the node still
+   * tracks legacy childNodeIds cells. Returns true when cells were (re)built.
+   */
+  materializeSplitGridCells: (nodeId: string, options?: { force?: boolean }) => boolean;
 
   // UI State
   openModalCount: number;
@@ -993,6 +1011,38 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     // Create new nodes with updated IDs and offset positions
     const newNodes: WorkflowNode[] = clipboard.nodes.map((node) => {
       const defaults = defaultNodeDimensions[node.type as NodeType] || { width: 300, height: 280 };
+      let data = clonePreservingStrings(node.data) as WorkflowNodeData;
+
+      // A pasted splitGrid must not keep driving the original's cell nodes:
+      // remap tracked cell ids when the cells were copied along, otherwise
+      // detach so the copy materializes its own cells on next split.
+      if (node.type === "splitGrid") {
+        const splitData = data as SplitGridNodeData;
+        const cells = getSplitGridCells(splitData);
+        const allCopied =
+          cells.length > 0 &&
+          cells.every((cell) => cell.nodeIds.every((id) => idMapping.has(id)));
+        if (allCopied) {
+          data = {
+            ...splitData,
+            cells: cells.map((cell) => ({
+              ...cell,
+              baseImageNodeId: idMapping.get(cell.baseImageNodeId)!,
+              nodeIds: cell.nodeIds.map((id) => idMapping.get(id)!),
+              groupId: undefined, // groups are not part of the clipboard
+            })),
+            childNodeIds: [],
+          } as WorkflowNodeData;
+        } else {
+          data = {
+            ...splitData,
+            cells: [],
+            childNodeIds: [],
+            materializedKey: null,
+          } as WorkflowNodeData;
+        }
+      }
+
       return {
         ...node,
         id: idMapping.get(node.id)!,
@@ -1007,7 +1057,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         width: undefined,
         height: undefined,
         measured: undefined,
-        data: clonePreservingStrings(node.data),
+        data,
       };
     });
 
@@ -1205,6 +1255,103 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     }));
   },
 
+  materializeSplitGridCells: (nodeId: string, options?: { force?: boolean }) => {
+    const state = get();
+    const splitNode = state.nodes.find((n) => n.id === nodeId && n.type === "splitGrid");
+    if (!splitNode) return false;
+    const data = splitNode.data as SplitGridNodeData;
+
+    const existingNodeIds = new Set(state.nodes.map((n) => n.id));
+    if (!needsMaterialization(data, existingNodeIds, { ignoreLegacy: options?.force })) {
+      return false;
+    }
+
+    const template = getSplitGridTemplate(data);
+    const rows = Math.max(1, data.gridRows || 1);
+    const cols = Math.max(1, data.gridCols || 1);
+
+    // Single checkpoint: one undo restores replaced cells and removes new ones
+    pushUndoCheckpoint(get, set);
+
+    // Previously materialized cells are system-created — replace them
+    const staleCells = getSplitGridCells(data);
+    const staleNodeIds = new Set(staleCells.flatMap((cell) => cell.nodeIds));
+    staleNodeIds.delete(nodeId);
+    const staleGroupIds = new Set(
+      staleCells.map((cell) => cell.groupId).filter((id): id is string => Boolean(id))
+    );
+
+    // Pick one color for all cells, mirroring createGroup's selection
+    const usedColors = new Set(
+      Object.values(state.groups)
+        .filter((group) => !staleGroupIds.has(group.id))
+        .map((group) => group.color)
+    );
+    let groupColor: GroupColor = "neutral";
+    for (const candidate of GROUP_COLOR_ORDER) {
+      if (!usedColors.has(candidate)) {
+        groupColor = candidate;
+        break;
+      }
+    }
+
+    const built = buildCellInstances({
+      splitNode,
+      template,
+      rows,
+      cols,
+      makeNodeId: (type) => `${type}-${++nodeIdCounter}`,
+      makeGroupId: () => `group-${++groupIdCounter}`,
+      groupColor,
+      makeEdgeData: (connection) =>
+        buildConnectionEdgeData(connection as Connection, state.nodes, state.edges),
+    });
+
+    const materializedKey = computeMaterializedKey(rows, cols, template);
+    const removedEdges = state.edges.filter(
+      (edge) => staleNodeIds.has(edge.source) || staleNodeIds.has(edge.target)
+    );
+
+    set((current) => {
+      const remainingGroups = { ...current.groups };
+      for (const groupId of staleGroupIds) delete remainingGroups[groupId];
+      return {
+        nodes: [
+          ...current.nodes
+            .filter((n) => !staleNodeIds.has(n.id))
+            .map((n) =>
+              n.id === nodeId
+                ? {
+                    ...n,
+                    data: {
+                      ...n.data,
+                      template,
+                      cells: built.cells,
+                      materializedKey,
+                      targetCount: rows * cols,
+                      childNodeIds: [],
+                      isConfigured: true,
+                    } as WorkflowNodeData,
+                  }
+                : n
+            ),
+          ...built.nodes,
+        ] as WorkflowNode[],
+        edges: [
+          ...current.edges.filter(
+            (edge) => !staleNodeIds.has(edge.source) && !staleNodeIds.has(edge.target)
+          ),
+          ...built.edges,
+        ],
+        groups: { ...remainingGroups, ...built.groups },
+        hasUnsavedChanges: true,
+      };
+    });
+
+    clearStaleInputImages(removedEdges, get);
+    return true;
+  },
+
   getNodeById: (id: string) => {
     return get().nodes.find((node) => node.id === id);
   },
@@ -1256,6 +1403,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         hasUnsavedChanges: true,
       }));
     },
+    materializeSplitGridCells: (nodeId: string) => get().materializeSplitGridCells(nodeId),
     get: get as () => unknown,
   }),
 
