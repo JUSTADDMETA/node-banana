@@ -455,7 +455,8 @@ export function FloatingActionBar() {
       // Use mock execution for tutorial
       mockTutorialExecution();
     } else {
-      // Normal execution
+      // Normal execution. Resume-from-pause (pause edges) is handled inside
+      // executeWorkflow when no explicit start node is given.
       executeWorkflow();
     }
   }, [isRunning, stopWorkflow, executeWorkflow, mockTutorialExecution]);

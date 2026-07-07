@@ -43,6 +43,8 @@ export type NodeType =
   | "videoTrim"
   | "videoFrameGrab"
   | "removeBackground"
+  | "imageResize"
+  | "gifEncoder"
   | "router"
   | "switch"
   | "conditionalSwitch"
@@ -502,6 +504,49 @@ export interface SplitGridNodeData extends BaseNodeData {
 }
 
 /**
+ * Image Resize node - resize, refit, and re-encode a single image
+ */
+export type ImageResizeMode = "exact" | "maxEdge" | "scale";
+export type ImageResizeFit = "contain" | "cover" | "stretch";
+export type ImageResizeFormat = "keep" | "png" | "jpeg" | "webp";
+
+export interface ImageResizeNodeData extends BaseNodeData {
+  sourceImage: string | null;
+  outputImage: string | null;
+  mode: ImageResizeMode;
+  width: number;          // used in exact mode
+  height: number;         // used in exact mode
+  maxEdge: number;        // used in maxEdge mode
+  scalePct: number;       // used in scale mode (0-400)
+  fit: ImageResizeFit;
+  padColor: string;       // hex color for "contain" letterboxing
+  format: ImageResizeFormat;
+  quality: number;        // 0-1 for jpeg/webp
+  outputDimensions: { width: number; height: number } | null;
+  outputBytes: number | null;
+  status: NodeStatus;
+  error: string | null;
+}
+
+/**
+ * Gif Encoder node - assembles N image frames into an animated GIF
+ */
+export interface GifEncoderNodeData extends BaseNodeData {
+  clipOrder: string[];          // edge IDs in user-defined order
+  outputGif: string | null;     // GIF data URL
+  fps: number;                  // 1-30
+  loopCount: number;            // 0 = infinite, otherwise N
+  colorCount: number;           // 2-256
+  dither: boolean;
+  targetMaxBytes: number | null; // when set, auto-tune until under this size
+  outputBytes: number | null;
+  outputDimensions: { width: number; height: number } | null;
+  status: NodeStatus;
+  error: string | null;
+  progress: number;             // 0-100
+}
+
+/**
  * GLB 3D Viewer node - loads and displays 3D models, captures viewport as image
  */
 export interface GLBViewerNodeData extends BaseNodeData {
@@ -536,6 +581,8 @@ export type WorkflowNodeData =
   | VideoTrimNodeData
   | VideoFrameGrabNodeData
   | RemoveBackgroundNodeData
+  | ImageResizeNodeData
+  | GifEncoderNodeData
   | RouterNodeData
   | SwitchNodeData
   | ConditionalSwitchNodeData

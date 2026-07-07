@@ -27,7 +27,7 @@ import { ProviderType } from "@/types";
 import { ModelParameter, ModelInput } from "@/lib/providers/types";
 import {
   getCachedWaveSpeedSchema,
-  setCachedWaveSpeedSchema,
+  setCachedWaveSpeedSchemas,
   WaveSpeedApiSchema,
 } from "@/lib/providers/cache";
 
@@ -1464,16 +1464,28 @@ async function fetchWaveSpeedSchema(
         const data = await response.json();
         const models = data.models || data.data || data.results || [];
 
-        // Find the model by ID
+        // Bulk-cache every schema from the fetched catalogue so sibling
+        // model requests don't re-download the entire payload.
+        const schemaMap = new Map<string, WaveSpeedApiSchema>();
+        for (const m of models as Record<string, unknown>[]) {
+          const id = (m.model_id || m.id || m.modelId || m.name) as
+            | string
+            | undefined;
+          if (id && m.api_schema) {
+            schemaMap.set(id, m.api_schema as WaveSpeedApiSchema);
+          }
+        }
+        if (schemaMap.size > 0) {
+          setCachedWaveSpeedSchemas(schemaMap);
+        }
+
+        // Find the requested model by ID
         const model = models.find((m: Record<string, unknown>) => {
           const id = m.model_id || m.id || m.modelId || m.name;
           return id === modelId;
         });
 
         if (model?.api_schema) {
-          // Cache the schema for future use
-          setCachedWaveSpeedSchema(modelId, model.api_schema as WaveSpeedApiSchema);
-
           const result = extractWaveSpeedSchema(model.api_schema as WaveSpeedApiSchema, modelId);
           if (result.parameters.length > 0 || result.inputs.length > 0) {
             console.log(`[WaveSpeed Schema] Found dynamic schema with ${result.parameters.length} params, ${result.inputs.length} inputs`);

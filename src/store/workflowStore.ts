@@ -58,10 +58,11 @@ import {
   loadConcurrencySetting,
   saveConcurrencySetting,
   groupNodesByLevel,
-  chunk,
+  runNodesWithConcurrency,
   clearNodeImageRefs,
   findLoopSubgraph,
   copyLoopOutput,
+  revokeBlobUrl,
 } from "./utils/executionUtils";
 import { getConnectedInputsPure, validateWorkflowPure, type ConnectedInputs } from "./utils/connectedInputs";
 import { evaluateRule } from "./utils/ruleEvaluation";
@@ -85,6 +86,8 @@ import {
   executeVideoTrim,
   executeVideoFrameGrab,
   executeRemoveBackground,
+  executeImageResize,
+  executeGifEncoder,
   executeGlbViewer,
   executeRouter,
   executeSwitch,
@@ -455,6 +458,7 @@ export { GROUP_COLORS } from "./utils/nodeDefaults";
 /** Node types whose output carries image data */
 const IMAGE_SOURCE_NODE_TYPES = new Set<string>([
   "imageInput", "annotation", "nanoBanana", "glbViewer", "videoFrameGrab", "removeBackground",
+  "imageResize", "gifEncoder",
 ]);
 
 /**
@@ -520,6 +524,40 @@ function pushUndoCheckpoint(
 /** Update reactive canUndo/canRedo flags */
 function syncUndoFlags(set: (partial: Partial<WorkflowStore>) => void): void {
   set({ canUndo: undoManager.canUndo, canRedo: undoManager.canRedo });
+}
+
+// Cap the global image history so full base64 data URLs don't accumulate
+// unbounded across a session (each item can be 1-2MB).
+const MAX_GLOBAL_IMAGE_HISTORY = 50;
+
+// Scan a node's data for blob: object URLs and revoke them to free the
+// backing Blob memory. Used when nodes are permanently discarded (workflow
+// clear/reload) where the undo history that referenced them is also cleared.
+function revokeNodeBlobUrls(nodes: WorkflowNode[]): void {
+  // Recursively walk strings, arrays, and nested plain objects so blob: URLs
+  // held in gallery/video arrays or nested media metadata are revoked too.
+  // The depth cap guards against cycles / pathologically deep structures.
+  const revokeDeep = (value: unknown, depth: number): void => {
+    if (depth > 8) return;
+    if (typeof value === "string") {
+      if (value.startsWith("blob:")) revokeBlobUrl(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) revokeDeep(item, depth + 1);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        revokeDeep(item, depth + 1);
+      }
+    }
+  };
+  for (const node of nodes) {
+    const data = node.data as Record<string, unknown> | undefined;
+    if (!data) continue;
+    revokeDeep(data, 0);
+  }
 }
 
 const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
@@ -1208,10 +1246,30 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         hasUnsavedChanges: true,
       }));
     },
+    appendOutputGalleryVideo: (targetId: string, video: string) => {
+      set((state) => ({
+        nodes: state.nodes.map((n) =>
+          n.id === targetId && n.type === "outputGallery"
+            ? { ...n, data: { ...n.data, videos: [video, ...((n.data as OutputGalleryNodeData).videos || [])] } as WorkflowNodeData }
+            : n
+        ) as WorkflowNode[],
+        hasUnsavedChanges: true,
+      }));
+    },
     get: get as () => unknown,
   }),
 
   executeWorkflow: async (startFromNodeId?: string) => {
+    // Resume support: if Run is pressed with no explicit start node while the
+    // workflow is paused at a node (pause edge), resume from that node instead
+    // of restarting the whole graph (which would re-run/re-bill upstream nodes
+    // and immediately pause again). An explicit startFromNodeId (e.g. "Run from
+    // selected") is respected as-is.
+    if (startFromNodeId === undefined) {
+      const paused = get().pausedAtNodeId;
+      if (paused) startFromNodeId = paused;
+    }
+
     const { nodes, edges, groups, isRunning, maxConcurrentCalls } = get();
 
     if (isRunning) {
@@ -1414,6 +1472,12 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           case "removeBackground":
             await executeRemoveBackground(executionCtx);
             break;
+          case "imageResize":
+            await executeImageResize(executionCtx);
+            break;
+          case "gifEncoder":
+            await executeGifEncoder(executionCtx);
+            break;
           case "router":
             await executeRouter(executionCtx);
             break;
@@ -1426,58 +1490,34 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         }
     }; // End of executeSingleNode helper
 
-    // Helper to execute a set of levels sequentially, with parallel batches within each level
+    // Helper to execute a set of levels using dependency-aware concurrent scheduling:
+    // each node starts as soon as its direct upstreams finish and a slot is free,
+    // rather than waiting on a full level barrier or a fixed batch's slowest node.
     const executeLevels = async (
       levels: ReturnType<typeof groupNodesByLevel>,
       startLevel: number = 0
     ): Promise<void> => {
-      for (let levelIdx = startLevel; levelIdx < levels.length; levelIdx++) {
-        if (abortController.signal.aborted || !get().isRunning) break;
-
-        const level = levels[levelIdx];
-        // Get fresh node references from the store for each level
-        const currentNodes = get().nodes;
-        const levelNodes = level.nodeIds
-          .map((id) => currentNodes.find((n) => n.id === id))
-          .filter((n): n is WorkflowNode => n !== undefined);
-
-        if (levelNodes.length === 0) continue;
-
-        const batches = chunk(levelNodes, maxConcurrentCalls);
-
-        for (const batch of batches) {
-          if (abortController.signal.aborted || !get().isRunning) break;
-
-          const batchIds = batch.map((n) => n.id);
-          set({ currentNodeIds: batchIds });
-
-          logger.info('node.execution', `Executing level ${levelIdx} batch`, {
-            level: levelIdx,
-            nodeCount: batch.length,
-            nodeIds: batchIds,
+      // Only forward edges gate readiness (loop edges are excluded from the DAG).
+      const forwardDeps = edges.filter((e) => !e.data?.isLoop);
+      await runNodesWithConcurrency({
+        levels,
+        startLevel,
+        edges: forwardDeps,
+        maxConcurrent: maxConcurrentCalls,
+        signal: abortController.signal,
+        isRunning: () => get().isRunning,
+        getNode: (id) => get().nodes.find((n) => n.id === id),
+        setCurrentNodeIds: (ids) => set({ currentNodeIds: ids }),
+        runNode: (node, signal) => executeSingleNode(node, signal),
+        onNodeError: (node, err) => {
+          logger.error('workflow.error', 'Node execution failed', {
+            nodeId: node.id,
+            nodeType: node.type,
+            error: err instanceof Error ? err.message : String(err),
           });
-
-          const results = await Promise.allSettled(
-            batch.map((node) => executeSingleNode(node, abortController.signal))
-          );
-
-          for (let i = 0; i < results.length; i++) {
-            const r = results[i];
-            if (r.status === 'rejected' &&
-                !(r.reason instanceof DOMException && r.reason.name === 'AbortError')) {
-              const failedNode = batch[i];
-              logger.error('workflow.error', 'Node execution failed in parallel batch', {
-                level: levelIdx,
-                nodeId: failedNode.id,
-                nodeType: failedNode.type,
-                error: r.reason instanceof Error ? r.reason.message : String(r.reason),
-              });
-              abortController.abort();
-              throw r.reason;
-            }
-          }
-        }
-      }
+        },
+        abort: () => abortController.abort(),
+      });
     };
 
     try {
@@ -1796,6 +1836,16 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         set({ isRunning: false, currentNodeIds: [], _abortController: null });
         await logger.endSession();
         return;
+      } else if (node.type === "imageResize") {
+        await executeImageResize(executionCtx);
+        set({ isRunning: false, currentNodeIds: [], _abortController: null });
+        await logger.endSession();
+        return;
+      } else if (node.type === "gifEncoder") {
+        await executeGifEncoder(executionCtx);
+        set({ isRunning: false, currentNodeIds: [], _abortController: null });
+        await logger.endSession();
+        return;
       } else if (node.type === "output") {
         await executeOutput(executionCtx);
         set({ isRunning: false, currentNodeIds: [], _abortController: null });
@@ -1977,6 +2027,12 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         case "removeBackground":
           await executeRemoveBackground(executionCtx);
           break;
+        case "imageResize":
+          await executeImageResize(executionCtx);
+          break;
+        case "gifEncoder":
+          await executeGifEncoder(executionCtx);
+          break;
         case "router":
           await executeRouter(executionCtx);
           break;
@@ -1990,59 +2046,35 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     };
 
     try {
-      // Filter edges to only those within the selected set for topological sort
+      // Filter edges to only those within the selected set for topological sort.
+      // Exclude loop edges (matching full execution) so looped nodes aren't
+      // dropped from level scheduling or run out of order.
       const selectedEdges = edges.filter(
-        (e) => selectedSet.has(e.source) && selectedSet.has(e.target)
+        (e) => selectedSet.has(e.source) && selectedSet.has(e.target) && !e.data?.isLoop
       );
 
       // Group selected nodes by dependency level for ordered execution
       const levels = groupNodesByLevel(nodesToExecute, selectedEdges);
 
-      // Execute levels sequentially, nodes within each level in parallel batches
-      for (const level of levels) {
-        if (abortController.signal.aborted || !get().isRunning) break;
-
-        const levelNodes = level.nodeIds
-          .map((id) => nodesToExecute.find((n) => n.id === id))
-          .filter((n): n is WorkflowNode => n !== undefined);
-
-        if (levelNodes.length === 0) continue;
-
-        const batches = chunk(levelNodes, maxConcurrentCalls);
-
-        for (const batch of batches) {
-          if (abortController.signal.aborted || !get().isRunning) break;
-
-          const batchIds = batch.map((n) => n.id);
-          set({ currentNodeIds: batchIds });
-
-          logger.info('node.execution', `Executing batch of selected nodes`, {
-            level: level.level,
-            nodeCount: batch.length,
-            nodeIds: batchIds,
+      // Execute selected nodes with dependency-aware concurrent scheduling.
+      await runNodesWithConcurrency({
+        levels,
+        startLevel: 0,
+        edges: selectedEdges,
+        maxConcurrent: maxConcurrentCalls,
+        signal: abortController.signal,
+        isRunning: () => get().isRunning,
+        getNode: (id) => nodesToExecute.find((n) => n.id === id),
+        setCurrentNodeIds: (ids) => set({ currentNodeIds: ids }),
+        runNode: (node, signal) => executeNode(node, signal),
+        onNodeError: (node, err) => {
+          logger.error('node.error', 'Node execution failed in batch', {
+            nodeId: node.id,
+            error: err instanceof Error ? err.message : String(err),
           });
-
-          const results = await Promise.allSettled(
-            batch.map((node) => executeNode(node, abortController.signal))
-          );
-
-          // Check for failures, filtering out AbortErrors
-          const failed = results.find(
-            (r): r is PromiseRejectedResult =>
-              r.status === 'rejected' &&
-              !(r.reason instanceof DOMException && r.reason.name === 'AbortError')
-          );
-
-          if (failed) {
-            logger.error('node.error', 'Node execution failed in batch', {
-              level: level.level,
-              error: failed.reason instanceof Error ? failed.reason.message : String(failed.reason),
-            });
-            abortController.abort();
-            throw failed.reason;
-          }
-        }
-      }
+        },
+        abort: () => abortController.abort(),
+      });
 
       // Propagate to downstream consumer nodes not in the selected set
       if (!abortController.signal.aborted && get().isRunning) {
@@ -2126,6 +2158,13 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   },
 
   loadWorkflow: async (workflow: WorkflowFile, workflowPath?: string, options?: { preserveSnapshot?: boolean }) => {
+    // Abort any in-flight workflow run before swapping the graph. Otherwise old
+    // executors keep polling/spending and stamp stale results (by node id) onto
+    // the freshly loaded nodes — especially when ids are reused across reloads.
+    const inflight = get()._abortController;
+    if (inflight) inflight.abort("workflow-replaced");
+    set({ isRunning: false, pausedAtNodeId: null, currentNodeIds: [], _abortController: null });
+
     // Update nodeIdCounter to avoid ID collisions
     const maxNodeId = workflow.nodes.reduce((max, node) => {
       const match = node.id.match(/-(\d+)$/);
@@ -2224,6 +2263,10 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     // Load cost data for this workflow
     const costData = workflow.id ? loadWorkflowCostData(workflow.id) : null;
 
+    // Revoke any blob: object URLs held by the outgoing nodes before they are
+    // replaced. Safe because the undo history that referenced them is cleared below.
+    revokeNodeBlobUrls(get().nodes);
+
     set({
       // Clear selected state - selection should not be persisted across sessions
       // Also validate position to ensure coordinates are finite numbers
@@ -2255,6 +2298,8 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       useExternalImageStorage: savedConfig?.useExternalImageStorage ?? true,
       // Reset viewed comments when loading new workflow
       viewedCommentNodeIds: new Set<string>(),
+      // Reset global image history (full base64 data URLs) when loading a workflow
+      globalImageHistory: [],
       // Dismiss welcome modal after loading a workflow
       showQuickstart: false,
     });
@@ -2279,12 +2324,23 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   },
 
   clearWorkflow: () => {
+    // Abort any in-flight run so old executors stop writing into the cleared graph.
+    const inflight = get()._abortController;
+    if (inflight) inflight.abort("workflow-cleared");
+    // Revoke any blob: object URLs held by the outgoing nodes before they are
+    // discarded. Safe here because the undo history that also referenced them
+    // is cleared below.
+    revokeNodeBlobUrls(get().nodes);
     set({
       nodes: [],
       edges: [],
       groups: {},
       isRunning: false,
       currentNodeIds: [],
+      pausedAtNodeId: null,
+      _abortController: null,
+      // Reset global image history (full base64 data URLs) on workflow clear
+      globalImageHistory: [],
       // Reset auto-save state when clearing workflow
       workflowId: null,
       workflowName: null,
@@ -2321,7 +2377,10 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     };
 
     set((state) => ({
-      globalImageHistory: [newItem, ...state.globalImageHistory],
+      globalImageHistory: [newItem, ...state.globalImageHistory].slice(
+        0,
+        MAX_GLOBAL_IMAGE_HISTORY
+      ),
     }));
   },
 
@@ -2426,6 +2485,17 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         });
       }
 
+      // Snapshot the exact serialized state (nodes, edges, edge style, groups,
+      // name) we are about to persist. After the long awaits below (media
+      // externalization + POST) we compare against the live store to detect edits
+      // made during the save window, so we neither clobber them nor falsely mark
+      // the workflow as saved.
+      const savedNodesSnapshot = currentNodes;
+      const savedEdgesSnapshot = edges;
+      const savedEdgeStyleSnapshot = edgeStyle;
+      const savedGroupsSnapshot = groups;
+      const savedWorkflowNameSnapshot = workflowName;
+
       let workflow: WorkflowFile = {
         version: 1,
         id: workflowId,
@@ -2457,73 +2527,67 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       if (result.success) {
         const timestamp = Date.now();
 
+        // Did the user edit the graph while the save was in flight? If so we must
+        // not overwrite those edits, and the workflow is not actually clean.
+        // Compare every serialized field (nodes, edges, edge style, groups, name),
+        // not just nodes, so edits to any of them keep the workflow dirty.
+        const fresh = get();
+        const freshNodes = fresh.nodes;
+        const changedDuringSave =
+          freshNodes !== savedNodesSnapshot ||
+          fresh.edges !== savedEdgesSnapshot ||
+          fresh.edgeStyle !== savedEdgeStyleSnapshot ||
+          fresh.groups !== savedGroupsSnapshot ||
+          fresh.workflowName !== savedWorkflowNameSnapshot;
+
         // If we externalized media, update store nodes with the refs
         // This prevents duplicate media on subsequent saves
         if (useExternalImageStorage && workflow.nodes !== currentNodes) {
-          // Merge refs from externalized nodes into current nodes (keeping media data)
-          const nodesWithRefs = currentNodes.map((node, index) => {
-            const externalizedNode = workflow.nodes[index];
-            if (!externalizedNode || node.id !== externalizedNode.id) {
-              return node; // Safety check - nodes should match
-            }
+          // String-valued ref fields and array-valued ref fields carried on the
+          // various node types (imageRefs/videoRefs are the outputGallery plurals).
+          const STRING_REF_FIELDS = [
+            'imageRef', 'sourceImageRef', 'outputImageRef', 'imageARef', 'imageBRef',
+            'capturedImageRef', 'videoRef', 'outputVideoRef', 'audioFileRef', 'outputAudioRef',
+          ] as const;
+          const ARRAY_REF_FIELDS = ['inputImageRefs', 'imageRefs', 'videoRefs'] as const;
 
-            // Copy refs from externalized node while keeping current media data
-            // Use type assertion to access ref fields that may exist on various node types
+          // Index the externalized refs by node id (not array position) so the
+          // merge is robust to nodes added/removed/reordered during the save.
+          const extRefsById = new Map<string, Record<string, unknown>>();
+          for (const externalizedNode of workflow.nodes) {
+            extRefsById.set(externalizedNode.id, externalizedNode.data as Record<string, unknown>);
+          }
+
+          // Merge refs into the LIVE nodes so concurrent edits are preserved;
+          // nodes that don't have externalized refs (e.g. added mid-save) are
+          // returned untouched.
+          const nodesWithRefs = freshNodes.map((node) => {
+            const extData = extRefsById.get(node.id);
+            if (!extData) return node;
+
             const mergedData = { ...node.data } as Record<string, unknown>;
-            const extData = externalizedNode.data as Record<string, unknown>;
-
-            // Copy ref fields based on node type
-            // Image refs
-            if (extData.imageRef && typeof extData.imageRef === 'string') {
-              mergedData.imageRef = extData.imageRef;
+            let touched = false;
+            for (const key of STRING_REF_FIELDS) {
+              if (typeof extData[key] === 'string') { mergedData[key] = extData[key]; touched = true; }
             }
-            if (extData.sourceImageRef && typeof extData.sourceImageRef === 'string') {
-              mergedData.sourceImageRef = extData.sourceImageRef;
+            for (const key of ARRAY_REF_FIELDS) {
+              if (Array.isArray(extData[key])) { mergedData[key] = extData[key]; touched = true; }
             }
-            if (extData.outputImageRef && typeof extData.outputImageRef === 'string') {
-              mergedData.outputImageRef = extData.outputImageRef;
-            }
-            if (extData.inputImageRefs && Array.isArray(extData.inputImageRefs)) {
-              mergedData.inputImageRefs = extData.inputImageRefs;
-            }
-            if (extData.imageARef && typeof extData.imageARef === 'string') {
-              mergedData.imageARef = extData.imageARef;
-            }
-            if (extData.imageBRef && typeof extData.imageBRef === 'string') {
-              mergedData.imageBRef = extData.imageBRef;
-            }
-            if (extData.capturedImageRef && typeof extData.capturedImageRef === 'string') {
-              mergedData.capturedImageRef = extData.capturedImageRef;
-            }
-            // Video refs
-            if (extData.videoRef && typeof extData.videoRef === 'string') {
-              mergedData.videoRef = extData.videoRef;
-            }
-            if (extData.outputVideoRef && typeof extData.outputVideoRef === 'string') {
-              mergedData.outputVideoRef = extData.outputVideoRef;
-            }
-            // Audio refs
-            if (extData.audioFileRef && typeof extData.audioFileRef === 'string') {
-              mergedData.audioFileRef = extData.audioFileRef;
-            }
-            if (extData.outputAudioRef && typeof extData.outputAudioRef === 'string') {
-              mergedData.outputAudioRef = extData.outputAudioRef;
-            }
-
-            return { ...node, data: mergedData as WorkflowNodeData } as WorkflowNode;
+            return touched ? ({ ...node, data: mergedData as WorkflowNodeData } as WorkflowNode) : node;
           });
 
           set({
             nodes: nodesWithRefs,
             lastSavedAt: timestamp,
-            hasUnsavedChanges: false,
+            // Keep the workflow dirty if edits landed during the save window.
+            hasUnsavedChanges: changedDuringSave,
             // Update imageRefBasePath to reflect new save location
             imageRefBasePath: saveDirectoryPath,
           });
         } else {
           set({
             lastSavedAt: timestamp,
-            hasUnsavedChanges: false,
+            hasUnsavedChanges: changedDuringSave,
             // Update imageRefBasePath to reflect save location
             imageRefBasePath: useExternalImageStorage ? saveDirectoryPath : null,
           });
