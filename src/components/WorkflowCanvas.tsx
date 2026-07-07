@@ -81,7 +81,7 @@ import { ModelSearchDialog } from "./modals/ModelSearchDialog";
 import { LLMFallbackPopover } from "./nodes/LLMFallbackPopover";
 import { browseRegistry } from "@/utils/browseRegistry";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
-import { SplitGridSettingsModal } from "./SplitGridSettingsModal";
+import { SplitGridTemplateModal } from "./splitgrid/SplitGridTemplateModal";
 import { createPortal } from "react-dom";
 import { useAnnotationStore } from "@/store/annotationStore";
 import { TutorialOverlay } from "./onboarding/TutorialOverlay";
@@ -1729,7 +1729,7 @@ export function WorkflowCanvas() {
             generate3d: { width: 300, height: 300 },
             generateAudio: { width: 300, height: 280 },
             llmGenerate: { width: 320, height: 360 },
-            splitGrid: { width: 300, height: 320 },
+            splitGrid: { width: 300, height: 400 },
             output: { width: 320, height: 320 },
             outputGallery: { width: 320, height: 360 },
             imageCompare: { width: 400, height: 360 },
@@ -2619,7 +2619,7 @@ export function WorkflowCanvas() {
         const node = getNodeById(expandingNode.id);
         if (!node) return null;
         return (
-          <SplitGridSettingsModal
+          <SplitGridTemplateModal
             nodeId={expandingNode.id}
             nodeData={node.data as any}
             onClose={() => setExpandingNode(null)}
