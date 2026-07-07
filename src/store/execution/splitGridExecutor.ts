@@ -8,7 +8,7 @@
  */
 
 import type { SplitGridNodeData } from "@/types";
-import { getSplitGridCells } from "@/store/utils/splitGridTemplate";
+import { clampGridDimension, getSplitGridCells } from "@/store/utils/splitGridTemplate";
 import type { NodeExecutionContext } from "./types";
 
 export async function executeSplitGrid(ctx: NodeExecutionContext): Promise<void> {
@@ -26,8 +26,8 @@ export async function executeSplitGrid(ctx: NodeExecutionContext): Promise<void>
   }
 
   const nodeData = (getFreshNode(node.id)?.data ?? node.data) as SplitGridNodeData;
-  const rows = Math.max(1, nodeData.gridRows || 1);
-  const cols = Math.max(1, nodeData.gridCols || 1);
+  const rows = clampGridDimension(nodeData.gridRows);
+  const cols = clampGridDimension(nodeData.gridCols);
 
   updateNodeData(node.id, {
     sourceImage,

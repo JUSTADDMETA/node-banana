@@ -9,6 +9,7 @@ const mockUpdateNodeData = vi.fn();
 const mockMaterializeSplitGridCells = vi.fn();
 const mockIncrementModalCount = vi.fn();
 const mockDecrementModalCount = vi.fn();
+let mockIsRunning = false;
 
 vi.mock("@/store/workflowStore", () => ({
   useWorkflowStore: (selector: (state: unknown) => unknown) =>
@@ -17,6 +18,7 @@ vi.mock("@/store/workflowStore", () => ({
       materializeSplitGridCells: mockMaterializeSplitGridCells,
       incrementModalCount: mockIncrementModalCount,
       decrementModalCount: mockDecrementModalCount,
+      isRunning: mockIsRunning,
     }),
 }));
 
@@ -63,6 +65,7 @@ function renderModal(
 describe("SplitGridTemplateModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsRunning = false;
   });
 
   describe("Rendering", () => {
@@ -144,30 +147,72 @@ describe("SplitGridTemplateModal", () => {
   });
 
   describe("Apply", () => {
-    it("should save the template, materialize with force, and close", () => {
+    it("should materialize with force and the built template in one call, then close", () => {
       const { onClose } = renderModal();
 
       fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
 
-      expect(mockUpdateNodeData).toHaveBeenCalledWith(NODE_ID, {
+      expect(mockMaterializeSplitGridCells).toHaveBeenCalledWith(NODE_ID, {
+        force: true,
         template: expect.objectContaining({ baseNodeId: "cell-image" }),
       });
-      expect(mockMaterializeSplitGridCells).toHaveBeenCalledWith(NODE_ID, { force: true });
+      // Template save and materialization are atomic (single undo entry) —
+      // no separate updateNodeData call
+      expect(mockUpdateNodeData).not.toHaveBeenCalled();
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it("should include added nodes in the saved template", () => {
+    it("should include added nodes in the applied template", () => {
       renderModal();
 
       fireEvent.click(screen.getByRole("button", { name: "Prompt" }));
       fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
 
-      const [, payload] = mockUpdateNodeData.mock.calls[0];
-      const template = payload.template;
+      const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+      const template = options.template;
       expect(template.nodes).toHaveLength(2);
       expect(template.nodes.map((node: { type: string }) => node.type)).toEqual(
         expect.arrayContaining(["imageInput", "prompt"])
       );
+    });
+  });
+
+  describe("Unsaved changes", () => {
+    it("asks before discarding when Escape is pressed after edits", () => {
+      const { onClose } = renderModal();
+
+      fireEvent.click(screen.getByRole("button", { name: "Prompt" }));
+      fireEvent.keyDown(window, { key: "Escape" });
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByText("Discard changes?")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps editing when the user declines the discard prompt", () => {
+      const { onClose } = renderModal();
+
+      fireEvent.click(screen.getByRole("button", { name: "Prompt" }));
+      fireEvent.keyDown(window, { key: "Escape" });
+      fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+
+      expect(screen.queryByText("Discard changes?")).not.toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("While a workflow is running", () => {
+    it("disables Apply so cells cannot be rebuilt mid-run", () => {
+      mockIsRunning = true;
+      renderModal();
+
+      const applyButton = screen.getByRole("button", { name: "Apply to 6 cells" });
+      expect(applyButton).toBeDisabled();
+
+      fireEvent.click(applyButton);
+      expect(mockMaterializeSplitGridCells).not.toHaveBeenCalled();
     });
   });
 

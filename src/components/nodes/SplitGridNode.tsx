@@ -7,23 +7,18 @@ import { useWorkflowStore } from "@/store/workflowStore";
 import { SplitGridNodeData } from "@/types";
 import { SplitGridTemplateModal } from "../splitgrid/SplitGridTemplateModal";
 import {
+  clampGridDimension,
   getSplitGridCells,
   getSplitGridTemplate,
   needsMaterialization,
+  MIN_GRID_DIMENSION,
+  MAX_GRID_DIMENSION,
 } from "@/store/utils/splitGridTemplate";
 import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
 import { useShowHandleLabels } from "@/hooks/useShowHandleLabels";
 import { HandleLabel } from "./HandleLabel";
 
 type SplitGridNodeType = Node<SplitGridNodeData, "splitGrid">;
-
-const MIN_GRID_DIM = 1;
-const MAX_GRID_DIM = 8;
-
-function clampGridDim(value: number): number {
-  if (!Number.isFinite(value)) return MIN_GRID_DIM;
-  return Math.min(MAX_GRID_DIM, Math.max(MIN_GRID_DIM, Math.round(value)));
-}
 
 interface GridDimFieldProps {
   label: string;
@@ -39,7 +34,7 @@ function GridDimField({ label, value, onChange, disabled }: GridDimFieldProps) {
     (raw: string) => {
       setDraft(null);
       const parsed = parseInt(raw, 10);
-      if (!Number.isNaN(parsed)) onChange(clampGridDim(parsed));
+      if (!Number.isNaN(parsed)) onChange(clampGridDimension(parsed));
     },
     [onChange]
   );
@@ -51,8 +46,8 @@ function GridDimField({ label, value, onChange, disabled }: GridDimFieldProps) {
       </label>
       <div className="flex items-stretch bg-neutral-900 border border-neutral-700 rounded-md overflow-hidden focus-within:border-neutral-500 transition-colors">
         <button
-          onClick={() => onChange(clampGridDim(value - 1))}
-          disabled={disabled || value <= MIN_GRID_DIM}
+          onClick={() => onChange(clampGridDimension(value - 1))}
+          disabled={disabled || value <= MIN_GRID_DIMENSION}
           className="nodrag nopan px-2 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800 disabled:text-neutral-700 disabled:hover:bg-transparent transition-colors"
           aria-label={`Decrease ${label.toLowerCase()}`}
         >
@@ -74,8 +69,8 @@ function GridDimField({ label, value, onChange, disabled }: GridDimFieldProps) {
           aria-label={label}
         />
         <button
-          onClick={() => onChange(clampGridDim(value + 1))}
-          disabled={disabled || value >= MAX_GRID_DIM}
+          onClick={() => onChange(clampGridDimension(value + 1))}
+          disabled={disabled || value >= MAX_GRID_DIMENSION}
           className="nodrag nopan px-2 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800 disabled:text-neutral-700 disabled:hover:bg-transparent transition-colors"
           aria-label={`Increase ${label.toLowerCase()}`}
         >
@@ -100,8 +95,8 @@ export function SplitGridNode({ id, data, selected }: NodeProps<SplitGridNodeTyp
   const [showEditor, setShowEditor] = useState(false);
   const showLabels = useShowHandleLabels(selected);
 
-  const gridRows = clampGridDim(nodeData.gridRows || 2);
-  const gridCols = clampGridDim(nodeData.gridCols || 3);
+  const gridRows = clampGridDimension(nodeData.gridRows);
+  const gridCols = clampGridDimension(nodeData.gridCols);
   const cellCount = gridRows * gridCols;
 
   // Reactively track the connected source image
@@ -190,7 +185,9 @@ export function SplitGridNode({ id, data, selected }: NodeProps<SplitGridNodeTyp
           {/* Cell node set editor */}
           <button
             onClick={() => setShowEditor(true)}
-            className="nodrag nopan w-full flex items-center gap-2 px-2.5 py-2 bg-neutral-900 border border-neutral-700 hover:border-neutral-500 rounded-md text-neutral-300 hover:text-neutral-100 transition-colors"
+            disabled={isRunning}
+            title={isRunning ? "Wait for the current run to finish" : undefined}
+            className="nodrag nopan w-full flex items-center gap-2 px-2.5 py-2 bg-neutral-900 border border-neutral-700 hover:border-neutral-500 rounded-md text-neutral-300 hover:text-neutral-100 disabled:text-neutral-600 disabled:hover:border-neutral-700 disabled:cursor-not-allowed transition-colors"
           >
             <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z" />

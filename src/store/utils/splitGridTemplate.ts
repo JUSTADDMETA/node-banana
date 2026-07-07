@@ -28,6 +28,21 @@ import {
 
 export { createDefaultSplitGridTemplate, SPLIT_GRID_BASE_NODE_ID };
 
+export const MIN_GRID_DIMENSION = 1;
+export const MAX_GRID_DIMENSION = 8;
+
+/**
+ * Normalizes a grid dimension from untrusted data (AI-generated workflows,
+ * hand-edited JSON, chat edit-operations) to a valid integer. Every consumer
+ * of gridRows/gridCols must clamp identically, or staleness keys drift and
+ * cells rebuild on every run.
+ */
+export function clampGridDimension(value: unknown): number {
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return MIN_GRID_DIMENSION;
+  return Math.min(MAX_GRID_DIMENSION, Math.max(MIN_GRID_DIMENSION, Math.round(num)));
+}
+
 /**
  * The classic pre-template layout: image + prompt feeding a generate node.
  * Optional legacy generate settings become overrides on the generate node.
@@ -157,20 +172,30 @@ export function hasLegacyCellsOnly(data: SplitGridNodeData): boolean {
  *
  * `ignoreLegacy` skips the legacy-cells guard: used when the user explicitly
  * saves a template, upgrading a legacy node to the cells-based flow.
+ * `template` evaluates against a not-yet-saved template (editor apply).
  */
 export function needsMaterialization(
   data: SplitGridNodeData,
   existingNodeIds: Set<string>,
-  options?: { ignoreLegacy?: boolean }
+  options?: { ignoreLegacy?: boolean; template?: SplitGridTemplate }
 ): boolean {
-  if (!options?.ignoreLegacy && hasLegacyCellsOnly(data)) return false;
+  const rows = clampGridDimension(data.gridRows);
+  const cols = clampGridDimension(data.gridCols);
+  if (hasLegacyCellsOnly(data) && !options?.template) {
+    if (options?.ignoreLegacy) return true;
+    // Legacy cells populate in place while the grid still matches them;
+    // a rows/cols change requires a rebuild or the slices would misalign
+    return data.childNodeIds.length !== rows * cols;
+  }
   const cells = data.cells ?? [];
   if (cells.length === 0) return true;
-  const template = getSplitGridTemplate(data);
-  const key = computeMaterializedKey(data.gridRows, data.gridCols, template);
+  const template = options?.template ?? getSplitGridTemplate(data);
+  const key = computeMaterializedKey(rows, cols, template);
   if (data.materializedKey !== key) return true;
-  if (cells.length !== data.gridRows * data.gridCols) return true;
-  return cells.some((cell) => !existingNodeIds.has(cell.baseImageNodeId));
+  if (cells.length !== rows * cols) return true;
+  // A partially deleted grid is intentional pruning; rebuild only when every
+  // cell's base image node is gone
+  return cells.every((cell) => !existingNodeIds.has(cell.baseImageNodeId));
 }
 
 export interface BuildCellInstancesOptions {

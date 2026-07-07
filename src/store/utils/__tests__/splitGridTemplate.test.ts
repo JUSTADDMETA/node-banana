@@ -341,12 +341,24 @@ describe("splitGridTemplate utilities", () => {
       expect(needsMaterialization(consistentData(), existingIds)).toBe(false);
     });
 
-    it("is false for legacy childNodeIds-only data (legacy guard)", () => {
+    it("is false for legacy childNodeIds-only data matching the grid (legacy guard)", () => {
       const data = makeSplitGridData({
+        gridRows: 1,
+        gridCols: 1,
         childNodeIds: [{ imageInput: "a", prompt: "b", nanoBanana: "c" }],
       });
 
       expect(needsMaterialization(data, new Set(["a", "b", "c"]))).toBe(false);
+    });
+
+    it("is true for legacy data when rows/cols no longer match the child count", () => {
+      const data = makeSplitGridData({
+        gridRows: 2,
+        gridCols: 2,
+        childNodeIds: [{ imageInput: "a", prompt: "b", nanoBanana: "c" }],
+      });
+
+      expect(needsMaterialization(data, new Set(["a", "b", "c"]))).toBe(true);
     });
 
     it("is true for legacy data when ignoreLegacy is set", () => {
@@ -387,12 +399,18 @@ describe("splitGridTemplate utilities", () => {
       expect(needsMaterialization(data, existingIds)).toBe(true);
     });
 
-    it("is true when a cell's base image node no longer exists", () => {
+    it("is false when only some base image nodes were deleted (intentional pruning)", () => {
       const data = consistentData();
 
       expect(
         needsMaterialization(data, new Set(["img-1", "img-2", "img-3"]))
-      ).toBe(true);
+      ).toBe(false);
+    });
+
+    it("is true when every cell's base image node is gone", () => {
+      const data = consistentData();
+
+      expect(needsMaterialization(data, new Set())).toBe(true);
     });
   });
 

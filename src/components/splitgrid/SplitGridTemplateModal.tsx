@@ -28,6 +28,7 @@ import { useWorkflowStore } from "@/store/workflowStore";
 import type { NodeType, SplitGridNodeData, SplitGridTemplate } from "@/types";
 import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import {
+  clampGridDimension,
   createClassicSplitGridTemplate,
   createDefaultSplitGridTemplate,
   getSplitGridTemplate,
@@ -93,6 +94,32 @@ function templateToRfEdges(template: SplitGridTemplate): Edge[] {
   }));
 }
 
+/** Serialize editor state back into a template (also used for dirty checks) */
+function serializeTemplate(
+  baseNodeId: string,
+  rfNodes: TemplateRFNode[],
+  rfEdges: Edge[]
+): SplitGridTemplate {
+  return {
+    baseNodeId,
+    nodes: rfNodes.map((node) => ({
+      id: node.id,
+      type: node.data.nodeType,
+      position: { x: node.position.x, y: node.position.y },
+      data: Object.keys(node.data.overrides).length > 0 ? node.data.overrides : undefined,
+    })),
+    edges: rfEdges
+      .filter((edge) => edge.sourceHandle && edge.targetHandle)
+      .map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        sourceHandle: edge.sourceHandle!,
+        target: edge.target,
+        targetHandle: edge.targetHandle!,
+      })),
+  };
+}
+
 interface SplitGridTemplateModalProps {
   nodeId: string;
   nodeData: SplitGridNodeData;
@@ -100,8 +127,8 @@ interface SplitGridTemplateModalProps {
 }
 
 function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTemplateModalProps) {
-  const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const materializeSplitGridCells = useWorkflowStore((state) => state.materializeSplitGridCells);
+  const isRunning = useWorkflowStore((state) => state.isRunning);
   const incrementModalCount = useWorkflowStore((state) => state.incrementModalCount);
   const decrementModalCount = useWorkflowStore((state) => state.decrementModalCount);
 
@@ -112,6 +139,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>(
     templateToRfEdges(initialTemplate)
   );
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const idCounterRef = useRef(0);
   const baseNodeId = initialTemplate.baseNodeId;
   const { fitView } = useReactFlow();
@@ -128,14 +156,46 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     return () => decrementModalCount();
   }, [incrementModalCount, decrementModalCount]);
 
-  // Escape closes without applying
+  // Dirty check: compare against the initial template mapped through the same
+  // serializer, so an untouched editor is never considered dirty
+  const initialSerializedRef = useRef<string | null>(null);
+  if (initialSerializedRef.current === null) {
+    initialSerializedRef.current = JSON.stringify(
+      serializeTemplate(
+        baseNodeId,
+        templateToRfNodes(initialTemplate, nodeData.sourceImage),
+        templateToRfEdges(initialTemplate)
+      )
+    );
+  }
+  const isDirty = useCallback(
+    () =>
+      JSON.stringify(serializeTemplate(baseNodeId, rfNodes, rfEdges)) !==
+      initialSerializedRef.current,
+    [baseNodeId, rfNodes, rfEdges]
+  );
+
+  const requestClose = useCallback(() => {
+    if (isDirty()) {
+      setShowDiscardConfirm(true);
+    } else {
+      onClose();
+    }
+  }, [isDirty, onClose]);
+
+  // Escape asks before discarding unsaved template edits
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      if (showDiscardConfirm) {
+        setShowDiscardConfirm(false);
+      } else {
+        requestClose();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [showDiscardConfirm, requestClose]);
 
   const setOverrides = useCallback(
     (id: string, overrides: Record<string, unknown>) => {
@@ -201,6 +261,25 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     [nodeData.sourceImage, setRfNodes, setRfEdges, refitSoon]
   );
 
+  // Cycles would materialize as cells the scheduler silently never executes
+  const createsCycle = useCallback(
+    (source: string, target: string): boolean => {
+      const stack = [target];
+      const seen = new Set<string>();
+      while (stack.length > 0) {
+        const current = stack.pop()!;
+        if (current === source) return true;
+        if (seen.has(current)) continue;
+        seen.add(current);
+        for (const edge of rfEdges) {
+          if (edge.source === current) stack.push(edge.target);
+        }
+      }
+      return false;
+    },
+    [rfEdges]
+  );
+
   const isValidConnection = useCallback(
     (connection: Connection | Edge): boolean => {
       const { source, target, sourceHandle, targetHandle } = connection;
@@ -212,9 +291,10 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
       const targetEntry = getTemplateEntry(targetNode.data.nodeType);
       const output = sourceEntry.outputs.find((handle) => handle.id === sourceHandle);
       const input = targetEntry.inputs.find((handle) => handle.id === targetHandle);
-      return Boolean(output && input && output.id === input.id);
+      if (!output || !input || output.id !== input.id) return false;
+      return !createsCycle(source, target);
     },
-    [rfNodes]
+    [rfNodes, createsCycle]
   );
 
   const handleConnect = useCallback(
@@ -235,52 +315,55 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     [isValidConnection, setRfEdges]
   );
 
-  const cellCount = Math.max(1, nodeData.gridRows || 1) * Math.max(1, nodeData.gridCols || 1);
+  const cellCount =
+    clampGridDimension(nodeData.gridRows) * clampGridDimension(nodeData.gridCols);
 
-  // Generate nodes without a prompt input would fail pre-run validation
-  const generateMissingPrompt = useMemo(
-    () =>
-      rfNodes.some(
-        (node) =>
-          node.data.nodeType === "nanoBanana" &&
-          !rfEdges.some((edge) => edge.target === node.id && edge.targetHandle === "text")
-      ),
-    [rfNodes, rfEdges]
-  );
+  // Advisory warnings for templates that would materialize un-runnable cells
+  const warnings = useMemo(() => {
+    const list: string[] = [];
+    const generateMissingPrompt = rfNodes.some(
+      (node) =>
+        node.data.nodeType === "nanoBanana" &&
+        !rfEdges.some((edge) => edge.target === node.id && edge.targetHandle === "text")
+    );
+    if (generateMissingPrompt) {
+      list.push("Generate Image nodes need a Prompt connected to their text input");
+    }
+    // Image-processing/output nodes are dead (or fail validation) without an image
+    const IMAGE_OPTIONAL = new Set(["nanoBanana", "llmGenerate"]);
+    const unwired = rfNodes.filter((node) => {
+      if (node.data.isBase || IMAGE_OPTIONAL.has(node.data.nodeType)) return false;
+      const entry = getTemplateEntry(node.data.nodeType);
+      if (!entry.inputs.some((handle) => handle.id === "image")) return false;
+      return !rfEdges.some((edge) => edge.target === node.id && edge.targetHandle === "image");
+    });
+    if (unwired.length > 0) {
+      const labels = [...new Set(unwired.map((node) => getTemplateEntry(node.data.nodeType).label))];
+      list.push(`${labels.join(", ")} node${unwired.length === 1 ? " is" : "s are"} missing an image input`);
+    }
+    return list;
+  }, [rfNodes, rfEdges]);
 
   const handleApply = useCallback(() => {
-    const template: SplitGridTemplate = {
-      baseNodeId,
-      nodes: rfNodes.map((node) => ({
-        id: node.id,
-        type: node.data.nodeType,
-        position: { x: node.position.x, y: node.position.y },
-        data: Object.keys(node.data.overrides).length > 0 ? node.data.overrides : undefined,
-      })),
-      edges: rfEdges
-        .filter((edge) => edge.sourceHandle && edge.targetHandle)
-        .map((edge) => ({
-          id: edge.id,
-          source: edge.source,
-          sourceHandle: edge.sourceHandle!,
-          target: edge.target,
-          targetHandle: edge.targetHandle!,
-        })),
-    };
-    updateNodeData(nodeId, { template });
-    materializeSplitGridCells(nodeId, { force: true });
+    if (isRunning) return;
+    // Single store call: saving the template and rebuilding the cells share
+    // one undo checkpoint, so one Cmd+Z reverts the whole apply
+    materializeSplitGridCells(nodeId, {
+      force: true,
+      template: serializeTemplate(baseNodeId, rfNodes, rfEdges),
+    });
     onClose();
-  }, [baseNodeId, rfNodes, rfEdges, nodeId, updateNodeData, materializeSplitGridCells, onClose]);
+  }, [isRunning, baseNodeId, rfNodes, rfEdges, nodeId, materializeSplitGridCells, onClose]);
 
   return createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
       onWheelCapture={(event) => event.stopPropagation()}
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target === event.currentTarget) requestClose();
       }}
     >
-      <div className="w-[min(1080px,94vw)] h-[min(720px,88vh)] bg-neutral-800 rounded-xl border border-neutral-700 shadow-2xl overflow-clip flex flex-col">
+      <div className="relative w-[min(1080px,94vw)] h-[min(720px,88vh)] bg-neutral-800 rounded-xl border border-neutral-700 shadow-2xl overflow-clip flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-neutral-700/60 shrink-0">
           <div>
@@ -290,7 +373,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
             </p>
           </div>
           <button
-            onClick={onClose}
+            onClick={requestClose}
             className="p-1.5 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 rounded transition-colors"
             aria-label="Close"
           >
@@ -366,27 +449,55 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
             <span>
               {rfNodes.length} node{rfNodes.length === 1 ? "" : "s"} per cell · {nodeData.gridRows}×{nodeData.gridCols} grid → {cellCount} group{cellCount === 1 ? "" : "s"}
             </span>
-            {generateMissingPrompt && (
-              <span className="ml-3 text-amber-400">
-                Generate Image nodes need a Prompt connected to their text input
+            {warnings.map((warning) => (
+              <span key={warning} className="ml-3 text-amber-400">
+                {warning}
               </span>
-            )}
+            ))}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={onClose}
+              onClick={requestClose}
               className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-100 transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={handleApply}
-              className="px-4 py-2 text-sm bg-white text-neutral-900 rounded-lg hover:bg-neutral-200 transition-colors"
+              disabled={isRunning}
+              title={isRunning ? "Wait for the current run to finish" : undefined}
+              className="px-4 py-2 text-sm bg-white text-neutral-900 rounded-lg hover:bg-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               Apply to {cellCount} cell{cellCount === 1 ? "" : "s"}
             </button>
           </div>
         </div>
+
+        {/* Discard-changes confirmation */}
+        {showDiscardConfirm && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60">
+            <div className="bg-neutral-800 border border-neutral-600 rounded-lg p-5 mx-4 max-w-sm shadow-xl">
+              <h3 className="text-sm font-semibold text-neutral-100">Discard changes?</h3>
+              <p className="text-xs text-neutral-400 mt-1">
+                Your edits to the cell node set haven&apos;t been applied.
+              </p>
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  onClick={() => setShowDiscardConfirm(false)}
+                  className="px-3 py-1.5 text-xs font-medium text-neutral-300 bg-neutral-700 hover:bg-neutral-600 rounded transition-colors"
+                >
+                  Keep editing
+                </button>
+                <button
+                  onClick={onClose}
+                  className="px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded transition-colors"
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>,
     document.body

@@ -324,10 +324,11 @@ describe("materializeSplitGridCells", () => {
   });
 
   describe("legacy childNodeIds workflows", () => {
-    function seedLegacyWorkflow() {
+    function seedLegacyWorkflow(dims: { gridRows: number; gridCols: number } = { gridRows: 1, gridCols: 1 }) {
       useWorkflowStore.setState({
         nodes: [
           makeSplitGridNode({
+            ...dims,
             template: undefined,
             cells: undefined,
             materializedKey: undefined,
@@ -345,7 +346,7 @@ describe("materializeSplitGridCells", () => {
       });
     }
 
-    it("returns false for legacy nodes without force", () => {
+    it("returns false for legacy nodes matching their grid without force", () => {
       seedLegacyWorkflow();
 
       let result = true;
@@ -359,8 +360,27 @@ describe("materializeSplitGridCells", () => {
       expect(state.nodes.some((n) => n.id === "legacy-img-1")).toBe(true);
     });
 
+    it("rebuilds legacy nodes whose grid no longer matches the child count", () => {
+      // 2x2 grid but only one legacy child set: the slices would misalign,
+      // so a rebuild (via the classic template) replaces the legacy children
+      seedLegacyWorkflow({ gridRows: 2, gridCols: 2 });
+
+      let result = false;
+      act(() => {
+        result = useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+
+      expect(result).toBe(true);
+      const state = useWorkflowStore.getState();
+      expect(state.nodes.some((n) => n.id === "legacy-img-1")).toBe(false);
+      const data = state.nodes.find((n) => n.id === SPLIT_ID)!.data as SplitGridNodeData;
+      expect(data.cells).toHaveLength(4);
+      // Classic template: image + prompt + generate per cell
+      expect(data.cells![0].nodeIds).toHaveLength(3);
+    });
+
     it("rebuilds with force:true, removing legacy child nodes", () => {
-      seedLegacyWorkflow();
+      seedLegacyWorkflow({ gridRows: 2, gridCols: 2 });
 
       let result = false;
       act(() => {
