@@ -13,6 +13,8 @@ import { createContext, memo, useCallback, useContext, useEffect, useState } fro
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
 import type {
   AspectRatio,
+  LLMModelType,
+  LLMProvider,
   ModelType,
   NodeType,
   Resolution,
@@ -53,9 +55,35 @@ const EXTENDED_ASPECT_RATIOS: AspectRatio[] = ["1:1", "1:4", "1:8", "2:3", "3:2"
 const RESOLUTIONS_PRO: Resolution[] = ["1K", "2K", "4K"];
 const RESOLUTIONS_NB2: Resolution[] = ["512", "1K", "2K", "4K"];
 
-// Same select styling as GenerateImageNode's inline gemini controls
+// Mirrors LLMGenerateNode's provider/model lists
+const LLM_PROVIDERS: { value: LLMProvider; label: string }[] = [
+  { value: "google", label: "Google" },
+  { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+];
+const LLM_MODELS: Record<LLMProvider, { value: LLMModelType; label: string }[]> = {
+  google: [
+    { value: "gemini-3-flash-preview", label: "Gemini 3 Flash" },
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    { value: "gemini-3-pro-preview", label: "Gemini 3.0 Pro" },
+    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
+  ],
+  openai: [
+    { value: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
+    { value: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
+  ],
+  anthropic: [
+    { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
+    { value: "claude-haiku-4.5", label: "Claude Haiku 4.5" },
+    { value: "claude-opus-4.6", label: "Claude Opus 4.6" },
+  ],
+};
+
+// Same select/slider styling as the main nodes' inline controls
 const GEMINI_SELECT_CLASS =
   "nodrag nopan flex-1 min-w-0 text-[11px] py-1 px-2 bg-[#1a1a1a] rounded-md focus:outline-none focus:ring-1 focus:ring-neutral-600 text-white";
+const SLIDER_CLASS =
+  "nodrag nopan w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-blue-500";
 
 function handleOffset(handle: TemplateHandleDef, index: number, count: number): string {
   if (handle.top) return handle.top;
@@ -243,20 +271,22 @@ function GenerateBody({ nodeId, overrides }: { nodeId: string; overrides: Record
         </button>
       </div>
 
-      {/* Preview area — parity with GenerateImageNode's empty state */}
-      <div className="relative w-full h-full min-h-0 overflow-hidden rounded-lg">
-        <div className="w-full h-full min-h-[112px] bg-neutral-900/40 flex flex-col items-center justify-center">
-          <span className="text-neutral-500 text-[10px]">Run to generate</span>
+      <div className="flex flex-col h-full">
+        {/* Preview area — parity with GenerateImageNode's empty state */}
+        <div className="relative flex-1 min-h-[64px] overflow-hidden rounded-t-lg">
+          <div className="w-full h-full bg-neutral-900/40 flex flex-col items-center justify-center">
+            <span className="text-neutral-500 text-[10px]">Run to generate</span>
+          </div>
         </div>
-      </div>
 
-      {/* Settings panel hanging below the card — parity with inline parameters */}
-      <div className="absolute top-full left-0 right-0 z-20 rounded-b-lg overflow-visible">
-        <InlineParameterPanel
-          expanded={isParamsExpanded}
-          onToggle={() => setIsParamsExpanded((prev) => !prev)}
-          nodeId={`tmpl-${nodeId}`}
-        >
+        {/* Settings panel in-flow so the selection ring wraps the whole node */}
+        <div className="shrink-0 rounded-b-lg overflow-hidden">
+          <InlineParameterPanel
+            expanded={isParamsExpanded}
+            onToggle={() => setIsParamsExpanded((prev) => !prev)}
+            nodeId={`tmpl-${nodeId}`}
+          >
+            <div className="nowheel max-h-[200px] overflow-y-auto">
           {isGeminiProvider && currentModelId ? (
             <div className="space-y-1.5 max-w-[280px]">
               <div className="flex items-center gap-2">
@@ -336,7 +366,9 @@ function GenerateBody({ nodeId, overrides }: { nodeId: string; overrides: Record
               />
             )
           )}
-        </InlineParameterPanel>
+            </div>
+          </InlineParameterPanel>
+        </div>
       </div>
 
       {/* Model browse dialog — the full multi-provider catalog */}
@@ -349,6 +381,118 @@ function GenerateBody({ nodeId, overrides }: { nodeId: string; overrides: Record
         />
       )}
     </>
+  );
+}
+
+/**
+ * LLM node — same inline controls as the main canvas LLMGenerateNode:
+ * provider, model, temperature, and max tokens.
+ */
+function LlmBody({ nodeId, overrides }: { nodeId: string; overrides: Record<string, unknown> }) {
+  const { setOverrides } = useContext(TemplateEditorContext);
+  const [isParamsExpanded, setIsParamsExpanded] = useState(true);
+
+  const provider = (overrides.provider as LLMProvider | undefined) ?? "google";
+  const availableModels = LLM_MODELS[provider] ?? LLM_MODELS.google;
+  const model = (overrides.model as LLMModelType | undefined) ?? availableModels[0].value;
+  const temperature = typeof overrides.temperature === "number" ? overrides.temperature : 0.7;
+  const maxTokens = typeof overrides.maxTokens === "number" ? overrides.maxTokens : 2048;
+
+  const handleProviderChange = useCallback(
+    (event: React.ChangeEvent<HTMLSelectElement>) => {
+      const newProvider = event.target.value as LLMProvider;
+      const next: Record<string, unknown> = {
+        ...overrides,
+        provider: newProvider,
+        model: LLM_MODELS[newProvider][0].value,
+      };
+      // Anthropic caps temperature at 1, mirroring the main node
+      if (newProvider === "anthropic" && temperature > 1) next.temperature = 1;
+      setOverrides(nodeId, next);
+    },
+    [nodeId, overrides, temperature, setOverrides]
+  );
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Preview area — parity with the main node's empty output state */}
+      <div className="relative flex-1 min-h-[64px] overflow-hidden rounded-t-lg">
+        <div className="w-full h-full bg-neutral-900/40 flex flex-col items-center justify-center gap-1.5">
+          <span className="text-neutral-600 [&>svg]:w-8 [&>svg]:h-8">
+            {getTemplateNodeIcon("llmGenerate")}
+          </span>
+          <span className="text-neutral-500 text-[10px]">AI text generation</span>
+        </div>
+      </div>
+
+      {/* Settings panel in-flow so the selection ring wraps the whole node */}
+      <div className="shrink-0 rounded-b-lg overflow-hidden">
+        <InlineParameterPanel
+          expanded={isParamsExpanded}
+          onToggle={() => setIsParamsExpanded((prev) => !prev)}
+          nodeId={`tmpl-${nodeId}`}
+        >
+          <div className="nowheel max-h-[200px] overflow-y-auto space-y-1.5 max-w-[280px]">
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] text-neutral-400 shrink-0">Provider</label>
+              <select value={provider} onChange={handleProviderChange} className={GEMINI_SELECT_CLASS}>
+                {LLM_PROVIDERS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] text-neutral-400 shrink-0">Model</label>
+              <select
+                value={model}
+                onChange={(e) => setOverrides(nodeId, { ...overrides, model: e.target.value })}
+                className={GEMINI_SELECT_CLASS}
+              >
+                {availableModels.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <label className="text-[11px] text-neutral-400">
+                Temperature: {temperature.toFixed(2)}
+              </label>
+              <input
+                type="range"
+                min="0"
+                max={provider === "anthropic" ? "1" : "2"}
+                step="0.01"
+                value={temperature}
+                onChange={(e) =>
+                  setOverrides(nodeId, { ...overrides, temperature: parseFloat(e.target.value) })
+                }
+                className={SLIDER_CLASS}
+              />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <label className="text-[11px] text-neutral-400">
+                Max Tokens: {maxTokens.toLocaleString()}
+              </label>
+              <input
+                type="range"
+                min="256"
+                max="16384"
+                step="256"
+                value={maxTokens}
+                onChange={(e) =>
+                  setOverrides(nodeId, { ...overrides, maxTokens: parseInt(e.target.value, 10) })
+                }
+                className={SLIDER_CLASS}
+              />
+            </div>
+          </div>
+        </InlineParameterPanel>
+      </div>
+    </div>
   );
 }
 
@@ -395,6 +539,8 @@ function TemplateNodeComponent({ id, data, selected }: NodeProps<TemplateRFNode>
           <PromptBody nodeId={id} overrides={data.overrides} />
         ) : isGenerate ? (
           <GenerateBody nodeId={id} overrides={data.overrides} />
+        ) : data.nodeType === "llmGenerate" ? (
+          <LlmBody nodeId={id} overrides={data.overrides} />
         ) : (
           <GenericBody nodeType={data.nodeType} description={entry.description} />
         )}

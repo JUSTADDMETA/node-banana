@@ -78,13 +78,18 @@ describe("SplitGridTemplateModal", () => {
     it("should not render add-node toolbar chips (nodes are added via handle drag)", () => {
       renderModal();
 
-      expect(
-        screen.getByText("Drag from a node's handle into empty space to add nodes")
-      ).toBeInTheDocument();
       for (const entry of TEMPLATE_NODE_CATALOG) {
         if (entry.label === "Prompt" || entry.label === "Generate Image") continue; // preset labels overlap
         expect(screen.queryByRole("button", { name: entry.label })).not.toBeInTheDocument();
       }
+    });
+
+    it("should render presets in the header", () => {
+      renderModal();
+
+      expect(screen.getByText("Presets")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Image only" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Prompt + Generate" })).toBeInTheDocument();
     });
 
     it("should render the base image node with its floating title", () => {

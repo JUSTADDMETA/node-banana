@@ -28,7 +28,13 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import { useWorkflowStore } from "@/store/workflowStore";
-import type { NanoBananaNodeData, NodeType, SplitGridNodeData, SplitGridTemplate } from "@/types";
+import type {
+  LLMGenerateNodeData,
+  NanoBananaNodeData,
+  NodeType,
+  SplitGridNodeData,
+  SplitGridTemplate,
+} from "@/types";
 import { createDefaultNodeData, defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import {
   clampGridDimension,
@@ -91,17 +97,49 @@ function seedGenerateOverrides(): Record<string, unknown> {
   return seed;
 }
 
+/** LLM template nodes start from the same defaults as a main-canvas LLM node */
+function seedLlmOverrides(): Record<string, unknown> {
+  const defaults = createDefaultNodeData("llmGenerate") as LLMGenerateNodeData;
+  return {
+    provider: defaults.provider,
+    model: defaults.model,
+    temperature: defaults.temperature,
+    maxTokens: defaults.maxTokens,
+  };
+}
+
+function seedOverridesFor(type: NodeType): Record<string, unknown> {
+  if (type === "nanoBanana") return seedGenerateOverrides();
+  if (type === "llmGenerate") return seedLlmOverrides();
+  return {};
+}
+
+/**
+ * Extra editor-only height for nodes that render an in-flow settings panel,
+ * so the panel fits inside the card (and the selection ring wraps it all).
+ * Materialized nodes still use the standard defaultNodeDimensions.
+ */
+const EDITOR_EXTRA_HEIGHT: Partial<Record<NodeType, number>> = {
+  nanoBanana: 180,
+  llmGenerate: 210,
+};
+
+function editorNodeDimensions(type: NodeType): { width: number; height: number } {
+  const dims = defaultNodeDimensions[type] ?? { width: 300, height: 280 };
+  return { width: dims.width, height: dims.height + (EDITOR_EXTRA_HEIGHT[type] ?? 0) };
+}
+
 function templateToRfNodes(
   template: SplitGridTemplate,
   sourceImage: string | null
 ): TemplateRFNode[] {
   return template.nodes.map((templateNode) => {
-    const dims = defaultNodeDimensions[templateNode.type] ?? { width: 300, height: 280 };
+    const dims = editorNodeDimensions(templateNode.type);
     const isBase = templateNode.id === template.baseNodeId;
     let overrides = { ...(templateNode.data ?? {}) };
-    // Generate nodes always show concrete settings, like the main canvas
-    if (templateNode.type === "nanoBanana" && Object.keys(overrides).length === 0) {
-      overrides = seedGenerateOverrides();
+    // Generate/LLM nodes always show concrete settings, like the main canvas
+    if (Object.keys(overrides).length === 0) {
+      overrides = seedOverridesFor(templateNode.type);
     }
     return {
       id: templateNode.id,
@@ -455,7 +493,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   const handleDropMenuSelect = useCallback(
     (type: NodeType) => {
       if (!dropMenu) return;
-      const dims = defaultNodeDimensions[type] ?? { width: 300, height: 280 };
+      const dims = editorNodeDimensions(type);
       const entry = getTemplateEntry(type);
       const kind = dropMenu.fromHandleId;
       const newId = makeTemplateNodeId(type, rfNodes);
@@ -484,7 +522,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
           style: { width: dims.width, height: dims.height },
           data: {
             nodeType: type,
-            overrides: type === "nanoBanana" ? seedGenerateOverrides() : {},
+            overrides: seedOverridesFor(type),
             isBase: false,
           } satisfies TemplateNodeData,
         },
@@ -545,30 +583,14 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     >
       <div className="relative w-[min(1080px,94vw)] h-[min(720px,88vh)] bg-neutral-800 rounded-xl border border-neutral-700 shadow-2xl overflow-clip flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-neutral-700/60 shrink-0">
-          <div>
+        <div className="flex items-center justify-between gap-4 px-5 py-3.5 border-b border-neutral-700/60 shrink-0">
+          <div className="min-w-0">
             <h2 className="text-base font-semibold text-neutral-100">Cell Node Set</h2>
-            <p className="text-xs text-neutral-500 mt-0.5">
+            <p className="text-xs text-neutral-500 mt-0.5 truncate">
               These nodes are created for every split image and grouped per cell
             </p>
           </div>
-          <button
-            onClick={requestClose}
-            className="p-1.5 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 rounded transition-colors"
-            aria-label="Close"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Toolbar */}
-        <div className="flex items-center gap-2 px-5 py-2.5 border-b border-neutral-700/40 shrink-0">
-          <span className="text-xs text-neutral-500">
-            Drag from a node&apos;s handle into empty space to add nodes
-          </span>
-          <div className="ml-auto flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
             <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
               Presets
             </span>
@@ -583,6 +605,16 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               className="px-2.5 py-1.5 text-xs text-neutral-400 hover:text-neutral-100 bg-neutral-900 border border-neutral-700 hover:border-neutral-500 rounded-md transition-colors"
             >
               Prompt + Generate
+            </button>
+            <div className="w-px h-6 bg-neutral-700 mx-1" />
+            <button
+              onClick={requestClose}
+              className="p-1.5 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-700 rounded transition-colors"
+              aria-label="Close"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
           </div>
         </div>
