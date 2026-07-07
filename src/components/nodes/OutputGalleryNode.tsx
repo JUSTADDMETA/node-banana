@@ -209,11 +209,18 @@ export function OutputGalleryNode({ id, data, selected }: NodeProps<OutputGaller
     const item = displayMedia[index];
     if (!item) return;
 
+    // displayMedia concatenates images then videos, so the flat lightbox index
+    // maps directly to an array index. Deriving it (rather than
+    // images.indexOf(item.src)) makes removal exact even when two items share a
+    // src — duplicate outputs or empty-string placeholders — and keeps the
+    // images/imageRefs (and videos/videoRefs) arrays positionally aligned.
+    const imageCount = nodeData.images?.length || 0;
+
     if (item.type === "image") {
       const images = [...(nodeData.images || [])];
       const imageRefs = [...(nodeData.imageRefs || [])];
-      const imgIndex = images.indexOf(item.src);
-      if (imgIndex !== -1) {
+      const imgIndex = index;
+      if (imgIndex >= 0 && imgIndex < images.length) {
         images.splice(imgIndex, 1);
         if (imgIndex < imageRefs.length) imageRefs.splice(imgIndex, 1);
       }
@@ -221,8 +228,8 @@ export function OutputGalleryNode({ id, data, selected }: NodeProps<OutputGaller
     } else {
       const videos = [...(nodeData.videos || [])];
       const videoRefs = [...(nodeData.videoRefs || [])];
-      const vidIndex = videos.indexOf(item.src);
-      if (vidIndex !== -1) {
+      const vidIndex = index - imageCount;
+      if (vidIndex >= 0 && vidIndex < videos.length) {
         videos.splice(vidIndex, 1);
         if (vidIndex < videoRefs.length) videoRefs.splice(vidIndex, 1);
       }
