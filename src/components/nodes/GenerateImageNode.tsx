@@ -65,7 +65,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
   const adaptiveOutputImage = useAdaptiveImageSrc(data.outputImage, id);
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   // Use stable selector for API keys to prevent unnecessary re-fetches
-  const { replicateApiKey, falApiKey, kieApiKey, replicateEnabled, kieEnabled } = useProviderApiKeys();
+  const { replicateApiKey, falApiKey, kieApiKey, openaiApiKey, replicateEnabled, kieEnabled, openaiEnabled } = useProviderApiKeys();
   const [externalModels, setExternalModels] = useState<ProviderModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelsFetchError, setModelsFetchError] = useState<string | null>(null);
@@ -106,8 +106,12 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
     if (kieEnabled && kieApiKey) {
       providers.push({ id: "kie", name: "Kie.ai" });
     }
+    // Add OpenAI if configured
+    if (openaiEnabled && openaiApiKey) {
+      providers.push({ id: "openai", name: "OpenAI" });
+    }
     return providers;
-  }, [replicateEnabled, replicateApiKey, kieEnabled, kieApiKey]);
+  }, [replicateEnabled, replicateApiKey, kieEnabled, kieApiKey, openaiEnabled, openaiApiKey]);
 
   // Migrate legacy data: derive selectedModel from model field if missing
   useEffect(() => {
@@ -144,6 +148,9 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
       if (kieApiKey) {
         headers["X-Kie-Key"] = kieApiKey;
       }
+      if (openaiApiKey) {
+        headers["X-OpenAI-API-Key"] = openaiApiKey;
+      }
       const response = await deduplicatedFetch(`/api/models?provider=${currentProvider}&capabilities=${capabilities}`, { headers });
       if (response.ok) {
         const data = await response.json();
@@ -166,7 +173,7 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
     } finally {
       setIsLoadingModels(false);
     }
-  }, [currentProvider, replicateApiKey, falApiKey, kieApiKey]);
+  }, [currentProvider, replicateApiKey, falApiKey, kieApiKey, openaiApiKey]);
 
   useEffect(() => {
     fetchModels();
