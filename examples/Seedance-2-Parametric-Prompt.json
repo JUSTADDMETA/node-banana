@@ -2,7 +2,7 @@
   "version": 1,
   "id": "wf_1776713462529_gzee3l5mw",
   "name": "Parametric Prompt Engine",
-  "directoryPath": "/Users/willie/Documents/projects/workflows/Parametric Prompt Engine",
+  "directoryPath": "",
   "nodes": [
     {
       "id": "prompt-1",

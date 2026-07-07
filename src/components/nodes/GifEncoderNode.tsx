@@ -46,11 +46,16 @@ function useThumbnailSrc(fullSrc: string | null): string | null {
     const existing = getPending(fullSrc);
     const promise =
       existing ??
-      generateThumbnail(fullSrc).then((t) => {
-        setThumbnail(fullSrc, t);
-        removePending(fullSrc);
-        return t;
-      });
+      generateThumbnail(fullSrc)
+        .then((t) => {
+          setThumbnail(fullSrc, t);
+          return t;
+        })
+        // Clear the pending entry on both success and failure so a failed
+        // thumbnail can be retried instead of leaking a permanent entry.
+        .finally(() => {
+          removePending(fullSrc);
+        });
     if (!existing) setPending(fullSrc, promise);
 
     setThumb(null);
@@ -77,11 +82,12 @@ function FrameThumbnail({ src, alt }: { src: string; alt: string }) {
 
 function getImageFromSourceNode(node: WorkflowNode): string | null {
   const d = node.data as Record<string, unknown>;
-  // Common image-producing fields
+  // Common image-producing fields (outputGif lets a GIF encoder feed another)
   return (
     (d.outputImage as string | null) ??
     (d.image as string | null) ??
     (d.capturedImage as string | null) ??
+    (d.outputGif as string | null) ??
     null
   );
 }
@@ -198,11 +204,23 @@ export function GifEncoderNode({ id, data, selected }: NodeProps<GifEncoderNodeT
     setHoverId(null);
   }, [draggedId, hoverId, nodeData.clipOrder, id, updateNodeData]);
 
-  // Dynamic image handles: show one per existing edge plus one extra slot
+  // Dynamic image handles: render up to the highest referenced handle index
+  // (parsed from "image-N" targetHandles) plus one free slot for a new
+  // connection. Using the max index rather than the edge count ensures a
+  // high-index edge (e.g. "image-3") still gets a rendered handle after an
+  // earlier edge is removed, instead of being orphaned.
   const imageHandles = useMemo(() => {
-    const count = Math.max(imageEdges.length + 1, 2);
+    let maxIndex = -1;
+    for (const e of imageEdges) {
+      const match = e.targetHandle?.match(/^image-(\d+)$/);
+      if (match) {
+        const idx = Number(match[1]);
+        if (idx > maxIndex) maxIndex = idx;
+      }
+    }
+    const count = Math.max(maxIndex + 2, 2);
     return Array.from({ length: count }, (_, i) => ({ id: `image-${i}` }));
-  }, [imageEdges.length]);
+  }, [imageEdges]);
 
   const targetKB = nodeData.targetMaxBytes !== null
     ? Math.round(nodeData.targetMaxBytes / 1024)

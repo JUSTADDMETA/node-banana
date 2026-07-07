@@ -16,7 +16,7 @@ npm run test:run # Run all tests once (CI mode)
 ## Environment Setup
 
 Create `.env.local` in the root directory:
-```
+```bash
 GEMINI_API_KEY=your_gemini_api_key
 OPENAI_API_KEY=your_openai_api_key  # Optional, for OpenAI LLM provider
 KIE_API_KEY=your_kie_api_key        # Optional, for Kie.ai models (Sora, Veo, Kling, etc.)

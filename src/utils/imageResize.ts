@@ -33,13 +33,34 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+/**
+ * Cap on the longest output edge. Bounds canvas allocation so an unbounded
+ * "exact" size or a large "scale" percentage can't request a multi-hundred-MB
+ * canvas that freezes or crashes the browser. Mirrors the MAX_EDGE cap in
+ * gifEncode.ts. Preserves aspect ratio by scaling both edges proportionally.
+ */
+const MAX_EDGE = 8192;
+
+function capToMaxEdge(width: number, height: number): { width: number; height: number } {
+  const longest = Math.max(width, height);
+  if (longest <= MAX_EDGE) return { width, height };
+  const scale = MAX_EDGE / longest;
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
 function computeTargetSize(
   srcW: number,
   srcH: number,
   opts: Pick<ResizeOptions, "mode" | "width" | "height" | "maxEdge" | "scalePct">,
 ): { width: number; height: number } {
   if (opts.mode === "exact") {
-    return { width: Math.max(1, Math.round(opts.width)), height: Math.max(1, Math.round(opts.height)) };
+    return capToMaxEdge(
+      Math.max(1, Math.round(opts.width)),
+      Math.max(1, Math.round(opts.height)),
+    );
   }
   if (opts.mode === "maxEdge") {
     const longest = Math.max(srcW, srcH);
@@ -52,10 +73,10 @@ function computeTargetSize(
   }
   // scale
   const s = Math.max(0.01, opts.scalePct / 100);
-  return {
-    width: Math.max(1, Math.round(srcW * s)),
-    height: Math.max(1, Math.round(srcH * s)),
-  };
+  return capToMaxEdge(
+    Math.max(1, Math.round(srcW * s)),
+    Math.max(1, Math.round(srcH * s)),
+  );
 }
 
 function pickMime(format: ImageResizeFormat, sourceMime: string | null): string {

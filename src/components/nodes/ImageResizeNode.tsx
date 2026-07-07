@@ -164,7 +164,11 @@ export function ImageResizeNode({ id, data, selected }: NodeProps<ImageResizeNod
                 min={1}
                 max={400}
                 value={nodeData.scalePct}
-                onChange={(e) => updateNodeData(id, { scalePct: Number(e.target.value) || 1 })}
+                onChange={(e) =>
+                  updateNodeData(id, {
+                    scalePct: Math.min(400, Math.max(1, Number(e.target.value) || 1)),
+                  })
+                }
                 className="flex-1 px-1.5 py-0.5 bg-neutral-800 rounded text-neutral-200"
               />
               <span className="text-neutral-500">%</span>

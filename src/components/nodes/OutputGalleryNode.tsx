@@ -63,16 +63,14 @@ export function OutputGalleryNode({ id, data, selected }: NodeProps<OutputGaller
   // re-parse base64; a static <img> poster keeps the grid cheap. Mirrors
   // VideoStitchNode's extraction approach, keyed by the video's data URL.
   const videoSrcs = useMemo(() => nodeData.videos || [], [nodeData.videos]);
-  const videoKey = useMemo(
-    () => videoSrcs.map((s) => s.slice(-20)).join(","),
-    [videoSrcs]
-  );
   const [videoThumbnails, setVideoThumbnails] = useState<Map<string, string>>(new Map());
   // Ref-based cache so the effect doesn't read stale `videoThumbnails` state
   const videoThumbnailsRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
+    let activeVideo: HTMLVideoElement | null = null;
+    let activeBlobUrl: string | null = null;
 
     const cleanupVideo = (video: HTMLVideoElement, blobUrl?: string | null) => {
       video.onloadedmetadata = null;
@@ -96,6 +94,8 @@ export function OutputGalleryNode({ id, data, selected }: NodeProps<OutputGaller
         }
 
         const video = document.createElement("video");
+        activeVideo = video;
+        activeBlobUrl = null;
         // Convert data URLs to blob URLs for metadata loading efficiency
         // (avoids re-parsing the full base64 payload into the element).
         let blobUrl: string | null = null;
@@ -104,6 +104,7 @@ export function OutputGalleryNode({ id, data, selected }: NodeProps<OutputGaller
             const blob = await (await fetch(src)).blob();
             if (cancelled) return;
             blobUrl = URL.createObjectURL(blob);
+            activeBlobUrl = blobUrl;
           } catch {
             blobUrl = null;
           }
@@ -151,6 +152,8 @@ export function OutputGalleryNode({ id, data, selected }: NodeProps<OutputGaller
           console.warn("Failed to extract gallery video thumbnail:", error);
         }
         cleanupVideo(video, blobUrl);
+        activeVideo = null;
+        activeBlobUrl = null;
       }
 
       if (!cancelled) {
@@ -160,8 +163,15 @@ export function OutputGalleryNode({ id, data, selected }: NodeProps<OutputGaller
     };
 
     extractThumbnails();
-    return () => { cancelled = true; };
-  }, [videoKey]); // eslint-disable-line react-hooks/exhaustive-deps — videoSrcs accessed via closure, videoKey is the stable dep
+    return () => {
+      cancelled = true;
+      if (activeVideo) {
+        cleanupVideo(activeVideo, activeBlobUrl);
+        activeVideo = null;
+        activeBlobUrl = null;
+      }
+    };
+  }, [videoSrcs]);
 
   const openLightbox = useCallback((index: number) => {
     setLightboxIndex(index);

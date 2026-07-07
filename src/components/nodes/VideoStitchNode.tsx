@@ -140,6 +140,8 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
   // Extract thumbnails from connected videos
   useEffect(() => {
     let cancelled = false;
+    let activeVideo: HTMLVideoElement | null = null;
+    let activeBlobUrl: string | null = null;
 
     const cleanupVideo = (video: HTMLVideoElement, blobUrl?: string | null) => {
       video.onloadedmetadata = null;
@@ -169,6 +171,8 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
         }
 
         const video = document.createElement("video");
+        activeVideo = video;
+        activeBlobUrl = null;
         // Convert data URLs to blob URLs for metadata loading efficiency
         // (avoids re-parsing the full base64 payload into the element).
         let blobUrl: string | null = null;
@@ -177,6 +181,7 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
             const blob = await (await fetch(clip.videoData)).blob();
             if (cancelled) return;
             blobUrl = URL.createObjectURL(blob);
+            activeBlobUrl = blobUrl;
           } catch {
             blobUrl = null;
           }
@@ -226,6 +231,8 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
           console.warn(`Failed to extract thumbnail for clip ${clip.edgeId}:`, error);
         }
         cleanupVideo(video, blobUrl);
+        activeVideo = null;
+        activeBlobUrl = null;
       }
 
       if (!cancelled) {
@@ -236,7 +243,14 @@ export function VideoStitchNode({ id, data, selected }: NodeProps<VideoStitchNod
     };
 
     extractThumbnails();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (activeVideo) {
+        cleanupVideo(activeVideo, activeBlobUrl);
+        activeVideo = null;
+        activeBlobUrl = null;
+      }
+    };
   }, [clipKey]); // eslint-disable-line react-hooks/exhaustive-deps — orderedClips accessed via closure, clipKey is the stable dep
 
   // Pointer-based drag reorder (HTML5 drag doesn't work inside React Flow nodes)

@@ -60,6 +60,9 @@ export default function Home() {
         <Header />
         <ErrorBoundary
           label="Canvas"
+          onError={(error, info) =>
+            console.error("Canvas crashed:", error, info)
+          }
           fallback={(error, reset) => (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
               <div className="text-sm font-semibold text-red-400">

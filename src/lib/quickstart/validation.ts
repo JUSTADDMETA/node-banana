@@ -1,5 +1,6 @@
 import { WorkflowFile } from "@/store/workflowStore";
 import { NodeType, WorkflowNodeData } from "@/types";
+import { getEasingBezier } from "@/lib/easing-presets";
 
 interface ValidationError {
   path: string;
@@ -383,7 +384,7 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
       };
     case "easeCurve":
       return {
-        bezierHandles: [0.445, 0.05, 0.55, 0.95] as [number, number, number, number],
+        bezierHandles: getEasingBezier("easeInOutSine"),
         easingPreset: "easeInOutSine",
         inheritedFrom: null,
         outputDuration: 1.5,

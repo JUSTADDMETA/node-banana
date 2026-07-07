@@ -534,14 +534,29 @@ const MAX_GLOBAL_IMAGE_HISTORY = 50;
 // backing Blob memory. Used when nodes are permanently discarded (workflow
 // clear/reload) where the undo history that referenced them is also cleared.
 function revokeNodeBlobUrls(nodes: WorkflowNode[]): void {
+  // Recursively walk strings, arrays, and nested plain objects so blob: URLs
+  // held in gallery/video arrays or nested media metadata are revoked too.
+  // The depth cap guards against cycles / pathologically deep structures.
+  const revokeDeep = (value: unknown, depth: number): void => {
+    if (depth > 8) return;
+    if (typeof value === "string") {
+      if (value.startsWith("blob:")) revokeBlobUrl(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) revokeDeep(item, depth + 1);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        revokeDeep(item, depth + 1);
+      }
+    }
+  };
   for (const node of nodes) {
     const data = node.data as Record<string, unknown> | undefined;
     if (!data) continue;
-    for (const value of Object.values(data)) {
-      if (typeof value === "string" && value.startsWith("blob:")) {
-        revokeBlobUrl(value);
-      }
-    }
+    revokeDeep(data, 0);
   }
 }
 
@@ -2031,9 +2046,11 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     };
 
     try {
-      // Filter edges to only those within the selected set for topological sort
+      // Filter edges to only those within the selected set for topological sort.
+      // Exclude loop edges (matching full execution) so looped nodes aren't
+      // dropped from level scheduling or run out of order.
       const selectedEdges = edges.filter(
-        (e) => selectedSet.has(e.source) && selectedSet.has(e.target)
+        (e) => selectedSet.has(e.source) && selectedSet.has(e.target) && !e.data?.isLoop
       );
 
       // Group selected nodes by dependency level for ordered execution
@@ -2468,11 +2485,16 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         });
       }
 
-      // Snapshot the exact nodes array we are about to serialize. After the long
-      // awaits below (media externalization + POST) we compare against the live
-      // store to detect edits made during the save window, so we neither clobber
-      // them nor falsely mark the workflow as saved.
+      // Snapshot the exact serialized state (nodes, edges, edge style, groups,
+      // name) we are about to persist. After the long awaits below (media
+      // externalization + POST) we compare against the live store to detect edits
+      // made during the save window, so we neither clobber them nor falsely mark
+      // the workflow as saved.
       const savedNodesSnapshot = currentNodes;
+      const savedEdgesSnapshot = edges;
+      const savedEdgeStyleSnapshot = edgeStyle;
+      const savedGroupsSnapshot = groups;
+      const savedWorkflowNameSnapshot = workflowName;
 
       let workflow: WorkflowFile = {
         version: 1,
@@ -2507,8 +2529,16 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
         // Did the user edit the graph while the save was in flight? If so we must
         // not overwrite those edits, and the workflow is not actually clean.
-        const freshNodes = get().nodes;
-        const changedDuringSave = freshNodes !== savedNodesSnapshot;
+        // Compare every serialized field (nodes, edges, edge style, groups, name),
+        // not just nodes, so edits to any of them keep the workflow dirty.
+        const fresh = get();
+        const freshNodes = fresh.nodes;
+        const changedDuringSave =
+          freshNodes !== savedNodesSnapshot ||
+          fresh.edges !== savedEdgesSnapshot ||
+          fresh.edgeStyle !== savedEdgeStyleSnapshot ||
+          fresh.groups !== savedGroupsSnapshot ||
+          fresh.workflowName !== savedWorkflowNameSnapshot;
 
         // If we externalized media, update store nodes with the refs
         // This prevents duplicate media on subsequent saves

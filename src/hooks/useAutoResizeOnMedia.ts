@@ -29,10 +29,13 @@ export function useAutoResizeOnMedia(
     }
     prevUrlRef.current = mediaUrl;
 
+    let cancelled = false;
+
     // Use requestAnimationFrame to avoid React Flow update conflicts
-    requestAnimationFrame(() => {
+    const rafId = requestAnimationFrame(() => {
       getDims(mediaUrl).then((dims) => {
-        if (!dims) return;
+        // Bail if a newer mediaUrl superseded this effect before getDims resolved
+        if (cancelled || !dims) return;
 
         const aspectRatio = dims.width / dims.height;
 
@@ -51,5 +54,10 @@ export function useAutoResizeOnMedia(
         );
       });
     });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
   }, [nodeId, mediaUrl, setNodes, getDims]);
 }

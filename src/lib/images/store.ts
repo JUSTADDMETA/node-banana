@@ -124,6 +124,15 @@ export function storeImage(base64DataUrl: string): string {
     );
   }
 
+  // Reject images larger than the entire byte budget: such an entry would be
+  // evicted immediately by evictOverBudget(), leaving the returned id pointing
+  // at nothing (a broken image URL).
+  if (parsed.data.byteLength > MAX_TOTAL_BYTES) {
+    throw new Error(
+      `Image exceeds maximum storable size (${parsed.data.byteLength} bytes > ${MAX_TOTAL_BYTES} bytes)`
+    );
+  }
+
   const now = Date.now();
   evictExpired(now);
 

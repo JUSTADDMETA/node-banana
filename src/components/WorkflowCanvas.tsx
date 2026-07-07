@@ -932,6 +932,18 @@ export function WorkflowCanvas() {
           return null;
         }
 
+        // GifEncoder has dynamic indexed image input handles (image-0, image-1, ...)
+        if (node.type === "gifEncoder" && needInput && handleType === "image") {
+          for (let i = 0; i < 50; i++) {
+            const candidateHandle = `image-${i}`;
+            const isOccupied = edges.some(
+              (edge) => edge.target === node.id && edge.targetHandle === candidateHandle
+            ) || batchUsed?.has(candidateHandle);
+            if (!isOccupied) return candidateHandle;
+          }
+          return null;
+        }
+
         // Router accepts any type — use typed handle if exists, otherwise generic
         if (node.type === "router" && needInput) {
           // Router accepts any type — use typed handle if that type is already active

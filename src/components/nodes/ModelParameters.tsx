@@ -97,11 +97,16 @@ function ModelParametersInner({
     }
 
     const currentKey = `${provider}:${modelId}`;
+    // Staleness guard: if modelId/provider changes before this async flow
+    // resolves, an older in-flight request must not overwrite the newer
+    // model's schema/inputs. Cleanup sets `cancelled = true` on the stale run.
+    let cancelled = false;
 
     const fetchSchema = async () => {
       // Check localStorage cache first
       const cached = getCachedSchema(modelId, provider);
       if (cached) {
+        if (cancelled) return;
         setSchema(cached.parameters);
         setSchemaKey(currentKey);
         onInputsLoaded?.(cached.inputs);
@@ -140,27 +145,34 @@ function ModelParametersInner({
         const data = await response.json();
         const params = data.parameters || [];
         const inputs = data.inputs || [];
+
+        // Cache the successful result (safe regardless of staleness).
+        setCachedSchema(modelId, provider, params, inputs);
+
+        if (cancelled) return;
         setSchema(params);
         setSchemaKey(currentKey);
-
-        // Cache the successful result
-        setCachedSchema(modelId, provider, params, inputs);
 
         // Pass inputs to parent for dynamic handle rendering
         if (onInputsLoaded) {
           onInputsLoaded(inputs);
         }
       } catch (err) {
+        if (cancelled) return;
         console.error("Failed to fetch model schema:", err);
         setError(err instanceof Error ? err.message : "Failed to fetch schema");
         setSchema([]);
         setSchemaKey(currentKey);
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     fetchSchema();
+
+    return () => {
+      cancelled = true;
+    };
   }, [modelId, provider, replicateApiKey, falApiKey, kieApiKey, wavespeedApiKey, onInputsLoaded]);
 
   // Pre-populate schema defaults into parameters

@@ -20,9 +20,6 @@ import { submitKieTask } from "./providers/kie";
 import { generateWithWaveSpeed } from "./providers/wavespeed";
 import { buildMediaResponse } from "./shared";
 
-// Re-export for backward compatibility (test file imports from route)
-export { clearFalInputMappingCache } from "./shared";
-
 export const maxDuration = 600; // 10 minute timeout for video generation polling
 export const dynamic = 'force-dynamic'; // Ensure this route is always dynamic
 

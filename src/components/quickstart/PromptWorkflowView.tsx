@@ -50,6 +50,7 @@ export function PromptWorkflowView({
           description: description.trim(),
           contentLevel: "full",
         }),
+        signal: abortController.signal,
       });
 
       const result = await response.json();

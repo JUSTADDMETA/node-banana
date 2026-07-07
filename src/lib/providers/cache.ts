@@ -52,6 +52,16 @@ const DEFAULT_TTL = 60 * 60 * 1000;
 const MAX_CACHE_SIZE = 100;
 
 /**
+ * Maximum number of keys retained in the WaveSpeed schema cache.
+ *
+ * A single catalogue fetch bulk-inserts one entry per model, which can exceed
+ * the small search-cache cap and immediately evict entries from that same
+ * fetch. The schema cache is keyed by model id (a bounded set), so it gets a
+ * larger cap sized to hold a full catalogue.
+ */
+const MAX_SCHEMA_CACHE_SIZE = 1000;
+
+/**
  * Sweep expired entries and enforce the size cap on a cache Map.
  *
  * Called on every write so the Maps cannot grow without bound. Expired entries
@@ -60,8 +70,13 @@ const MAX_CACHE_SIZE = 100;
  *
  * @param map - Cache Map to prune
  * @param ttl - TTL used to determine expiry
+ * @param maxSize - Maximum keys to retain (defaults to the search-cache cap)
  */
-function pruneCache<T>(map: Map<string, CacheEntry<T>>, ttl: number): void {
+function pruneCache<T>(
+  map: Map<string, CacheEntry<T>>,
+  ttl: number,
+  maxSize: number = MAX_CACHE_SIZE
+): void {
   const now = Date.now();
 
   for (const [key, entry] of map) {
@@ -70,7 +85,7 @@ function pruneCache<T>(map: Map<string, CacheEntry<T>>, ttl: number): void {
     }
   }
 
-  while (map.size > MAX_CACHE_SIZE) {
+  while (map.size > maxSize) {
     const oldestKey = map.keys().next().value;
     if (oldestKey === undefined) {
       break;
@@ -214,7 +229,7 @@ export function setCachedWaveSpeedSchema(
     data: schema,
     timestamp: Date.now(),
   });
-  pruneCache(wavespeedSchemaCache, DEFAULT_TTL);
+  pruneCache(wavespeedSchemaCache, DEFAULT_TTL, MAX_SCHEMA_CACHE_SIZE);
 }
 
 /**
@@ -232,7 +247,7 @@ export function setCachedWaveSpeedSchemas(
       timestamp: now,
     });
   }
-  pruneCache(wavespeedSchemaCache, DEFAULT_TTL);
+  pruneCache(wavespeedSchemaCache, DEFAULT_TTL, MAX_SCHEMA_CACHE_SIZE);
 }
 
 /**

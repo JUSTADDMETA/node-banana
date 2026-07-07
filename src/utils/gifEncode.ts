@@ -98,7 +98,11 @@ function rasterize(
 
   const frames: RawFrame[] = [];
   for (const img of imgs) {
-    ctx.clearRect(0, 0, width, height);
+    // Fill with an opaque background before drawing. The rgb444 GIF path never
+    // sets a transparent index, so any transparent padding would encode as
+    // opaque black anyway — make that explicit so letterbox bars are intentional.
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, width, height);
     // Letterbox-fit each frame so all input sizes still produce a square GIF
     const srcAspect = img.naturalWidth / img.naturalHeight;
     const tgtAspect = width / height;

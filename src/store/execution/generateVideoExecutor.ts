@@ -33,6 +33,7 @@ export async function executeGenerateVideo(
     getNodes,
     trackSaveGeneration,
     appendOutputGalleryVideo,
+    appendOutputGalleryImage,
   } = ctx;
 
   const { useStoredFallback = false } = options;
@@ -186,7 +187,11 @@ export async function executeGenerateVideo(
             .forEach((e) => {
               const target = currentNodes.find((n) => n.id === e.target);
               if (target?.type === "outputGallery") {
-                appendOutputGalleryVideo(target.id, outputContent);
+                if (videoData) {
+                  appendOutputGalleryVideo(target.id, outputContent);
+                } else {
+                  appendOutputGalleryImage(target.id, outputContent);
+                }
               }
             });
         }
