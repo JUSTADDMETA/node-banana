@@ -23,7 +23,7 @@ vi.mock("@/store/workflowStore", () => ({
 }));
 
 const NODE_ID = "split-grid-node-1";
-const PROMPT_TEXTAREA_PLACEHOLDER = "Prompt applied to every cell…";
+const PROMPT_TEXTAREA_PLACEHOLDER = "Describe what to generate...";
 const GENERATE_WARNING = "Generate Image nodes need a Prompt connected to their text input";
 
 function createNodeData(overrides: Partial<SplitGridNodeData> = {}): SplitGridNodeData {
@@ -75,18 +75,24 @@ describe("SplitGridTemplateModal", () => {
       expect(screen.getByText("Cell Node Set")).toBeInTheDocument();
     });
 
-    it("should render a toolbar button for every catalog entry", () => {
+    it("should not render add-node toolbar chips (nodes are added via handle drag)", () => {
       renderModal();
 
+      expect(
+        screen.getByText("Drag from a node's handle into empty space to add nodes")
+      ).toBeInTheDocument();
       for (const entry of TEMPLATE_NODE_CATALOG) {
-        expect(screen.getByRole("button", { name: entry.label })).toBeInTheDocument();
+        if (entry.label === "Prompt" || entry.label === "Generate Image") continue; // preset labels overlap
+        expect(screen.queryByRole("button", { name: entry.label })).not.toBeInTheDocument();
       }
     });
 
-    it("should render the base Cell Image node on the canvas", () => {
+    it("should render the base image node with its floating title", () => {
       renderModal();
 
-      expect(screen.getByText("Cell Image")).toBeInTheDocument();
+      expect(screen.getByText("Image Input")).toBeInTheDocument();
+      expect(screen.getByText("Split image lands here")).toBeInTheDocument();
+      expect(screen.getByText("1 per cell")).toBeInTheDocument();
     });
 
     it("should render both preset buttons", () => {
@@ -115,20 +121,17 @@ describe("SplitGridTemplateModal", () => {
   });
 
   describe("Adding Nodes", () => {
-    it("should add a Prompt node card to the canvas when the Prompt chip is clicked", () => {
+    it("adds prompt and generate cards when the classic preset is applied", () => {
       renderModal();
 
-      // Only the toolbar chip carries the "Prompt" label before adding
-      expect(screen.getAllByText("Prompt")).toHaveLength(1);
       expect(
         screen.queryByPlaceholderText(PROMPT_TEXTAREA_PLACEHOLDER)
       ).not.toBeInTheDocument();
 
-      fireEvent.click(screen.getByRole("button", { name: "Prompt" }));
+      fireEvent.click(screen.getByRole("button", { name: "Prompt + Generate" }));
 
-      // Toolbar chip + new node card header
-      expect(screen.getAllByText("Prompt")).toHaveLength(2);
       expect(screen.getByPlaceholderText(PROMPT_TEXTAREA_PLACEHOLDER)).toBeInTheDocument();
+      expect(screen.getByText("Model")).toBeInTheDocument();
     });
   });
 
@@ -162,18 +165,23 @@ describe("SplitGridTemplateModal", () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it("should include added nodes in the applied template", () => {
+    it("should include preset nodes in the applied template", () => {
       renderModal();
 
-      fireEvent.click(screen.getByRole("button", { name: "Prompt" }));
+      fireEvent.click(screen.getByRole("button", { name: "Prompt + Generate" }));
       fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
 
       const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
       const template = options.template;
-      expect(template.nodes).toHaveLength(2);
+      expect(template.nodes).toHaveLength(3);
       expect(template.nodes.map((node: { type: string }) => node.type)).toEqual(
-        expect.arrayContaining(["imageInput", "prompt"])
+        expect.arrayContaining(["imageInput", "prompt", "nanoBanana"])
       );
+      // Generate node carries concrete settings, like a main-canvas node
+      const generate = template.nodes.find((node: { type: string }) => node.type === "nanoBanana");
+      expect(generate.data).toMatchObject({
+        selectedModel: expect.objectContaining({ modelId: expect.any(String) }),
+      });
     });
   });
 
@@ -181,7 +189,7 @@ describe("SplitGridTemplateModal", () => {
     it("asks before discarding when Escape is pressed after edits", () => {
       const { onClose } = renderModal();
 
-      fireEvent.click(screen.getByRole("button", { name: "Prompt" }));
+      fireEvent.click(screen.getByRole("button", { name: "Prompt + Generate" }));
       fireEvent.keyDown(window, { key: "Escape" });
 
       expect(onClose).not.toHaveBeenCalled();
@@ -194,7 +202,7 @@ describe("SplitGridTemplateModal", () => {
     it("keeps editing when the user declines the discard prompt", () => {
       const { onClose } = renderModal();
 
-      fireEvent.click(screen.getByRole("button", { name: "Prompt" }));
+      fireEvent.click(screen.getByRole("button", { name: "Prompt + Generate" }));
       fireEvent.keyDown(window, { key: "Escape" });
       fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
 
@@ -248,9 +256,8 @@ describe("SplitGridTemplateModal", () => {
       // Prompt card body (textarea) and Generate card body (Model select) are unique to the canvas
       expect(screen.getByPlaceholderText(PROMPT_TEXTAREA_PLACEHOLDER)).toBeInTheDocument();
       expect(screen.getByText("Model")).toBeInTheDocument();
-      // Toolbar chip + node card header for each
-      expect(screen.getAllByText("Prompt")).toHaveLength(2);
-      expect(screen.getAllByText("Generate Image")).toHaveLength(2);
+      // Floating card titles
+      expect(screen.getByText("Prompt")).toBeInTheDocument();
     });
   });
 
@@ -261,10 +268,27 @@ describe("SplitGridTemplateModal", () => {
       expect(screen.queryByText(GENERATE_WARNING)).not.toBeInTheDocument();
     });
 
-    it("should warn when a Generate Image node has no prompt connected", () => {
-      renderModal();
-
-      fireEvent.click(screen.getByRole("button", { name: "Generate Image" }));
+    it("should warn when a stored template has a Generate Image node with no prompt", () => {
+      renderModal({
+        nodeData: {
+          template: {
+            baseNodeId: "cell-image",
+            nodes: [
+              { id: "cell-image", type: "imageInput", position: { x: 0, y: 0 } },
+              { id: "cell-generate", type: "nanoBanana", position: { x: 340, y: 0 } },
+            ],
+            edges: [
+              {
+                id: "cell-image-generate",
+                source: "cell-image",
+                sourceHandle: "image",
+                target: "cell-generate",
+                targetHandle: "image",
+              },
+            ],
+          },
+        },
+      });
 
       expect(screen.getByText(GENERATE_WARNING)).toBeInTheDocument();
     });

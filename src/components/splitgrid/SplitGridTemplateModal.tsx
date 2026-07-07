@@ -4,8 +4,10 @@
  * Split Grid cell template editor — a mini node graph in a modal.
  *
  * Users design the set of nodes created for every split image: the base cell
- * image node is always present, and any catalog node can be added and wired
- * up. Confirming saves the template and materializes one node group per cell.
+ * image node is always present, and new nodes are added exactly like on the
+ * main canvas — drag from a handle into empty space and pick from the
+ * connection menu. Confirming saves the template and materializes one node
+ * group per cell.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,11 +24,12 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type FinalConnectionState,
   type NodeTypes,
 } from "@xyflow/react";
 import { useWorkflowStore } from "@/store/workflowStore";
-import type { NodeType, SplitGridNodeData, SplitGridTemplate } from "@/types";
-import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
+import type { NanoBananaNodeData, NodeType, SplitGridNodeData, SplitGridTemplate } from "@/types";
+import { createDefaultNodeData, defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import {
   clampGridDimension,
   createClassicSplitGridTemplate,
@@ -37,9 +40,11 @@ import {
   getTemplateEntry,
   getTemplateNodeIcon,
   TEMPLATE_NODE_CATALOG,
+  type TemplateCatalogEntry,
   type TemplateHandleKind,
 } from "./templateCatalog";
 import {
+  GEMINI_IMAGE_MODELS,
   SplitGridTemplateNode,
   TemplateEditorContext,
   type TemplateNodeData,
@@ -60,6 +65,32 @@ function edgeStyleFor(sourceHandle: string | null | undefined): React.CSSPropert
   return { stroke: EDGE_COLOR[kind], strokeWidth: 2 };
 }
 
+/**
+ * Snapshot of the user's sticky generate defaults — a template generate node
+ * starts from the same settings a Generate Image node gets on the main canvas.
+ */
+function seedGenerateOverrides(): Record<string, unknown> {
+  const defaults = createDefaultNodeData("nanoBanana") as NanoBananaNodeData;
+  const seed: Record<string, unknown> = {
+    model: defaults.model,
+    selectedModel:
+      defaults.selectedModel ?? {
+        provider: "gemini",
+        modelId: defaults.model,
+        displayName:
+          GEMINI_IMAGE_MODELS.find((m) => m.value === defaults.model)?.label || defaults.model,
+      },
+    aspectRatio: defaults.aspectRatio,
+    resolution: defaults.resolution,
+    useGoogleSearch: defaults.useGoogleSearch,
+    useImageSearch: defaults.useImageSearch,
+  };
+  if (defaults.parameters && Object.keys(defaults.parameters).length > 0) {
+    seed.parameters = defaults.parameters;
+  }
+  return seed;
+}
+
 function templateToRfNodes(
   template: SplitGridTemplate,
   sourceImage: string | null
@@ -67,6 +98,11 @@ function templateToRfNodes(
   return template.nodes.map((templateNode) => {
     const dims = defaultNodeDimensions[templateNode.type] ?? { width: 300, height: 280 };
     const isBase = templateNode.id === template.baseNodeId;
+    let overrides = { ...(templateNode.data ?? {}) };
+    // Generate nodes always show concrete settings, like the main canvas
+    if (templateNode.type === "nanoBanana" && Object.keys(overrides).length === 0) {
+      overrides = seedGenerateOverrides();
+    }
     return {
       id: templateNode.id,
       type: "splitGridTemplateNode",
@@ -75,7 +111,7 @@ function templateToRfNodes(
       style: { width: dims.width, height: dims.height },
       data: {
         nodeType: templateNode.type,
-        overrides: { ...(templateNode.data ?? {}) },
+        overrides,
         isBase,
         sourceImage: isBase ? sourceImage : undefined,
       } satisfies TemplateNodeData,
@@ -120,6 +156,99 @@ function serializeTemplate(
   };
 }
 
+interface TemplateDropMenuState {
+  screen: { x: number; y: number };
+  flow: { x: number; y: number };
+  fromNodeId: string;
+  fromHandleId: TemplateHandleKind;
+  fromHandleType: "source" | "target";
+}
+
+/** Connection-drop menu — same look and behavior as the main canvas menu */
+function TemplateConnectionMenu({
+  menu,
+  options,
+  onSelect,
+  onClose,
+}: {
+  menu: TemplateDropMenuState;
+  options: TemplateCatalogEntry[];
+  onSelect: (type: NodeType) => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      switch (event.key) {
+        case "ArrowDown":
+          event.preventDefault();
+          setSelectedIndex((prev) => (prev + 1) % options.length);
+          break;
+        case "ArrowUp":
+          event.preventDefault();
+          setSelectedIndex((prev) => (prev - 1 + options.length) % options.length);
+          break;
+        case "Enter":
+          event.preventDefault();
+          if (options[selectedIndex]) onSelect(options[selectedIndex].type);
+          break;
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [options, selectedIndex, onSelect]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [onClose]);
+
+  if (options.length === 0) return null;
+
+  return (
+    <div
+      ref={menuRef}
+      tabIndex={-1}
+      className="fixed z-[110] bg-neutral-800 border border-neutral-600 rounded-lg shadow-xl overflow-hidden min-w-[160px] outline-none"
+      style={{
+        left: menu.screen.x,
+        top: menu.screen.y,
+        transform: "translate(-50%, -50%)",
+      }}
+    >
+      <div className="px-2 py-1.5 border-b border-neutral-700">
+        <span className="text-[10px] text-neutral-400 uppercase tracking-wide">
+          Add {menu.fromHandleId} node
+        </span>
+      </div>
+      <div className="py-1">
+        {options.map((option, index) => (
+          <button
+            key={option.type}
+            onClick={() => onSelect(option.type)}
+            onMouseEnter={() => setSelectedIndex(index)}
+            className={`w-full px-3 py-2 text-left text-[11px] font-medium flex items-center gap-2 transition-colors ${
+              index === selectedIndex
+                ? "bg-neutral-700 text-neutral-100"
+                : "text-neutral-300 hover:bg-neutral-700 hover:text-neutral-100"
+            }`}
+          >
+            {getTemplateNodeIcon(option.type)}
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 interface SplitGridTemplateModalProps {
   nodeId: string;
   nodeData: SplitGridNodeData;
@@ -140,9 +269,10 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     templateToRfEdges(initialTemplate)
   );
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [dropMenu, setDropMenu] = useState<TemplateDropMenuState | null>(null);
   const idCounterRef = useRef(0);
   const baseNodeId = initialTemplate.baseNodeId;
-  const { fitView } = useReactFlow();
+  const { fitView, screenToFlowPosition } = useReactFlow();
 
   const refitSoon = useCallback(() => {
     requestAnimationFrame(() => {
@@ -183,11 +313,13 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     }
   }, [isDirty, onClose]);
 
-  // Escape asks before discarding unsaved template edits
+  // Escape: drop menu first, then discard confirmation, then close
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (showDiscardConfirm) {
+      if (dropMenu) {
+        setDropMenu(null);
+      } else if (showDiscardConfirm) {
         setShowDiscardConfirm(false);
       } else {
         requestClose();
@@ -195,7 +327,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showDiscardConfirm, requestClose]);
+  }, [dropMenu, showDiscardConfirm, requestClose]);
 
   const setOverrides = useCallback(
     (id: string, overrides: Record<string, unknown>) => {
@@ -217,38 +349,6 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
       return id;
     },
     []
-  );
-
-  const addTemplateNode = useCallback(
-    (type: NodeType) => {
-      setRfNodes((nodes) => {
-        const dims = defaultNodeDimensions[type] ?? { width: 300, height: 280 };
-        // Place to the right of the current layout, staggering repeated adds
-        let maxRight = -Infinity;
-        let minY = Infinity;
-        for (const node of nodes) {
-          const width = (node.style?.width as number) ?? 300;
-          maxRight = Math.max(maxRight, node.position.x + width);
-          minY = Math.min(minY, node.position.y);
-        }
-        if (!Number.isFinite(maxRight)) maxRight = 0;
-        if (!Number.isFinite(minY)) minY = 0;
-        const stagger = (nodes.length % 3) * 40;
-        return [
-          ...nodes,
-          {
-            id: makeTemplateNodeId(type, nodes),
-            type: "splitGridTemplateNode" as const,
-            position: { x: maxRight + 60, y: minY + stagger },
-            deletable: true,
-            style: { width: dims.width, height: dims.height },
-            data: { nodeType: type, overrides: {}, isBase: false } satisfies TemplateNodeData,
-          },
-        ];
-      });
-      refitSoon();
-    },
-    [makeTemplateNodeId, setRfNodes, refitSoon]
   );
 
   const applyPreset = useCallback(
@@ -297,9 +397,8 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     [rfNodes, createsCycle]
   );
 
-  const handleConnect = useCallback(
+  const addConnectedEdge = useCallback(
     (connection: Connection) => {
-      if (!isValidConnection(connection)) return;
       setRfEdges((edges) => {
         let next = edges;
         // Text inputs accept a single connection — replace the existing one
@@ -312,7 +411,88 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
         return addEdge({ ...connection, style: edgeStyleFor(connection.sourceHandle) }, next);
       });
     },
-    [isValidConnection, setRfEdges]
+    [setRfEdges]
+  );
+
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      if (!isValidConnection(connection)) return;
+      addConnectedEdge(connection);
+    },
+    [isValidConnection, addConnectedEdge]
+  );
+
+  // Dropping a connection in empty space opens the add-node menu, main-canvas style
+  const handleConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
+      if (connectionState.isValid) return;
+      const fromHandle = connectionState.fromHandle;
+      const fromNode = connectionState.fromNode;
+      if (!fromHandle?.id || !fromNode) return;
+      const targetElement = event.target as HTMLElement | null;
+      if (!targetElement?.closest(".react-flow__pane")) return;
+      const point = "changedTouches" in event ? event.changedTouches[0] : event;
+      setDropMenu({
+        screen: { x: point.clientX, y: point.clientY },
+        flow: screenToFlowPosition({ x: point.clientX, y: point.clientY }),
+        fromNodeId: fromNode.id,
+        fromHandleId: (fromHandle.id === "text" ? "text" : "image") as TemplateHandleKind,
+        fromHandleType: fromHandle.type,
+      });
+    },
+    [screenToFlowPosition]
+  );
+
+  const dropMenuOptions = useMemo(() => {
+    if (!dropMenu) return [];
+    return TEMPLATE_NODE_CATALOG.filter((entry) =>
+      dropMenu.fromHandleType === "source"
+        ? entry.inputs.some((handle) => handle.id === dropMenu.fromHandleId)
+        : entry.outputs.some((handle) => handle.id === dropMenu.fromHandleId)
+    );
+  }, [dropMenu]);
+
+  const handleDropMenuSelect = useCallback(
+    (type: NodeType) => {
+      if (!dropMenu) return;
+      const dims = defaultNodeDimensions[type] ?? { width: 300, height: 280 };
+      const entry = getTemplateEntry(type);
+      const kind = dropMenu.fromHandleId;
+      const newId = makeTemplateNodeId(type, rfNodes);
+
+      let position: { x: number; y: number };
+      let connection: Connection;
+      if (dropMenu.fromHandleType === "source") {
+        // Forward drag: align the new node's input handle with the drop point
+        const input = entry.inputs.find((handle) => handle.id === kind);
+        const handleRatio = input?.top ? parseFloat(input.top) / 100 : 0.5;
+        position = { x: dropMenu.flow.x, y: dropMenu.flow.y - dims.height * handleRatio };
+        connection = { source: dropMenu.fromNodeId, sourceHandle: kind, target: newId, targetHandle: kind };
+      } else {
+        // Backward drag: align the new node's output handle with the drop point
+        position = { x: dropMenu.flow.x - dims.width, y: dropMenu.flow.y - dims.height / 2 };
+        connection = { source: newId, sourceHandle: kind, target: dropMenu.fromNodeId, targetHandle: kind };
+      }
+
+      setRfNodes((nodes) => [
+        ...nodes,
+        {
+          id: newId,
+          type: "splitGridTemplateNode" as const,
+          position,
+          deletable: true,
+          style: { width: dims.width, height: dims.height },
+          data: {
+            nodeType: type,
+            overrides: type === "nanoBanana" ? seedGenerateOverrides() : {},
+            isBase: false,
+          } satisfies TemplateNodeData,
+        },
+      ]);
+      addConnectedEdge(connection);
+      setDropMenu(null);
+    },
+    [dropMenu, makeTemplateNodeId, rfNodes, setRfNodes, addConnectedEdge]
   );
 
   const cellCount =
@@ -384,21 +564,10 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
         </div>
 
         {/* Toolbar */}
-        <div className="flex items-center flex-wrap gap-2 px-5 py-2.5 border-b border-neutral-700/40 shrink-0">
-          <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider shrink-0">
-            Add node
+        <div className="flex items-center gap-2 px-5 py-2.5 border-b border-neutral-700/40 shrink-0">
+          <span className="text-xs text-neutral-500">
+            Drag from a node&apos;s handle into empty space to add nodes
           </span>
-          {TEMPLATE_NODE_CATALOG.map((entry) => (
-            <button
-              key={entry.type}
-              onClick={() => addTemplateNode(entry.type)}
-              title={entry.description}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-neutral-900 border border-neutral-700 hover:border-neutral-500 rounded-md text-xs text-neutral-300 hover:text-neutral-100 transition-colors shrink-0"
-            >
-              <span className="[&>svg]:w-3.5 [&>svg]:h-3.5">{getTemplateNodeIcon(entry.type)}</span>
-              {entry.label}
-            </button>
-          ))}
           <div className="ml-auto flex items-center gap-2 shrink-0">
             <span className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
               Presets
@@ -427,6 +596,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={handleConnect}
+              onConnectEnd={handleConnectEnd}
               isValidConnection={isValidConnection}
               nodeTypes={nodeTypes}
               fitView
@@ -441,6 +611,16 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               <Controls showInteractive={false} className="!bg-neutral-800 !border-neutral-700 !shadow-none [&>button]:!bg-neutral-800 [&>button]:!border-neutral-700 [&>button]:!text-neutral-300 [&>button:hover]:!bg-neutral-700" />
             </ReactFlow>
           </TemplateEditorContext.Provider>
+
+          {/* Connection drop menu */}
+          {dropMenu && (
+            <TemplateConnectionMenu
+              menu={dropMenu}
+              options={dropMenuOptions}
+              onSelect={handleDropMenuSelect}
+              onClose={() => setDropMenu(null)}
+            />
+          )}
         </div>
 
         {/* Footer */}
