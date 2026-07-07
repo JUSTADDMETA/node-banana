@@ -511,6 +511,33 @@ function clearStaleInputImages(
   }
 }
 
+/**
+ * Removes groups whose entire remaining membership was deleted in this change,
+ * so deleting a group's nodes doesn't leave an empty group frame behind.
+ * Groups that were already empty before the deletion are left alone (those are
+ * only removed explicitly via deleteGroup). Returns the same reference when
+ * nothing needs pruning.
+ */
+function pruneEmptiedGroups(
+  groups: Record<string, NodeGroup>,
+  previousNodes: WorkflowNode[],
+  removedNodeIds: Set<string>,
+  remainingNodes: WorkflowNode[]
+): Record<string, NodeGroup> {
+  const emptied = new Set<string>();
+  for (const node of previousNodes) {
+    if (node.groupId && removedNodeIds.has(node.id)) emptied.add(node.groupId);
+  }
+  if (emptied.size === 0) return groups;
+  for (const node of remainingNodes) {
+    if (node.groupId) emptied.delete(node.groupId);
+  }
+  if (emptied.size === 0) return groups;
+  const pruned = { ...groups };
+  for (const groupId of emptied) delete pruned[groupId];
+  return pruned;
+}
+
 /** Capture current undoable state as a deep-cloned snapshot */
 function captureUndoSnapshot(state: WorkflowStore): UndoSnapshot {
   const cloned = clonePreservingStrings({
@@ -805,13 +832,23 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
   removeNode: (nodeId: string) => {
     pushUndoCheckpoint(get, set);
-    set((state) => ({
-      nodes: state.nodes.filter((node) => node.id !== nodeId),
-      edges: state.edges.filter(
-        (edge) => edge.source !== nodeId && edge.target !== nodeId
-      ),
-      hasUnsavedChanges: true,
-    }));
+    set((state) => {
+      const remainingNodes = state.nodes.filter((node) => node.id !== nodeId);
+      const groups = pruneEmptiedGroups(
+        state.groups,
+        state.nodes,
+        new Set([nodeId]),
+        remainingNodes
+      );
+      return {
+        nodes: remainingNodes,
+        edges: state.edges.filter(
+          (edge) => edge.source !== nodeId && edge.target !== nodeId
+        ),
+        ...(groups !== state.groups ? { groups } : {}),
+        hasUnsavedChanges: true,
+      };
+    });
     get().incrementManualChangeCount();
   },
 
@@ -847,10 +884,21 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       setTimeout(() => { deleteCheckpointActive = false; }, 0);
     }
 
-    set((state) => ({
-      nodes: applyNodeChanges(changes, state.nodes),
-      ...(hasMeaningfulChange ? { hasUnsavedChanges: true } : {}),
-    }));
+    set((state) => {
+      const nextNodes = applyNodeChanges(changes, state.nodes);
+      let groups = state.groups;
+      if (hasRemoveChange) {
+        const removedIds = new Set(
+          changes.filter((c) => c.type === "remove").map((c) => c.id)
+        );
+        groups = pruneEmptiedGroups(state.groups, state.nodes, removedIds, nextNodes);
+      }
+      return {
+        nodes: nextNodes,
+        ...(groups !== state.groups ? { groups } : {}),
+        ...(hasMeaningfulChange ? { hasUnsavedChanges: true } : {}),
+      };
+    });
 
     if (hasRemoveChange) {
       get().incrementManualChangeCount();
