@@ -1992,6 +1992,40 @@ describe("/api/generate route", () => {
       expect(data.success).toBe(false);
       expect(data.error).toBe("No image returned from OpenAI");
     });
+
+    it("returns a clean message for a non-JSON gateway error (520), not raw HTML", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 520,
+        statusText: "",
+        text: () => Promise.resolve(
+          "<!DOCTYPE html><html><head><title>api.openai.com | 520</title></head><body>Web server is returning an unknown error</body></html>"
+        ),
+      });
+
+      const request = createMockPostRequest(
+        {
+          prompt: "Test prompt",
+          selectedModel: {
+            provider: "openai",
+            modelId: "gpt-image-2",
+            displayName: "GPT Image 2",
+          },
+        },
+        { "X-OpenAI-API-Key": "test-openai-key" }
+      );
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(data.success).toBe(false);
+      // No raw HTML leaks through; message is concise and actionable.
+      expect(data.error).not.toContain("<!DOCTYPE");
+      expect(data.error).not.toContain("<html");
+      expect(data.error).toContain("temporarily unavailable");
+      expect(data.error).toContain("520");
+    });
   });
 
   describe("fal.ai provider", () => {

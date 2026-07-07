@@ -104,19 +104,30 @@ export async function generateWithOpenAI(
 
   if (!response.ok) {
     const errorText = await response.text();
-    let errorDetail = errorText;
+    // Default to a concise, status-based message so we never surface a raw HTML
+    // gateway/error page (e.g. a Cloudflare 520) to the user.
+    let errorDetail = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
     try {
       const errorJson = JSON.parse(errorText);
-      errorDetail = errorJson.error?.message || errorJson.error?.type || errorText;
+      errorDetail = errorJson.error?.message || errorJson.error?.type || errorDetail;
     } catch {
-      // Keep original text if not JSON
+      // Non-JSON body (HTML error page, etc.) — keep the status-based message.
     }
+    console.error(`[API:${requestId}] OpenAI error ${response.status}: ${errorText.slice(0, 300)}`);
 
     // Handle rate limits
     if (response.status === 429) {
       return {
         success: false,
         error: `${input.model.name}: Rate limit exceeded. Try again in a moment.`,
+      };
+    }
+
+    // Upstream/gateway errors (500-599, incl. Cloudflare 520-524) are transient.
+    if (response.status >= 500) {
+      return {
+        success: false,
+        error: `${input.model.name}: OpenAI is temporarily unavailable (${errorDetail}). Please try again.`,
       };
     }
 
