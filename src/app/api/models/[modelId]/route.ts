@@ -1258,6 +1258,28 @@ function getGeminiVideoSchema(modelId: string): ExtractedSchema | null {
  * Get schema for Gemini image models (native image generation via Gemini API)
  * Returns null if the model is not a Gemini image model.
  */
+/**
+ * Get hardcoded schema for OpenAI image models.
+ * OpenAI doesn't expose a schema discovery API for image generation models.
+ */
+function getOpenAiSchema(modelId: string): ExtractedSchema {
+  const parameters: ModelParameter[] = [
+    { name: "size", type: "string", description: "Output image size", enum: ["1024x1024", "1024x1536", "1536x1024", "auto"], default: "auto" },
+    { name: "quality", type: "string", description: "Output quality level", enum: ["low", "medium", "high", "auto"], default: "auto" },
+    { name: "background", type: "string", description: "Background type for generated image", enum: ["transparent", "opaque", "auto"], default: "auto" },
+  ];
+  const inputs: ModelInput[] = [
+    { name: "prompt", type: "text", required: true, label: "Prompt" },
+    { name: "image", type: "image", required: false, label: "Image", isArray: true },
+  ];
+  const schemas: Record<string, ExtractedSchema> = {
+    "gpt-image-2": { parameters, inputs },
+    "gpt-image-1": { parameters, inputs },
+  };
+
+  return schemas[modelId] || { parameters: [], inputs: [] };
+}
+
 function getGeminiImageSchema(modelId: string): ExtractedSchema | null {
   const baseAspectRatios = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
   const extendedAspectRatios = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
@@ -1542,11 +1564,11 @@ export async function GET(
   const decodedModelId = decodeURIComponent(modelId);
   const provider = request.nextUrl.searchParams.get("provider") as ProviderType | null;
 
-  if (!provider || (provider !== "replicate" && provider !== "fal" && provider !== "kie" && provider !== "wavespeed" && provider !== "gemini")) {
+  if (!provider || (provider !== "replicate" && provider !== "fal" && provider !== "kie" && provider !== "wavespeed" && provider !== "gemini" && provider !== "openai")) {
     return NextResponse.json<SchemaErrorResponse>(
       {
         success: false,
-        error: "Invalid or missing provider. Use ?provider=replicate, ?provider=fal, ?provider=kie, ?provider=wavespeed, or ?provider=gemini",
+        error: "Invalid or missing provider. Use ?provider=replicate, ?provider=fal, ?provider=kie, ?provider=wavespeed, ?provider=openai, or ?provider=gemini",
       },
       { status: 400 }
     );
@@ -1598,6 +1620,9 @@ export async function GET(
       // WaveSpeed uses dynamic schemas from API, with static fallback
       const apiKey = request.headers.get("X-WaveSpeed-Key") || process.env.WAVESPEED_API_KEY || null;
       result = await fetchWaveSpeedSchema(decodedModelId, apiKey);
+    } else if (provider === "openai") {
+      // OpenAI uses hardcoded schemas (no schema discovery API for image models)
+      result = getOpenAiSchema(decodedModelId);
     } else {
       // User-provided key takes precedence over env variable
       const apiKey = request.headers.get("X-Fal-Key") || process.env.FAL_API_KEY || null;
