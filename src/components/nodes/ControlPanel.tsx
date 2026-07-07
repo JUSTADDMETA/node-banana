@@ -198,7 +198,7 @@ function GenerateImageControls({ node }: { node: Node }) {
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const regenerateNode = useWorkflowStore((state) => state.regenerateNode);
   const isRunning = useWorkflowStore((state) => state.isRunning);
-  const { replicateApiKey, kieApiKey, replicateEnabled, kieEnabled } = useProviderApiKeys();
+  const { replicateApiKey, kieApiKey, openaiApiKey, replicateEnabled, kieEnabled, openaiEnabled } = useProviderApiKeys();
   const [isBrowseDialogOpen, setIsBrowseDialogOpen] = useState(false);
 
   const currentProvider: ProviderType = nodeData.selectedModel?.provider || "gemini";
@@ -214,8 +214,11 @@ function GenerateImageControls({ node }: { node: Node }) {
     if (kieEnabled && kieApiKey) {
       providers.push({ id: "kie", name: "Kie.ai" });
     }
+    if (openaiEnabled && openaiApiKey) {
+      providers.push({ id: "openai", name: "OpenAI" });
+    }
     return providers;
-  }, [replicateEnabled, replicateApiKey, kieEnabled, kieApiKey]);
+  }, [replicateEnabled, replicateApiKey, kieEnabled, kieApiKey, openaiEnabled, openaiApiKey]);
 
   const handleAspectRatioChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
