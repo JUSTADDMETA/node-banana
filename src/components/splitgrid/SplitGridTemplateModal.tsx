@@ -614,7 +614,11 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               Image only
             </button>
             <button
-              onClick={() => applyPreset(createClassicSplitGridTemplate(nodeData.defaultPrompt))}
+              onClick={() =>
+                applyPreset(
+                  createClassicSplitGridTemplate(nodeData.defaultPrompt, nodeData.generateSettings)
+                )
+              }
               className="px-2.5 py-1.5 text-xs text-neutral-400 hover:text-neutral-100 bg-neutral-900 border border-neutral-700 hover:border-neutral-500 rounded-md transition-colors"
             >
               Prompt + Generate

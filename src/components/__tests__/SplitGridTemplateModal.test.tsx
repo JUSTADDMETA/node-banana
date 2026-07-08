@@ -188,6 +188,39 @@ describe("SplitGridTemplateModal", () => {
         selectedModel: expect.objectContaining({ modelId: expect.any(String) }),
       });
     });
+
+    it("preserves legacy generate settings and prompt when the classic preset is applied", () => {
+      renderModal({
+        nodeData: {
+          defaultPrompt: "make it pop",
+          generateSettings: {
+            aspectRatio: "16:9",
+            resolution: "2K",
+            model: "nano-banana-pro",
+            useGoogleSearch: true,
+            useImageSearch: false,
+          },
+        },
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Prompt + Generate" }));
+      fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+      const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+      const template = options.template;
+      const generate = template.nodes.find(
+        (node: { type: string }) => node.type === "nanoBanana"
+      );
+      expect(generate.data).toMatchObject({
+        aspectRatio: "16:9",
+        resolution: "2K",
+        selectedModel: expect.objectContaining({ modelId: "nano-banana-pro" }),
+      });
+      const promptNode = template.nodes.find(
+        (node: { type: string }) => node.type === "prompt"
+      );
+      expect(promptNode.data).toMatchObject({ prompt: "make it pop" });
+    });
   });
 
   describe("Unsaved changes", () => {
