@@ -29,7 +29,7 @@ import {
 export { createDefaultSplitGridTemplate, SPLIT_GRID_BASE_NODE_ID };
 
 export const MIN_GRID_DIMENSION = 1;
-export const MAX_GRID_DIMENSION = 8;
+export const MAX_GRID_DIMENSION = 16;
 
 /**
  * Normalizes a grid dimension from untrusted data (AI-generated workflows,

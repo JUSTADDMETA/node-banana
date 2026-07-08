@@ -212,8 +212,8 @@ describe("SplitGridNode", () => {
       expect(screen.getByLabelText("Decrease rows")).toBeDisabled();
     });
 
-    it("disables the increase button at the maximum of 8", () => {
-      renderNode({ gridRows: 8 });
+    it("disables the increase button at the maximum of 16", () => {
+      renderNode({ gridRows: 16 });
 
       expect(screen.getByLabelText("Increase rows")).toBeDisabled();
     });
@@ -228,14 +228,14 @@ describe("SplitGridNode", () => {
       expect(mockUpdateNodeData).toHaveBeenCalledWith(NODE_ID, { gridRows: 5 });
     });
 
-    it("clamps typed values above the maximum to 8", () => {
+    it("clamps typed values above the maximum to 16", () => {
       renderNode({ gridRows: 2 });
 
       const input = screen.getByLabelText("Rows");
       fireEvent.change(input, { target: { value: "99" } });
       fireEvent.blur(input);
 
-      expect(mockUpdateNodeData).toHaveBeenCalledWith(NODE_ID, { gridRows: 8 });
+      expect(mockUpdateNodeData).toHaveBeenCalledWith(NODE_ID, { gridRows: 16 });
     });
 
     it("clamps typed values below the minimum to 1", () => {
