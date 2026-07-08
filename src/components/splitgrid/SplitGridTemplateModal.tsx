@@ -28,6 +28,7 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import { useWorkflowStore } from "@/store/workflowStore";
+import { useWheelPanZoom } from "@/hooks/useWheelPanZoom";
 import type {
   LLMGenerateNodeData,
   NanoBananaNodeData,
@@ -302,6 +303,12 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   const isRunning = useWorkflowStore((state) => state.isRunning);
   const incrementModalCount = useWorkflowStore((state) => state.incrementModalCount);
   const decrementModalCount = useWorkflowStore((state) => state.decrementModalCount);
+  const canvasNavigationSettings = useWorkflowStore((state) => state.canvasNavigationSettings);
+
+  // Match the main canvas's wheel navigation (scroll-to-pan when zoomMode is
+  // altScroll/ctrlScroll) instead of React Flow's default scroll-to-zoom.
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);
+  useWheelPanZoom(canvasWrapperRef, canvasNavigationSettings, true);
 
   const initialTemplate = useMemo(() => getSplitGridTemplate(nodeData), [nodeData]);
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TemplateRFNode>(
@@ -637,7 +644,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
         </div>
 
         {/* Mini canvas */}
-        <div className="flex-1 min-h-0 relative bg-neutral-900">
+        <div ref={canvasWrapperRef} className="flex-1 min-h-0 relative bg-neutral-900">
           <TemplateEditorContext.Provider value={editorContext}>
             <ReactFlow
               nodes={rfNodes}
@@ -652,6 +659,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
               minZoom={0.2}
               maxZoom={1.5}
+              zoomOnScroll={false}
               deleteKeyCode={["Backspace", "Delete"]}
               defaultEdgeOptions={{ animated: false }}
               proOptions={{ hideAttribution: true }}
