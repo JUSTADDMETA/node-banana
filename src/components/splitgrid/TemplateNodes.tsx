@@ -169,9 +169,12 @@ function MiniFloatingHeader({
 }) {
   return (
     <div className="absolute left-0 right-0 -top-[26px] px-1 py-1 flex items-center justify-between pointer-events-none">
-      <div className="flex-1 min-w-0 flex items-center gap-1.5 pl-2">
+      {/* Title strip doubles as a drag handle (bodies are nodrag). No `nodrag`
+          class + pointer-events-auto lets React Flow start a node drag here,
+          mirroring the main-canvas FloatingNodeHeader. */}
+      <div className="flex-1 min-w-0 flex items-center gap-1.5 pl-2 pointer-events-auto cursor-grab active:cursor-grabbing">
         {provider && <ProviderBadge provider={provider} />}
-        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 truncate">
+        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 truncate select-none">
           {title}
         </span>
       </div>
