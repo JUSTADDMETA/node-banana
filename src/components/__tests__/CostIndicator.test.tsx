@@ -134,6 +134,29 @@ describe("CostIndicator", () => {
       expect(screen.getByText("$0.04")).toBeInTheDocument();
     });
 
+    it("should format cost correctly for nano-banana-2-lite model", () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "node-1",
+          type: "nanoBanana",
+          position: { x: 0, y: 0 },
+          data: {
+            model: "nano-banana-2-lite",
+            resolution: "1K",
+          },
+        },
+      ];
+
+      mockUseWorkflowStore.mockImplementation((selector) => {
+        return selector(createDefaultState({ nodes }));
+      });
+
+      render(<CostIndicator />);
+
+      // nano-banana-2-lite costs $0.034/image (1K only)
+      expect(screen.getByText("$0.03")).toBeInTheDocument();
+    });
+
     it("should format cost correctly for nano-banana-pro model", () => {
       const nodes: WorkflowNode[] = [
         {
