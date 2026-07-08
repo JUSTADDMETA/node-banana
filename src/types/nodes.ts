@@ -528,6 +528,14 @@ export interface SplitGridNodeData extends BaseNodeData {
   sourceImageRef?: string; // External image reference for storage optimization
   gridRows: number;
   gridCols: number;
+  /**
+   * Interior column boundary positions, normalized to (0,1), strictly
+   * ascending, length gridCols-1. Absent/invalid → uniform slicing. Set by
+   * dragging the preview's vertical grid lines.
+   */
+  colOffsets?: number[];
+  /** Interior row boundary positions; see colOffsets. Length gridRows-1. */
+  rowOffsets?: number[];
   /** Per-cell node template; undefined on legacy saves (treated as image-only default) */
   template?: SplitGridTemplate;
   /** Materialized cells; undefined on legacy saves (falls back to childNodeIds) */

@@ -84,25 +84,59 @@ export async function detectGrid(imageDataUrl: string): Promise<GridDetectionRes
 }
 
 /**
- * Creates a grid result for a specific rows x cols configuration
+ * Interior boundary offsets (normalized, ascending, length count-1) for a run of
+ * `count` slices. Custom offsets from draggable grid lines are used when valid;
+ * otherwise slices are uniform.
+ */
+export interface GridOffsets {
+  /** Interior column line positions in (0,1), length cols-1. */
+  colOffsets?: number[];
+  /** Interior row line positions in (0,1), length rows-1. */
+  rowOffsets?: number[];
+}
+
+/**
+ * Pixel boundaries [0, …, size] for `count` slices along one axis. Uses the
+ * given interior offsets when they are valid (length count-1, strictly inside
+ * (0,1), ascending), otherwise falls back to uniform division. Rounding to whole
+ * pixels keeps adjacent cells perfectly tiled (each cell's width is the gap
+ * between consecutive boundaries, so there are no seams or overlaps).
+ */
+function pixelBoundaries(size: number, count: number, offsets?: number[]): number[] {
+  const valid =
+    Array.isArray(offsets) &&
+    offsets.length === count - 1 &&
+    offsets.every(
+      (v, i) => Number.isFinite(v) && v > 0 && v < 1 && (i === 0 || v > offsets[i - 1])
+    );
+  const interior = valid
+    ? (offsets as number[])
+    : Array.from({ length: Math.max(0, count - 1) }, (_, i) => (i + 1) / count);
+  return [0, ...interior.map((o) => Math.round(o * size)), size];
+}
+
+/**
+ * Creates a grid result for a specific rows x cols configuration. Optional
+ * colOffsets/rowOffsets place the interior grid lines for non-uniform slicing.
  */
 export function createGridForDimensions(
   width: number,
   height: number,
   rows: number,
-  cols: number
+  cols: number,
+  offsets?: GridOffsets
 ): GridDetectionResult {
-  const cellWidth = width / cols;
-  const cellHeight = height / rows;
+  const xs = pixelBoundaries(width, cols, offsets?.colOffsets);
+  const ys = pixelBoundaries(height, rows, offsets?.rowOffsets);
 
   const cells: GridCell[] = [];
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       cells.push({
-        x: Math.round(col * cellWidth),
-        y: Math.round(row * cellHeight),
-        width: Math.round(cellWidth),
-        height: Math.round(cellHeight),
+        x: xs[col],
+        y: ys[row],
+        width: xs[col + 1] - xs[col],
+        height: ys[row + 1] - ys[row],
       });
     }
   }
@@ -121,14 +155,15 @@ export function createGridForDimensions(
 export async function detectGridWithDimensions(
   imageDataUrl: string,
   rows: number,
-  cols: number
+  cols: number,
+  offsets?: GridOffsets
 ): Promise<GridDetectionResult> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
 
     img.onload = () => {
-      const result = createGridForDimensions(img.width, img.height, rows, cols);
+      const result = createGridForDimensions(img.width, img.height, rows, cols, offsets);
       resolve(result);
     };
 
@@ -468,12 +503,13 @@ export async function detectAndSplitGrid(imageDataUrl: string): Promise<{
 export async function splitWithDimensions(
   imageDataUrl: string,
   rows: number,
-  cols: number
+  cols: number,
+  offsets?: GridOffsets
 ): Promise<{
   grid: GridDetectionResult;
   images: string[];
 }> {
-  const grid = await detectGridWithDimensions(imageDataUrl, rows, cols);
+  const grid = await detectGridWithDimensions(imageDataUrl, rows, cols, offsets);
   const images = await splitImage(imageDataUrl, grid);
   return { grid, images };
 }

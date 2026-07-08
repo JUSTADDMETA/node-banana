@@ -16,6 +16,10 @@ import {
   hasLegacyCellsOnly,
   needsMaterialization,
   buildCellInstances,
+  sanitizeGridOffsets,
+  resolveGridOffsets,
+  gridBoundaries,
+  gridFractions,
   SPLIT_GRID_BASE_NODE_ID,
 } from "../splitGridTemplate";
 import type {
@@ -609,6 +613,73 @@ describe("splitGridTemplate utilities", () => {
       // Default fields survive the merge
       expect(data.status).toBe("idle");
       expect(data.outputImage).toBeNull();
+    });
+  });
+
+  describe("grid offset helpers", () => {
+    describe("sanitizeGridOffsets", () => {
+      it("accepts valid interior offsets of the right length", () => {
+        expect(sanitizeGridOffsets([0.25, 0.6], 3)).toEqual([0.25, 0.6]);
+      });
+
+      it("rejects wrong-length arrays", () => {
+        expect(sanitizeGridOffsets([0.5], 3)).toBeNull();
+        expect(sanitizeGridOffsets([0.25, 0.5, 0.75], 3)).toBeNull();
+      });
+
+      it("rejects out-of-range or non-ascending values", () => {
+        expect(sanitizeGridOffsets([0, 0.5], 3)).toBeNull(); // 0 not inside (0,1)
+        expect(sanitizeGridOffsets([0.5, 1], 3)).toBeNull(); // 1 not inside (0,1)
+        expect(sanitizeGridOffsets([0.6, 0.4], 3)).toBeNull(); // not ascending
+        expect(sanitizeGridOffsets([0.5, 0.5], 3)).toBeNull(); // equal, not strict
+      });
+
+      it("rejects non-array or non-finite input", () => {
+        expect(sanitizeGridOffsets(undefined, 3)).toBeNull();
+        expect(sanitizeGridOffsets("nope", 3)).toBeNull();
+        expect(sanitizeGridOffsets([Number.NaN], 2)).toBeNull();
+      });
+
+      it("returns an empty array for a single slice (no interior lines)", () => {
+        expect(sanitizeGridOffsets([], 1)).toEqual([]);
+      });
+    });
+
+    describe("resolveGridOffsets", () => {
+      it("returns evenly spaced offsets when none are provided", () => {
+        expect(resolveGridOffsets(4, undefined)).toEqual([0.25, 0.5, 0.75]);
+      });
+
+      it("falls back to uniform when the stored offsets are invalid", () => {
+        expect(resolveGridOffsets(3, [0.9, 0.1])).toEqual([1 / 3, 2 / 3]);
+      });
+
+      it("uses valid custom offsets", () => {
+        expect(resolveGridOffsets(3, [0.2, 0.8])).toEqual([0.2, 0.8]);
+      });
+
+      it("returns an empty array for a single slice", () => {
+        expect(resolveGridOffsets(1, undefined)).toEqual([]);
+      });
+    });
+
+    describe("gridBoundaries / gridFractions", () => {
+      it("wraps interior offsets with 0 and 1", () => {
+        expect(gridBoundaries(3, [0.2, 0.5])).toEqual([0, 0.2, 0.5, 1]);
+      });
+
+      it("derives per-slice fractions that sum to 1", () => {
+        const fractions = gridFractions(3, [0.2, 0.5]);
+        expect(fractions).toHaveLength(3);
+        expect(fractions[0]).toBeCloseTo(0.2);
+        expect(fractions[1]).toBeCloseTo(0.3);
+        expect(fractions[2]).toBeCloseTo(0.5);
+        expect(fractions.reduce((a, b) => a + b, 0)).toBeCloseTo(1);
+      });
+
+      it("gives equal fractions for uniform offsets", () => {
+        expect(gridFractions(2, resolveGridOffsets(2, undefined))).toEqual([0.5, 0.5]);
+      });
     });
   });
 });

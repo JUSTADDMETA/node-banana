@@ -44,7 +44,10 @@ export async function executeSplitGrid(ctx: NodeExecutionContext): Promise<void>
     const cells = getSplitGridCells(freshData);
 
     const { splitWithDimensions } = await import("@/utils/gridSplitter");
-    const { images: splitImages } = await splitWithDimensions(sourceImage, rows, cols);
+    const { images: splitImages } = await splitWithDimensions(sourceImage, rows, cols, {
+      colOffsets: freshData.colOffsets,
+      rowOffsets: freshData.rowOffsets,
+    });
 
     // Populate each cell's base image node with its slice
     for (let index = 0; index < cells.length; index++) {

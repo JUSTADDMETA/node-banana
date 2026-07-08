@@ -43,6 +43,46 @@ export function clampGridDimension(value: unknown): number {
   return Math.min(MAX_GRID_DIMENSION, Math.max(MIN_GRID_DIMENSION, Math.round(num)));
 }
 
+/** Smallest allowed gap between adjacent grid boundaries, as a fraction. */
+export const MIN_SLICE_GAP = 0.02;
+
+/**
+ * Validates interior grid-line offsets from untrusted data. Returns the offsets
+ * only when they are the right length (count-1), each strictly inside (0,1),
+ * and strictly ascending; otherwise null (caller falls back to uniform).
+ */
+export function sanitizeGridOffsets(raw: unknown, count: number): number[] | null {
+  if (!Array.isArray(raw) || raw.length !== count - 1) return null;
+  const nums = raw.map(Number);
+  for (let i = 0; i < nums.length; i++) {
+    const v = nums[i];
+    if (!Number.isFinite(v) || v <= 0 || v >= 1) return null;
+    if (i > 0 && v <= nums[i - 1]) return null;
+  }
+  return nums;
+}
+
+/**
+ * Interior boundary offsets for `count` slices: the sanitized custom offsets, or
+ * evenly spaced (1/count … (count-1)/count) when none/invalid. Length count-1.
+ */
+export function resolveGridOffsets(count: number, raw: unknown): number[] {
+  const clean = sanitizeGridOffsets(raw, count);
+  if (clean) return clean;
+  return Array.from({ length: Math.max(0, count - 1) }, (_, i) => (i + 1) / count);
+}
+
+/** Full boundary list [0, …interior, 1] for `count` slices. Length count+1. */
+export function gridBoundaries(count: number, offsets: number[]): number[] {
+  return [0, ...offsets, 1];
+}
+
+/** Per-slice size fractions (summing to 1) from interior offsets. Length count. */
+export function gridFractions(count: number, offsets: number[]): number[] {
+  const bounds = gridBoundaries(count, offsets);
+  return Array.from({ length: count }, (_, i) => bounds[i + 1] - bounds[i]);
+}
+
 /**
  * The classic pre-template layout: image + prompt feeding a generate node.
  * Optional legacy generate settings become overrides on the generate node.
