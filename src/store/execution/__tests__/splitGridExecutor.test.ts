@@ -238,7 +238,27 @@ describe("executeSplitGrid", () => {
 
       await executeSplitGrid(ctx);
 
-      expect(mockSplitWithDimensions).toHaveBeenCalledWith(SOURCE_IMAGE, 2, 2);
+      expect(mockSplitWithDimensions).toHaveBeenCalledWith(SOURCE_IMAGE, 2, 2, {
+        colOffsets: undefined,
+        rowOffsets: undefined,
+      });
+    });
+
+    it("forwards custom interior line offsets to the splitter", async () => {
+      const node = makeNode({
+        gridRows: 2,
+        gridCols: 2,
+        colOffsets: [0.3],
+        rowOffsets: [0.7],
+      });
+      const ctx = makeCtx(node);
+
+      await executeSplitGrid(ctx);
+
+      expect(mockSplitWithDimensions).toHaveBeenCalledWith(SOURCE_IMAGE, 2, 2, {
+        colOffsets: [0.3],
+        rowOffsets: [0.7],
+      });
     });
 
     it("populates each cell's base image node with its slice, filename, and dimensions", async () => {
