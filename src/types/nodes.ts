@@ -477,13 +477,68 @@ export interface ConditionalSwitchNodeData extends BaseNodeData {
 }
 
 /**
+ * A node within a split-grid cell template. Positions are in main-canvas
+ * coordinate space, relative to the template's bounding box.
+ */
+export interface SplitGridTemplateNode {
+  id: string;
+  type: NodeType;
+  position: { x: number; y: number };
+  /** Node dimensions; falls back to defaultNodeDimensions when absent */
+  size?: { width: number; height: number };
+  /** Partial node data overrides applied on top of createDefaultNodeData(type) */
+  data?: Record<string, unknown>;
+}
+
+export interface SplitGridTemplateEdge {
+  id: string;
+  source: string;
+  sourceHandle: string;
+  target: string;
+  targetHandle: string;
+}
+
+/**
+ * Per-cell node template for a split-grid node. Always contains a base
+ * image node (`baseNodeId`) that receives the split cell image.
+ */
+export interface SplitGridTemplate {
+  baseNodeId: string;
+  nodes: SplitGridTemplateNode[];
+  edges: SplitGridTemplateEdge[];
+}
+
+/**
+ * One materialized cell: the real canvas nodes instantiated from the template.
+ */
+export interface SplitGridCell {
+  /** Real node id of the imageInput that receives this cell's split image */
+  baseImageNodeId: string;
+  /** All real node ids instantiated for this cell (includes the base) */
+  nodeIds: string[];
+  /** Group created around this cell's nodes */
+  groupId?: string;
+}
+
+/**
  * Split Grid node - splits image into grid cells for parallel processing
  */
 export interface SplitGridNodeData extends BaseNodeData {
   sourceImage: string | null;
   sourceImageRef?: string; // External image reference for storage optimization
-  targetCount: number; // 4, 6, 8, 9, or 10
+  gridRows: number;
+  gridCols: number;
+  /** Per-cell node template; undefined on legacy saves (treated as image-only default) */
+  template?: SplitGridTemplate;
+  /** Materialized cells; undefined on legacy saves (falls back to childNodeIds) */
+  cells?: SplitGridCell[];
+  /** Snapshot key of rows/cols/template at last materialization, for staleness detection */
+  materializedKey?: string | null;
+  /** @deprecated Legacy pre-template field, kept for backward compatibility */
+  targetCount: number;
+  /** @deprecated Legacy pre-template field, kept for backward compatibility */
   defaultPrompt: string;
+  /** @deprecated Legacy pre-template field, kept for backward compatibility */
   generateSettings: {
     aspectRatio: AspectRatio;
     resolution: Resolution;
@@ -491,13 +546,13 @@ export interface SplitGridNodeData extends BaseNodeData {
     useGoogleSearch: boolean;
     useImageSearch: boolean;
   };
+  /** @deprecated Legacy pre-template cell tracking; new workflows use `cells` */
   childNodeIds: Array<{
     imageInput: string;
     prompt: string;
     nanoBanana: string;
   }>;
-  gridRows: number;
-  gridCols: number;
+  /** @deprecated Legacy configuration gate; template-based nodes are always usable */
   isConfigured: boolean;
   status: NodeStatus;
   error: string | null;

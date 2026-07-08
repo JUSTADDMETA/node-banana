@@ -58,7 +58,7 @@ const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = 
   generate3d: { width: 300, height: 300 },
   generateAudio: { width: 300, height: 280 },
   llmGenerate: { width: 320, height: 360 },
-  splitGrid: { width: 300, height: 320 },
+  splitGrid: { width: 300, height: 400 },
   output: { width: 320, height: 320 },
   outputGallery: { width: 320, height: 360 },
   imageCompare: { width: 400, height: 360 },
