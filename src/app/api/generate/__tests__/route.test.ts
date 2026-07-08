@@ -303,6 +303,60 @@ describe("/api/generate route", () => {
       );
     });
 
+    it("should NOT apply search tools for nano-banana-2-lite model", async () => {
+      process.env.GEMINI_API_KEY = "test-gemini-key";
+
+      mockGenerateContent.mockResolvedValueOnce(createGeminiImageResponse());
+
+      const request = createMockPostRequest({
+        prompt: "Test prompt",
+        model: "nano-banana-2-lite",
+        useGoogleSearch: true,
+        useImageSearch: true,
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      // nano-banana-2-lite has no Google Search or Image Search grounding
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.not.objectContaining({
+            tools: expect.anything(),
+          }),
+        })
+      );
+    });
+
+    it("should NOT apply resolution config for nano-banana-2-lite model", async () => {
+      process.env.GEMINI_API_KEY = "test-gemini-key";
+
+      mockGenerateContent.mockResolvedValueOnce(createGeminiImageResponse());
+
+      const request = createMockPostRequest({
+        prompt: "A landscape photo",
+        model: "nano-banana-2-lite",
+        aspectRatio: "16:9",
+        resolution: "1024x1024",
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      // nano-banana-2-lite is 1K only: imageSize must not be sent even if resolution is provided
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            imageConfig: { aspectRatio: "16:9" },
+          }),
+        })
+      );
+    });
+
     it("should apply imageSearch searchType for nano-banana-2 with useImageSearch only", async () => {
       process.env.GEMINI_API_KEY = "test-gemini-key";
 
@@ -634,6 +688,28 @@ describe("/api/generate route", () => {
       expect(mockGenerateContent).toHaveBeenCalledWith(
         expect.objectContaining({
           model: "gemini-2.5-flash-image",
+        })
+      );
+    });
+
+    it("should use correct model mapping for nano-banana-2-lite", async () => {
+      process.env.GEMINI_API_KEY = "test-gemini-key";
+
+      mockGenerateContent.mockResolvedValueOnce(createGeminiImageResponse());
+
+      const request = createMockPostRequest({
+        prompt: "Test prompt",
+        model: "nano-banana-2-lite",
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.success).toBe(true);
+      expect(mockGenerateContent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gemini-3.1-flash-lite-image",
         })
       );
     });

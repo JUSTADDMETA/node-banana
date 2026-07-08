@@ -50,6 +50,7 @@ export const TemplateEditorContext = createContext<TemplateEditorContextValue>({
 export const GEMINI_IMAGE_MODELS: { value: ModelType; label: string }[] = [
   { value: "nano-banana", label: "Nano Banana" },
   { value: "nano-banana-2", label: "Nano Banana 2" },
+  { value: "nano-banana-2-lite", label: "Nano Banana 2 Lite" },
   { value: "nano-banana-pro", label: "Nano Banana Pro" },
 ];
 const BASE_ASPECT_RATIOS: AspectRatio[] = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];

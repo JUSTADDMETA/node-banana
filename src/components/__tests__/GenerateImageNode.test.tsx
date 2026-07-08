@@ -403,6 +403,28 @@ describe("GenerateImageNode", () => {
         });
       });
     });
+
+    it("should migrate legacy nano-banana-2-lite model field to selectedModel", async () => {
+      render(
+        <TestWrapper>
+          <GenerateImageNode {...createNodeProps({
+            model: "nano-banana-2-lite",
+            selectedModel: undefined,
+          })} />
+        </TestWrapper>
+      );
+
+      // The migration effect should resolve the display name from MODEL_DISPLAY_NAMES
+      await waitFor(() => {
+        expect(mockUpdateNodeData).toHaveBeenCalledWith("test-node-1", {
+          selectedModel: {
+            provider: "gemini",
+            modelId: "nano-banana-2-lite",
+            displayName: "Nano Banana 2 Lite",
+          },
+        });
+      });
+    });
   });
 
   describe("Dynamic Input Handles (External Providers)", () => {
