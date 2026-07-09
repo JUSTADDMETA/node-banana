@@ -81,6 +81,7 @@ import { ModelSearchDialog } from "./modals/ModelSearchDialog";
 import { LLMFallbackPopover } from "./nodes/LLMFallbackPopover";
 import { browseRegistry } from "@/utils/browseRegistry";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
+import { useWheelPanZoom } from "@/hooks/useWheelPanZoom";
 import { SplitGridTemplateModal } from "./splitgrid/SplitGridTemplateModal";
 import { createPortal } from "react-dom";
 import { useAnnotationStore } from "@/store/annotationStore";
@@ -249,73 +250,6 @@ interface ConnectionDropState {
 // Detect if running on macOS for platform-specific trackpad behavior
 const isMacOS = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
-// Detect if a wheel event is from a mouse (vs trackpad)
-const isMouseWheel = (event: WheelEvent): boolean => {
-  // Mouse scroll wheel typically uses deltaMode 1 (lines) or has large discrete deltas
-  // Trackpad uses deltaMode 0 (pixels) with smaller, smoother deltas
-  if (event.deltaMode === 1) return true; // DOM_DELTA_LINE = mouse
-
-  // Fallback: large delta values suggest mouse wheel
-  const threshold = 50;
-  return Math.abs(event.deltaY) >= threshold &&
-         Math.abs(event.deltaY) % 40 === 0; // Mouse deltas often in multiples
-};
-
-// Check if an element can scroll and has room to scroll in the given direction
-const canElementScroll = (element: HTMLElement, deltaX: number, deltaY: number): boolean => {
-  const style = window.getComputedStyle(element);
-  const overflowY = style.overflowY;
-  const overflowX = style.overflowX;
-
-  const canScrollY = overflowY === 'auto' || overflowY === 'scroll';
-  const canScrollX = overflowX === 'auto' || overflowX === 'scroll';
-
-  // Check if there's room to scroll in the delta direction
-  if (canScrollY && deltaY !== 0) {
-    const hasVerticalScroll = element.scrollHeight > element.clientHeight;
-    if (hasVerticalScroll) {
-      // Check if we can scroll further in the delta direction
-      if (deltaY > 0 && element.scrollTop < element.scrollHeight - element.clientHeight) {
-        return true; // Can scroll down
-      }
-      if (deltaY < 0 && element.scrollTop > 0) {
-        return true; // Can scroll up
-      }
-    }
-  }
-
-  if (canScrollX && deltaX !== 0) {
-    const hasHorizontalScroll = element.scrollWidth > element.clientWidth;
-    if (hasHorizontalScroll) {
-      if (deltaX > 0 && element.scrollLeft < element.scrollWidth - element.clientWidth) {
-        return true; // Can scroll right
-      }
-      if (deltaX < 0 && element.scrollLeft > 0) {
-        return true; // Can scroll left
-      }
-    }
-  }
-
-  return false;
-};
-
-// Find if the target element or any ancestor is scrollable
-const findScrollableAncestor = (target: HTMLElement, deltaX: number, deltaY: number): HTMLElement | null => {
-  let current: HTMLElement | null = target;
-
-  while (current && !current.classList.contains('react-flow')) {
-    // Check for nowheel class (React Flow convention for elements that should handle their own scroll)
-    if (current.classList.contains('nowheel') || current.tagName === 'TEXTAREA') {
-      if (canElementScroll(current, deltaX, deltaY)) {
-        return current;
-      }
-    }
-    current = current.parentElement;
-  }
-
-  return null;
-};
-
 /** Shared ref so child components (BaseNode) can check panning state without re-rendering */
 export const isPanningRef = { current: false };
 /** Shared ref so child components (BaseNode) can skip hover updates during node drags */
@@ -354,7 +288,7 @@ export function WorkflowCanvas() {
   const clearWorkflow = useWorkflowStore((state) => state.clearWorkflow);
   const setHoveredNodeId = useWorkflowStore((state) => state.setHoveredNodeId);
   const openAnnotationModal = useAnnotationStore((state) => state.openModal);
-  const { screenToFlowPosition, getViewport, zoomIn, zoomOut, setViewport, setCenter } = useReactFlow();
+  const { screenToFlowPosition, getViewport, setCenter } = useReactFlow();
   const { show: showToast } = useToast();
   const [isDragOver, setIsDragOver] = useState(false);
   const [dropType, setDropType] = useState<"image" | "audio" | "workflow" | "node" | null>(null);
@@ -1549,80 +1483,9 @@ export function WorkflowCanvas() {
   const undo = useWorkflowStore((state) => state.undo);
   const redo = useWorkflowStore((state) => state.redo);
 
-  // Add non-passive wheel listener to handle zoom/pan and prevent browser navigation
-  // This replaces the onWheel prop which is passive by default and can't preventDefault
-  useEffect(() => {
-    const wrapper = reactFlowWrapper.current;
-    if (!wrapper) return;
-
-    const handleWheelNonPassive = (event: WheelEvent) => {
-      // Skip if modal is open
-      if (isModalOpen) return;
-
-      // Check if scrolling over a scrollable element
-      const target = event.target as HTMLElement;
-      const scrollableElement = findScrollableAncestor(target, event.deltaX, event.deltaY);
-      if (scrollableElement) return;
-
-      const { zoomMode } = canvasNavigationSettings;
-
-      // Check if zoom should be triggered based on settings
-      const shouldZoom =
-        zoomMode === "scroll" ||
-        (zoomMode === "altScroll" && event.altKey) ||
-        (zoomMode === "ctrlScroll" && (event.ctrlKey || event.metaKey));
-
-      // Pinch gesture (ctrlKey + trackpad) always zooms regardless of settings
-      if (event.ctrlKey && !event.altKey) {
-        event.preventDefault();
-        if (event.deltaY < 0) zoomIn();
-        else zoomOut();
-        return;
-      }
-
-      // On macOS, differentiate trackpad from mouse
-      if (isMacOS) {
-        if (isMouseWheel(event)) {
-          // Mouse wheel → zoom if settings allow
-          if (shouldZoom) {
-            event.preventDefault();
-            if (event.deltaY < 0) zoomIn();
-            else zoomOut();
-          }
-        } else {
-          // Trackpad scroll
-          if (shouldZoom) {
-            // Zoom
-            event.preventDefault();
-            if (event.deltaY < 0) zoomIn();
-            else zoomOut();
-          } else {
-            // Pan (also prevent horizontal swipe navigation)
-            event.preventDefault();
-            const viewport = getViewport();
-            setViewport({
-              x: viewport.x - event.deltaX,
-              y: viewport.y - event.deltaY,
-              zoom: viewport.zoom,
-            });
-          }
-        }
-        return;
-      }
-
-      // Non-macOS
-      if (shouldZoom) {
-        event.preventDefault();
-        if (event.deltaY < 0) zoomIn();
-        else zoomOut();
-      }
-    };
-
-    wrapper.addEventListener('wheel', handleWheelNonPassive, { passive: false });
-    return () => {
-      wrapper.removeEventListener('wheel', handleWheelNonPassive);
-    };
-  }, [isModalOpen, zoomIn, zoomOut, getViewport, setViewport, canvasNavigationSettings]);
+  // Wheel-based pan/zoom, honoring the user's navigation settings. Disabled
+  // while a modal is open (the modal's mini canvas drives its own).
+  useWheelPanZoom(reactFlowWrapper, canvasNavigationSettings, !isModalOpen);
 
   // Keyboard shortcuts for copy/paste and stacking selected nodes
   const handleKeyDown = useCallback((event: KeyboardEvent) => {

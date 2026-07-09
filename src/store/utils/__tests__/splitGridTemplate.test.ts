@@ -16,6 +16,11 @@ import {
   hasLegacyCellsOnly,
   needsMaterialization,
   buildCellInstances,
+  getRouterConnections,
+  sanitizeGridOffsets,
+  resolveGridOffsets,
+  gridBoundaries,
+  gridFractions,
   SPLIT_GRID_BASE_NODE_ID,
 } from "../splitGridTemplate";
 import type {
@@ -249,6 +254,18 @@ describe("splitGridTemplate utilities", () => {
 
       expect(classicKey).not.toBe(defaultKey);
       expect(seededKey).not.toBe(classicKey);
+    });
+
+    it("differs when a terminal is wired to the router port", () => {
+      const base = createClassicSplitGridTemplate();
+      const wired: SplitGridTemplate = {
+        ...base,
+        router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
+      };
+      const baseKey = computeMaterializedKey(2, 2, base);
+      expect(computeMaterializedKey(2, 2, wired)).not.toBe(baseKey);
+      // An empty router array is treated as no router (byte-identical to legacy)
+      expect(computeMaterializedKey(2, 2, { ...wired, router: [] })).toBe(baseKey);
     });
   });
 
@@ -609,6 +626,213 @@ describe("splitGridTemplate utilities", () => {
       // Default fields survive the merge
       expect(data.status).toBe("idle");
       expect(data.outputImage).toBeNull();
+    });
+
+    it("emits one terminal->router edge per cell and a router position when a router is wired", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
+      };
+      const { options } = makeBuildOptions(template, 2, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      // The router node itself is created by the store, not here
+      expect(result.nodes.filter((n) => n.type === "router")).toHaveLength(0);
+      // 3 real nodes per cell; the router is never a cell member
+      expect(result.nodes).toHaveLength(4 * 3);
+      for (const cell of result.cells) expect(cell.nodeIds).toHaveLength(3);
+
+      // One typed router edge per cell, from the generate node
+      expect(result.routerEdges).toHaveLength(4);
+      for (const e of result.routerEdges) {
+        expect(e.target).toBe("router-1");
+        expect(e.sourceHandle).toBe("image");
+        expect(e.targetHandle).toBe("image");
+      }
+      // Router edges are separate from the intra-cell edges
+      expect(result.edges.some((e) => e.target === "router-1")).toBe(false);
+
+      // Positioned to the right of the whole grid
+      expect(result.routerPosition).not.toBeNull();
+      const gridRight = Math.max(
+        ...Object.values(result.groups).map((g) => g.position.x + g.size.width)
+      );
+      expect(result.routerPosition!.x).toBeGreaterThan(gridRight);
+    });
+
+    it("emits no router edges or position when routerNodeId is not supplied", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
+      };
+      const { options } = makeBuildOptions(template, 2, 2);
+
+      const result = buildCellInstances(options);
+
+      expect(result.routerEdges).toHaveLength(0);
+      expect(result.routerPosition).toBeNull();
+    });
+
+    it("emits no router edges when a routerNodeId is supplied but the port is unwired", () => {
+      const { options } = makeBuildOptions(createClassicSplitGridTemplate(), 2, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      expect(result.routerEdges).toHaveLength(0);
+      expect(result.routerPosition).toBeNull();
+    });
+
+    it("carries the terminal's typed handle onto router edges for a text terminal", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [{ source: "cell-prompt", sourceHandle: "text", targetHandle: "text" }],
+      };
+      const { options } = makeBuildOptions(template, 1, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      expect(result.routerEdges).toHaveLength(2); // one per cell
+      for (const e of result.routerEdges) {
+        expect(e.target).toBe("router-1");
+        expect(e.sourceHandle).toBe("text");
+        expect(e.targetHandle).toBe("text");
+      }
+    });
+
+    it("emits connections*cells router edges with unique ids for multiple terminals", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [
+          { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+          { source: "cell-prompt", sourceHandle: "text", targetHandle: "text" },
+        ],
+      };
+      const { options } = makeBuildOptions(template, 2, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      expect(result.routerEdges).toHaveLength(2 * 4); // 2 terminals * 4 cells
+      const ids = result.routerEdges.map((e) => e.id);
+      expect(new Set(ids).size).toBe(ids.length); // all unique
+      expect(result.routerEdges.every((e) => e.target === "router-1")).toBe(true);
+      expect(result.routerEdges.filter((e) => e.targetHandle === "image")).toHaveLength(4);
+      expect(result.routerEdges.filter((e) => e.targetHandle === "text")).toHaveLength(4);
+    });
+
+    it("ignores router connections with an unknown source or a non-router targetHandle", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [
+          { source: "does-not-exist", sourceHandle: "image", targetHandle: "image" },
+          { source: "cell-generate", sourceHandle: "image", targetHandle: "bogus" },
+        ],
+      };
+      const { options } = makeBuildOptions(template, 2, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      expect(result.routerEdges).toHaveLength(0);
+      expect(result.routerPosition).toBeNull();
+    });
+
+    it("normalizes malformed, mismatched, and duplicate router connections", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [
+          { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+          { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+          { source: "cell-generate", sourceHandle: "bogus", targetHandle: "image" },
+          { source: "cell-prompt", sourceHandle: "text", targetHandle: "image" },
+        ],
+      };
+
+      expect(getRouterConnections(template)).toEqual([
+        { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+      ]);
+
+      const { options } = makeBuildOptions(template, 1, 2);
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+      expect(result.routerEdges).toHaveLength(2);
+      expect(new Set(result.routerEdges.map((edge) => edge.id)).size).toBe(2);
+    });
+
+    it("treats structurally invalid router metadata as unwired", () => {
+      const base = createClassicSplitGridTemplate();
+      const invalidValues: unknown[] = [{}, [null], [{ source: 42 }]];
+
+      for (const router of invalidValues) {
+        const template = { ...base, router } as SplitGridTemplate;
+        expect(getRouterConnections(template)).toEqual([]);
+        expect(() => computeMaterializedKey(2, 2, template)).not.toThrow();
+      }
+    });
+  });
+
+  describe("grid offset helpers", () => {
+    describe("sanitizeGridOffsets", () => {
+      it("accepts valid interior offsets of the right length", () => {
+        expect(sanitizeGridOffsets([0.25, 0.6], 3)).toEqual([0.25, 0.6]);
+      });
+
+      it("rejects wrong-length arrays", () => {
+        expect(sanitizeGridOffsets([0.5], 3)).toBeNull();
+        expect(sanitizeGridOffsets([0.25, 0.5, 0.75], 3)).toBeNull();
+      });
+
+      it("rejects out-of-range or non-ascending values", () => {
+        expect(sanitizeGridOffsets([0, 0.5], 3)).toBeNull(); // 0 not inside (0,1)
+        expect(sanitizeGridOffsets([0.5, 1], 3)).toBeNull(); // 1 not inside (0,1)
+        expect(sanitizeGridOffsets([0.6, 0.4], 3)).toBeNull(); // not ascending
+        expect(sanitizeGridOffsets([0.5, 0.5], 3)).toBeNull(); // equal, not strict
+      });
+
+      it("rejects non-array or non-finite input", () => {
+        expect(sanitizeGridOffsets(undefined, 3)).toBeNull();
+        expect(sanitizeGridOffsets("nope", 3)).toBeNull();
+        expect(sanitizeGridOffsets([Number.NaN], 2)).toBeNull();
+      });
+
+      it("returns an empty array for a single slice (no interior lines)", () => {
+        expect(sanitizeGridOffsets([], 1)).toEqual([]);
+      });
+    });
+
+    describe("resolveGridOffsets", () => {
+      it("returns evenly spaced offsets when none are provided", () => {
+        expect(resolveGridOffsets(4, undefined)).toEqual([0.25, 0.5, 0.75]);
+      });
+
+      it("falls back to uniform when the stored offsets are invalid", () => {
+        expect(resolveGridOffsets(3, [0.9, 0.1])).toEqual([1 / 3, 2 / 3]);
+      });
+
+      it("uses valid custom offsets", () => {
+        expect(resolveGridOffsets(3, [0.2, 0.8])).toEqual([0.2, 0.8]);
+      });
+
+      it("returns an empty array for a single slice", () => {
+        expect(resolveGridOffsets(1, undefined)).toEqual([]);
+      });
+    });
+
+    describe("gridBoundaries / gridFractions", () => {
+      it("wraps interior offsets with 0 and 1", () => {
+        expect(gridBoundaries(3, [0.2, 0.5])).toEqual([0, 0.2, 0.5, 1]);
+      });
+
+      it("derives per-slice fractions that sum to 1", () => {
+        const fractions = gridFractions(3, [0.2, 0.5]);
+        expect(fractions).toHaveLength(3);
+        expect(fractions[0]).toBeCloseTo(0.2);
+        expect(fractions[1]).toBeCloseTo(0.3);
+        expect(fractions[2]).toBeCloseTo(0.5);
+        expect(fractions.reduce((a, b) => a + b, 0)).toBeCloseTo(1);
+      });
+
+      it("gives equal fractions for uniform offsets", () => {
+        expect(gridFractions(2, resolveGridOffsets(2, undefined))).toEqual([0.5, 0.5]);
+      });
     });
   });
 });

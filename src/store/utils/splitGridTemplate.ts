@@ -14,8 +14,10 @@ import type {
   WorkflowNodeData,
   NodeGroup,
   GroupColor,
+  HandleType,
   SplitGridNodeData,
   SplitGridTemplate,
+  SplitGridTemplateRouterConnection,
   SplitGridCell,
 } from "@/types";
 import { MODEL_DISPLAY_NAMES } from "@/types";
@@ -28,8 +30,103 @@ import {
 
 export { createDefaultSplitGridTemplate, SPLIT_GRID_BASE_NODE_ID };
 
+/** Handle types the Router node can render (mirrors RouterNode ALL_HANDLE_TYPES). */
+const ROUTER_HANDLE_TYPES = new Set<HandleType>([
+  "image",
+  "text",
+  "video",
+  "audio",
+  "3d",
+  "easeCurve",
+]);
+
+const STATIC_OUTPUT_HANDLES: Partial<Record<NodeType, readonly HandleType[]>> = {
+  imageInput: ["image"],
+  audioInput: ["audio"],
+  videoInput: ["video"],
+  annotation: ["image"],
+  prompt: ["text"],
+  array: ["text"],
+  promptConstructor: ["text"],
+  nanoBanana: ["image"],
+  generateVideo: ["video"],
+  generate3d: ["3d"],
+  generateAudio: ["audio"],
+  llmGenerate: ["text"],
+  videoStitch: ["video"],
+  easeCurve: ["video", "easeCurve"],
+  videoTrim: ["video"],
+  videoFrameGrab: ["image"],
+  removeBackground: ["image"],
+  imageResize: ["image"],
+  gifEncoder: ["image"],
+  router: ["image", "text", "video", "audio", "3d", "easeCurve"],
+  glbViewer: ["image"],
+};
+
+/**
+ * Terminal→router-port connections declared on the template (empty when the
+ * downstream router port is unwired). The single source of truth consumers use
+ * to decide whether a shared router should be materialized.
+ *
+ * Connections from untrusted templates are normalized here. Structurally
+ * invalid entries, unsupported or mismatched handles, missing source outputs,
+ * and duplicates are discarded before hashing or materialization.
+ */
+export function getRouterConnections(
+  template: SplitGridTemplate
+): SplitGridTemplateRouterConnection[] {
+  const rawConnections: unknown = template.router;
+  if (!Array.isArray(rawConnections) || rawConnections.length === 0) return [];
+
+  const nodesById = new Map(
+    (Array.isArray(template.nodes) ? template.nodes : []).map((node) => [node.id, node])
+  );
+  const uniqueConnections = new Map<string, SplitGridTemplateRouterConnection>();
+
+  for (const value of rawConnections) {
+    if (!value || typeof value !== "object") continue;
+    const connection = value as Record<string, unknown>;
+    const { source, sourceHandle, targetHandle } = connection;
+    if (
+      typeof source !== "string" ||
+      typeof sourceHandle !== "string" ||
+      typeof targetHandle !== "string" ||
+      sourceHandle !== targetHandle ||
+      !ROUTER_HANDLE_TYPES.has(targetHandle as HandleType)
+    ) {
+      continue;
+    }
+
+    const sourceNode = nodesById.get(source);
+    const outputs = sourceNode ? STATIC_OUTPUT_HANDLES[sourceNode.type] ?? [] : [];
+    if (!outputs.includes(sourceHandle as HandleType)) continue;
+
+    const normalized = {
+      source,
+      sourceHandle,
+      targetHandle,
+    } satisfies SplitGridTemplateRouterConnection;
+    uniqueConnections.set(`${source}\u0000${sourceHandle}`, normalized);
+  }
+
+  return [...uniqueConnections.values()].sort(compareRouterConnections);
+}
+
+/** Stable ordering for router connections so hashing/serialization is deterministic. */
+function compareRouterConnections(
+  a: SplitGridTemplateRouterConnection,
+  b: SplitGridTemplateRouterConnection
+): number {
+  return (
+    a.source.localeCompare(b.source) ||
+    a.sourceHandle.localeCompare(b.sourceHandle) ||
+    a.targetHandle.localeCompare(b.targetHandle)
+  );
+}
+
 export const MIN_GRID_DIMENSION = 1;
-export const MAX_GRID_DIMENSION = 8;
+export const MAX_GRID_DIMENSION = 16;
 
 /**
  * Normalizes a grid dimension from untrusted data (AI-generated workflows,
@@ -41,6 +138,46 @@ export function clampGridDimension(value: unknown): number {
   const num = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(num)) return MIN_GRID_DIMENSION;
   return Math.min(MAX_GRID_DIMENSION, Math.max(MIN_GRID_DIMENSION, Math.round(num)));
+}
+
+/** Smallest allowed gap between adjacent grid boundaries, as a fraction. */
+export const MIN_SLICE_GAP = 0.02;
+
+/**
+ * Validates interior grid-line offsets from untrusted data. Returns the offsets
+ * only when they are the right length (count-1), each strictly inside (0,1),
+ * and strictly ascending; otherwise null (caller falls back to uniform).
+ */
+export function sanitizeGridOffsets(raw: unknown, count: number): number[] | null {
+  if (!Array.isArray(raw) || raw.length !== count - 1) return null;
+  const nums = raw.map(Number);
+  for (let i = 0; i < nums.length; i++) {
+    const v = nums[i];
+    if (!Number.isFinite(v) || v <= 0 || v >= 1) return null;
+    if (i > 0 && v <= nums[i - 1]) return null;
+  }
+  return nums;
+}
+
+/**
+ * Interior boundary offsets for `count` slices: the sanitized custom offsets, or
+ * evenly spaced (1/count … (count-1)/count) when none/invalid. Length count-1.
+ */
+export function resolveGridOffsets(count: number, raw: unknown): number[] {
+  const clean = sanitizeGridOffsets(raw, count);
+  if (clean) return clean;
+  return Array.from({ length: Math.max(0, count - 1) }, (_, i) => (i + 1) / count);
+}
+
+/** Full boundary list [0, …interior, 1] for `count` slices. Length count+1. */
+export function gridBoundaries(count: number, offsets: number[]): number[] {
+  return [0, ...offsets, 1];
+}
+
+/** Per-slice size fractions (summing to 1) from interior offsets. Length count. */
+export function gridFractions(count: number, offsets: number[]): number[] {
+  const bounds = gridBoundaries(count, offsets);
+  return Array.from({ length: count }, (_, i) => bounds[i + 1] - bounds[i]);
 }
 
 /**
@@ -129,12 +266,19 @@ export function computeMaterializedKey(
   cols: number,
   template: SplitGridTemplate
 ): string {
+  // Only fold the router in when present, so legacy/no-router templates hash to
+  // the exact same string as before this feature and never spuriously rebuild.
+  // Use the validated set so malformed entries don't drift the key.
+  const connections = getRouterConnections(template);
+  const router =
+    connections.length > 0 ? [...connections].sort(compareRouterConnections) : null;
   return JSON.stringify({
     rows,
     cols,
     baseNodeId: template.baseNodeId,
     nodes: [...template.nodes].sort((a, b) => a.id.localeCompare(b.id)),
     edges: [...template.edges].sort((a, b) => a.id.localeCompare(b.id)),
+    ...(router ? { router } : {}),
   });
 }
 
@@ -177,7 +321,11 @@ export function hasLegacyCellsOnly(data: SplitGridNodeData): boolean {
 export function needsMaterialization(
   data: SplitGridNodeData,
   existingNodeIds: Set<string>,
-  options?: { ignoreLegacy?: boolean; template?: SplitGridTemplate }
+  options?: {
+    ignoreLegacy?: boolean;
+    template?: SplitGridTemplate;
+    existingRouterNodeIds?: Set<string>;
+  }
 ): boolean {
   const rows = clampGridDimension(data.gridRows);
   const cols = clampGridDimension(data.gridCols);
@@ -190,6 +338,16 @@ export function needsMaterialization(
   const cells = data.cells ?? [];
   if (cells.length === 0) return true;
   const template = options?.template ?? getSplitGridTemplate(data);
+  // A wired downstream router must exist. If it was manually deleted on the
+  // canvas (or a save is missing it) the cells can still match, so rebuild to
+  // restore the router and its terminal wiring.
+  if (
+    getRouterConnections(template).length > 0 &&
+    (!data.routerNodeId ||
+      !(options?.existingRouterNodeIds ?? existingNodeIds).has(data.routerNodeId))
+  ) {
+    return true;
+  }
   const key = computeMaterializedKey(rows, cols, template);
   if (data.materializedKey !== key) return true;
   if (cells.length !== rows * cols) return true;
@@ -212,6 +370,13 @@ export interface BuildCellInstancesOptions {
     target: string;
     targetHandle: string;
   }) => Record<string, unknown>;
+  /**
+   * Real id of the shared downstream router. When set (and the template wires
+   * one or more terminals to the router port), each cell's copy of every wired
+   * terminal is connected into this single router. The router node itself is
+   * created/reused by the store, not here.
+   */
+  routerNodeId?: string | null;
 }
 
 export interface CellInstancesResult {
@@ -219,11 +384,17 @@ export interface CellInstancesResult {
   edges: WorkflowEdge[];
   groups: Record<string, NodeGroup>;
   cells: SplitGridCell[];
+  /** Per-cell terminal→router edges (empty when no router is wired). */
+  routerEdges: WorkflowEdge[];
+  /** Where to place the single shared router (right of the grid, centered); null when none. */
+  routerPosition: { x: number; y: number } | null;
 }
 
 const CLUSTER_GAP = 60;
 const SPLIT_NODE_MARGIN = 100;
 const GROUP_PADDING = 20;
+/** Horizontal gap between the rightmost cell group and the shared router. */
+const ROUTER_GAP = 160;
 
 function templateNodeDimensions(
   templateNode: Pick<SplitGridTemplate["nodes"][number], "type" | "size">
@@ -239,6 +410,10 @@ function templateNodeDimensions(
 export function buildCellInstances(options: BuildCellInstancesOptions): CellInstancesResult {
   const { splitNode, template, rows, cols, makeNodeId, makeGroupId, groupColor, makeEdgeData } =
     options;
+  // The shared router is only wired when the store supplies its id AND the
+  // template designates at least one terminal for the port.
+  const routerConnections = options.routerNodeId ? getRouterConnections(template) : [];
+  const routerEnabled = Boolean(options.routerNodeId) && routerConnections.length > 0;
 
   // Template bounding box (normalizes arbitrary editor positions to offsets)
   let minX = Infinity;
@@ -266,6 +441,7 @@ export function buildCellInstances(options: BuildCellInstancesOptions): CellInst
   const edges: WorkflowEdge[] = [];
   const groups: Record<string, NodeGroup> = {};
   const cells: SplitGridCell[] = [];
+  const routerEdges: WorkflowEdge[] = [];
 
   for (let index = 0; index < rows * cols; index++) {
     const row = Math.floor(index / cols);
@@ -332,6 +508,27 @@ export function buildCellInstances(options: BuildCellInstancesOptions): CellInst
       } as WorkflowEdge);
     }
 
+    // Wire this cell's copy of each designated terminal into the single shared
+    // router (all cells fan into one router; targetHandle is the typed router
+    // input so RouterNode derives the correct handle).
+    if (routerEnabled) {
+      for (const conn of routerConnections) {
+        const terminalRealId = idMap.get(conn.source);
+        if (!terminalRealId) continue;
+        const routerConnection = {
+          source: terminalRealId,
+          sourceHandle: conn.sourceHandle,
+          target: options.routerNodeId!,
+          targetHandle: conn.targetHandle,
+        };
+        routerEdges.push({
+          id: `edge-${terminalRealId}-${options.routerNodeId}-${conn.sourceHandle}-${conn.targetHandle}`,
+          ...routerConnection,
+          data: makeEdgeData(routerConnection),
+        } as WorkflowEdge);
+      }
+    }
+
     // Group wrapping the cell
     groups[groupId] = {
       id: groupId,
@@ -351,5 +548,25 @@ export function buildCellInstances(options: BuildCellInstancesOptions): CellInst
     });
   }
 
-  return { nodes, edges, groups, cells };
+  // Place the single shared router to the right of the whole grid, vertically
+  // centered on the cell groups (whose bounds already include GROUP_PADDING).
+  let routerPosition: { x: number; y: number } | null = null;
+  const groupFrames = Object.values(groups);
+  if (routerEnabled && groupFrames.length > 0) {
+    let gridMaxX = -Infinity;
+    let gridMinY = Infinity;
+    let gridMaxY = -Infinity;
+    for (const group of groupFrames) {
+      gridMaxX = Math.max(gridMaxX, group.position.x + group.size.width);
+      gridMinY = Math.min(gridMinY, group.position.y);
+      gridMaxY = Math.max(gridMaxY, group.position.y + group.size.height);
+    }
+    const routerHeight = defaultNodeDimensions.router.height;
+    routerPosition = {
+      x: gridMaxX + ROUTER_GAP,
+      y: (gridMinY + gridMaxY) / 2 - routerHeight / 2,
+    };
+  }
+
+  return { nodes, edges, groups, cells, routerEdges, routerPosition };
 }

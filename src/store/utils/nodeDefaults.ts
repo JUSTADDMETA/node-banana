@@ -267,6 +267,7 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         template: createDefaultSplitGridTemplate(),
         cells: [],
         materializedKey: null,
+        routerNodeId: null,
         targetCount: 6,
         defaultPrompt: "",
         generateSettings: {

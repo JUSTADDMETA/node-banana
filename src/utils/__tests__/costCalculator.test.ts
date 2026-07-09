@@ -290,3 +290,40 @@ describe("calculatePredictedCost - splitGrid nodes", () => {
     expect(result.breakdown[0].modelId).toBe("nano-banana");
   });
 });
+
+describe("calculatePredictedCost - nano-banana-2-lite", () => {
+  it("should price nano-banana-2-lite at flat $0.034 per image", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        id: "1",
+        type: "nanoBanana",
+        position: { x: 0, y: 0 },
+        data: { model: "nano-banana-2-lite", resolution: "1K" },
+      },
+    ] as WorkflowNode[];
+
+    const result = calculatePredictedCost(nodes);
+
+    expect(result.totalCost).toBeCloseTo(0.034);
+    expect(result.breakdown).toHaveLength(1);
+    expect(result.breakdown[0].modelId).toBe("nano-banana-2-lite");
+    expect(result.breakdown[0].unitCost).toBeCloseTo(0.034);
+    expect(result.unknownPricingCount).toBe(0);
+  });
+
+  it("should charge flat 1K pricing for nano-banana-2-lite regardless of stored resolution", () => {
+    const nodes: WorkflowNode[] = [
+      {
+        id: "1",
+        type: "nanoBanana",
+        position: { x: 0, y: 0 },
+        data: { model: "nano-banana-2-lite", resolution: "4K" },
+      },
+    ] as WorkflowNode[];
+
+    const result = calculatePredictedCost(nodes);
+
+    // nano-banana-2-lite is 1K only: flat $0.034 even if a stale resolution is set
+    expect(result.totalCost).toBeCloseTo(0.034);
+  });
+});

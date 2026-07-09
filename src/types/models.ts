@@ -26,11 +26,12 @@ export type AspectRatio =
 export type Resolution = "512" | "1K" | "2K" | "4K";
 
 // Image Generation Model Options
-export type ModelType = "nano-banana" | "nano-banana-pro" | "nano-banana-2";
+export type ModelType = "nano-banana" | "nano-banana-pro" | "nano-banana-2" | "nano-banana-2-lite";
 
 // Display names for image generation models
 export const MODEL_DISPLAY_NAMES: Record<ModelType, string> = {
   "nano-banana": "Nano Banana",
   "nano-banana-pro": "Nano Banana Pro",
   "nano-banana-2": "Nano Banana 2",
+  "nano-banana-2-lite": "Nano Banana 2 Lite",
 };

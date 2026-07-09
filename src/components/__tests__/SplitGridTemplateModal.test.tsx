@@ -1,8 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 import { SplitGridTemplateModal } from "@/components/splitgrid/SplitGridTemplateModal";
 import { TEMPLATE_NODE_CATALOG } from "@/components/splitgrid/templateCatalog";
 import type { SplitGridNodeData } from "@/types";
+import type { FinalConnectionState } from "@xyflow/react";
+
+const reactFlowCapture = vi.hoisted(() => ({
+  props: null as Record<string, unknown> | null,
+}));
+
+vi.mock("@xyflow/react", async () => {
+  const actual = await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
+  const React = await vi.importActual<typeof import("react")>("react");
+  return {
+    ...actual,
+    ReactFlow: (props: Record<string, unknown>) => {
+      reactFlowCapture.props = props;
+      return React.createElement(actual.ReactFlow, props);
+    },
+  };
+});
 
 // Mock the workflow store (selector-passthrough pattern)
 const mockUpdateNodeData = vi.fn();
@@ -60,6 +77,15 @@ function renderModal(
     />
   );
   return { ...result, onClose };
+}
+
+function mockCanvasSize(width = 1000, height = 600): () => void {
+  const widthSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(width);
+  const heightSpy = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(height);
+  return () => {
+    widthSpy.mockRestore();
+    heightSpy.mockRestore();
+  };
 }
 
 describe("SplitGridTemplateModal", () => {
@@ -337,6 +363,120 @@ describe("SplitGridTemplateModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Prompt + Generate" }));
 
       expect(screen.queryByText(GENERATE_WARNING)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Downstream router port", () => {
+    const wiredTemplate: SplitGridNodeData["template"] = {
+      baseNodeId: "cell-image",
+      nodes: [
+        { id: "cell-image", type: "imageInput", position: { x: 0, y: 0 } },
+        { id: "cell-prompt", type: "prompt", position: { x: 0, y: 310 } },
+        { id: "cell-generate", type: "nanoBanana", position: { x: 340, y: 0 } },
+      ],
+      edges: [
+        { id: "e1", source: "cell-image", sourceHandle: "image", target: "cell-generate", targetHandle: "image" },
+        { id: "e2", source: "cell-prompt", sourceHandle: "text", target: "cell-generate", targetHandle: "text" },
+      ],
+      router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
+    };
+
+    it("emits no router wiring for an unwired node set", () => {
+      renderModal();
+
+      fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+      const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+      expect(options.template.router ?? []).toHaveLength(0);
+    });
+
+    it("round-trips the router wiring into the applied template", () => {
+      renderModal({ nodeData: { template: wiredTemplate } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+      const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+      expect(options.template.router).toEqual([
+        { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+      ]);
+      // The router is never emitted as a template node (it's a fixed overlay)
+      expect(
+        options.template.nodes.some((node: { type: string }) => node.type === "router")
+      ).toBe(false);
+    });
+
+    it("clears the router wiring when a preset resets the node set", () => {
+      renderModal({ nodeData: { template: wiredTemplate } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Image only" }));
+      fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+      const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+      expect(options.template.router ?? []).toHaveLength(0);
+    });
+
+    it("adds router wiring when an output connection ends over the rail", () => {
+      const restoreCanvasSize = mockCanvasSize();
+      try {
+        renderModal();
+        const onConnectEnd = reactFlowCapture.props?.onConnectEnd as
+          | ((event: MouseEvent, state: FinalConnectionState) => void)
+          | undefined;
+        expect(onConnectEnd).toBeTypeOf("function");
+
+        act(() => {
+          onConnectEnd?.(
+            new MouseEvent("mouseup", { clientX: 950, clientY: 300 }),
+            {
+              isValid: false,
+              fromNode: { id: "cell-image" },
+              fromHandle: { id: "image", type: "source" },
+            } as unknown as FinalConnectionState
+          );
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+        const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+        expect(options.template.router).toEqual([
+          { source: "cell-image", sourceHandle: "image", targetHandle: "image" },
+        ]);
+      } finally {
+        restoreCanvasSize();
+      }
+    });
+
+    it("disconnects a router type through its socket control", () => {
+      const restoreCanvasSize = mockCanvasSize();
+      try {
+        renderModal({ nodeData: { template: wiredTemplate } });
+        fireEvent.click(screen.getByTitle("Disconnect Image"));
+        fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+        const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+        expect(options.template.router ?? []).toHaveLength(0);
+      } finally {
+        restoreCanvasSize();
+      }
+    });
+
+    it("disconnects one router wire through the floating delete toolbar", () => {
+      const restoreCanvasSize = mockCanvasSize();
+      try {
+        renderModal({ nodeData: { template: wiredTemplate } });
+        const wire = document.querySelector(
+          '[data-wire-source="cell-generate"][data-wire-handle="image"]'
+        );
+        expect(wire).not.toBeNull();
+
+        fireEvent.mouseDown(wire!, { clientX: 700, clientY: 250 });
+        fireEvent.click(screen.getByRole("button", { name: "Delete connection" }));
+        fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+        const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+        expect(options.template.router ?? []).toHaveLength(0);
+      } finally {
+        restoreCanvasSize();
+      }
     });
   });
 });

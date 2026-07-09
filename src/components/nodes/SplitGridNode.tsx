@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useEffect, useMemo } from "react";
+import { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { BaseNode } from "./BaseNode";
 import { useWorkflowStore } from "@/store/workflowStore";
@@ -11,8 +11,11 @@ import {
   getSplitGridCells,
   getSplitGridTemplate,
   needsMaterialization,
+  resolveGridOffsets,
+  gridFractions,
   MIN_GRID_DIMENSION,
   MAX_GRID_DIMENSION,
+  MIN_SLICE_GAP,
 } from "@/store/utils/splitGridTemplate";
 import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
 import { useShowHandleLabels } from "@/hooks/useShowHandleLabels";
@@ -99,6 +102,38 @@ export function SplitGridNode({ id, data, selected }: NodeProps<SplitGridNodeTyp
   const gridCols = clampGridDimension(nodeData.gridCols);
   const cellCount = gridRows * gridCols;
 
+  // Size the grid overlay to the image's object-contain rectangle so the grid
+  // lines track the actual image, not the letterboxed preview container.
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [imageAspect, setImageAspect] = useState<number | null>(null);
+  const [fittedSize, setFittedSize] = useState<{ width: number; height: number } | null>(null);
+
+  // A new source image invalidates the measured aspect until it re-loads.
+  useEffect(() => {
+    setImageAspect(null);
+    setFittedSize(null);
+  }, [adaptiveSourceImage]);
+
+  useEffect(() => {
+    const el = previewRef.current;
+    if (!el || imageAspect == null || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const cw = el.clientWidth;
+      const ch = el.clientHeight;
+      if (cw === 0 || ch === 0) return;
+      const containerAspect = cw / ch;
+      const wide = imageAspect > containerAspect;
+      setFittedSize({
+        width: wide ? cw : ch * imageAspect,
+        height: wide ? cw / imageAspect : ch,
+      });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [imageAspect]);
+
   // Reactively track the connected source image
   const hasIncomingImageConnection = useMemo(() => {
     return edges.some((edge) => edge.target === id && edge.targetHandle === "image");
@@ -121,16 +156,79 @@ export function SplitGridNode({ id, data, selected }: NodeProps<SplitGridNodeTyp
   const cells = getSplitGridCells(nodeData);
   const cellsAreStale = useMemo(() => {
     const existingIds = new Set(nodes.map((node) => node.id));
-    return needsMaterialization(nodeData, existingIds);
+    const existingRouterNodeIds = new Set(
+      nodes.filter((node) => node.type === "router").map((node) => node.id)
+    );
+    return needsMaterialization(nodeData, existingIds, { existingRouterNodeIds });
   }, [nodeData, nodes]);
 
+  // Custom interior line positions (from dragging); fall back to uniform.
+  const colOffsets = useMemo(
+    () => resolveGridOffsets(gridCols, nodeData.colOffsets),
+    [gridCols, nodeData.colOffsets]
+  );
+  const rowOffsets = useMemo(
+    () => resolveGridOffsets(gridRows, nodeData.rowOffsets),
+    [gridRows, nodeData.rowOffsets]
+  );
+
+  // Live positions while dragging a grid line (null when idle).
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState<{ axis: "col" | "row"; offsets: number[] } | null>(null);
+  const activeColOffsets = drag?.axis === "col" ? drag.offsets : colOffsets;
+  const activeRowOffsets = drag?.axis === "row" ? drag.offsets : rowOffsets;
+  const colFractions = gridFractions(gridCols, activeColOffsets);
+  const rowFractions = gridFractions(gridRows, activeRowOffsets);
+
+  const startLineDrag = useCallback(
+    (axis: "col" | "row", index: number, e: React.PointerEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const inner = innerRef.current;
+      if (!inner) return;
+      const base = axis === "col" ? colOffsets : rowOffsets;
+      let working = [...base];
+      setDrag({ axis, offsets: working });
+
+      const onMove = (ev: PointerEvent) => {
+        const rect = inner.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return;
+        const norm =
+          axis === "col"
+            ? (ev.clientX - rect.left) / rect.width
+            : (ev.clientY - rect.top) / rect.height;
+        const lower = index > 0 ? working[index - 1] : 0;
+        const upper = index < working.length - 1 ? working[index + 1] : 1;
+        const clamped = Math.min(upper - MIN_SLICE_GAP, Math.max(lower + MIN_SLICE_GAP, norm));
+        working = working.map((v, i) => (i === index ? clamped : v));
+        setDrag({ axis, offsets: working });
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        setDrag(null);
+        updateNodeData(id, axis === "col" ? { colOffsets: working } : { rowOffsets: working });
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [colOffsets, rowOffsets, id, updateNodeData]
+  );
+
   const handleRowsChange = useCallback(
-    (value: number) => updateNodeData(id, { gridRows: value }),
-    [id, updateNodeData]
+    (value: number) => {
+      if (value === gridRows) return;
+      // Row count changed: custom row lines no longer fit — reset to uniform.
+      updateNodeData(id, { gridRows: value, rowOffsets: undefined });
+    },
+    [id, updateNodeData, gridRows]
   );
   const handleColsChange = useCallback(
-    (value: number) => updateNodeData(id, { gridCols: value }),
-    [id, updateNodeData]
+    (value: number) => {
+      if (value === gridCols) return;
+      updateNodeData(id, { gridCols: value, colOffsets: undefined });
+    },
+    [id, updateNodeData, gridCols]
   );
 
   const handleSplit = useCallback(() => {
@@ -199,27 +297,93 @@ export function SplitGridNode({ id, data, selected }: NodeProps<SplitGridNodeTyp
           </button>
 
           {/* Preview with grid overlay */}
-          <div className="relative flex-1 min-h-[96px] rounded-md overflow-hidden bg-neutral-900/40 border border-neutral-700/40">
+          <div
+            ref={previewRef}
+            className="relative flex-1 min-h-[96px] rounded-md overflow-hidden bg-neutral-900/40 border border-neutral-700/40 flex items-center justify-center"
+          >
             {nodeData.sourceImage ? (
-              <>
+              <div
+                ref={innerRef}
+                className="relative"
+                style={
+                  fittedSize
+                    ? { width: fittedSize.width, height: fittedSize.height }
+                    : { width: "100%", height: "100%" }
+                }
+              >
                 <img
                   src={adaptiveSourceImage ?? undefined}
                   alt="Source grid"
-                  className="w-full h-full object-contain"
+                  className="w-full h-full object-contain block select-none"
+                  draggable={false}
+                  onLoad={(e) => {
+                    const { naturalWidth, naturalHeight } = e.currentTarget;
+                    if (naturalWidth > 0 && naturalHeight > 0) {
+                      setImageAspect(naturalWidth / naturalHeight);
+                    }
+                  }}
                 />
+                {/* Cell outlines (non-uniform when lines have been dragged) */}
                 <div
                   className="absolute inset-0 pointer-events-none"
                   style={{
                     display: "grid",
-                    gridTemplateColumns: `repeat(${gridCols}, 1fr)`,
-                    gridTemplateRows: `repeat(${gridRows}, 1fr)`,
+                    gridTemplateColumns: colFractions.map((f) => `${f}fr`).join(" "),
+                    gridTemplateRows: rowFractions.map((f) => `${f}fr`).join(" "),
                   }}
                 >
                   {Array.from({ length: cellCount }).map((_, index) => (
                     <div key={index} className="border border-blue-400/50" />
                   ))}
                 </div>
-              </>
+                {/* Draggable interior grid lines */}
+                {!isRunning && (
+                  <>
+                    {activeColOffsets.map((offset, index) => (
+                      <div
+                        key={`v-${index}`}
+                        className="nodrag nopan group absolute top-0 bottom-0"
+                        style={{
+                          left: `${offset * 100}%`,
+                          width: 12,
+                          transform: "translateX(-50%)",
+                          cursor: "col-resize",
+                        }}
+                        onPointerDown={(e) => startLineDrag("col", index, e)}
+                      >
+                        <div
+                          className={`absolute inset-y-0 left-1/2 -translate-x-1/2 transition-all ${
+                            drag?.axis === "col"
+                              ? "w-[2px] bg-blue-300"
+                              : "w-px bg-blue-400/70 group-hover:w-[2px] group-hover:bg-blue-300"
+                          }`}
+                        />
+                      </div>
+                    ))}
+                    {activeRowOffsets.map((offset, index) => (
+                      <div
+                        key={`h-${index}`}
+                        className="nodrag nopan group absolute left-0 right-0"
+                        style={{
+                          top: `${offset * 100}%`,
+                          height: 12,
+                          transform: "translateY(-50%)",
+                          cursor: "row-resize",
+                        }}
+                        onPointerDown={(e) => startLineDrag("row", index, e)}
+                      >
+                        <div
+                          className={`absolute inset-x-0 top-1/2 -translate-y-1/2 transition-all ${
+                            drag?.axis === "row"
+                              ? "h-[2px] bg-blue-300"
+                              : "h-px bg-blue-400/70 group-hover:h-[2px] group-hover:bg-blue-300"
+                          }`}
+                        />
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center gap-1">
                 <svg className="w-5 h-5 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

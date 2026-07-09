@@ -184,14 +184,36 @@ describe("SplitGridNode", () => {
       expect(mockUpdateNodeData).toHaveBeenCalledWith(NODE_ID, { gridCols: 4 });
     });
 
+    it("clears custom column offsets when the column count changes", () => {
+      renderNode({ gridCols: 3, colOffsets: [0.2, 0.6] });
+
+      fireEvent.click(screen.getByLabelText("Increase columns"));
+
+      // Explicitly resets colOffsets so stale interior lines don't linger
+      const call = mockUpdateNodeData.mock.calls.find((c) => c[0] === NODE_ID);
+      expect(call?.[1]).toHaveProperty("gridCols", 4);
+      expect(call?.[1]).toHaveProperty("colOffsets", undefined);
+      expect("colOffsets" in (call?.[1] as object)).toBe(true);
+    });
+
+    it("clears custom row offsets when the row count changes", () => {
+      renderNode({ gridRows: 2, rowOffsets: [0.4] });
+
+      fireEvent.click(screen.getByLabelText("Increase rows"));
+
+      const call = mockUpdateNodeData.mock.calls.find((c) => c[0] === NODE_ID);
+      expect(call?.[1]).toHaveProperty("gridRows", 3);
+      expect("rowOffsets" in (call?.[1] as object)).toBe(true);
+    });
+
     it("disables the decrease button at the minimum of 1", () => {
       renderNode({ gridRows: 1 });
 
       expect(screen.getByLabelText("Decrease rows")).toBeDisabled();
     });
 
-    it("disables the increase button at the maximum of 8", () => {
-      renderNode({ gridRows: 8 });
+    it("disables the increase button at the maximum of 16", () => {
+      renderNode({ gridRows: 16 });
 
       expect(screen.getByLabelText("Increase rows")).toBeDisabled();
     });
@@ -206,14 +228,14 @@ describe("SplitGridNode", () => {
       expect(mockUpdateNodeData).toHaveBeenCalledWith(NODE_ID, { gridRows: 5 });
     });
 
-    it("clamps typed values above the maximum to 8", () => {
+    it("clamps typed values above the maximum to 16", () => {
       renderNode({ gridRows: 2 });
 
       const input = screen.getByLabelText("Rows");
       fireEvent.change(input, { target: { value: "99" } });
       fireEvent.blur(input);
 
-      expect(mockUpdateNodeData).toHaveBeenCalledWith(NODE_ID, { gridRows: 8 });
+      expect(mockUpdateNodeData).toHaveBeenCalledWith(NODE_ID, { gridRows: 16 });
     });
 
     it("clamps typed values below the minimum to 1", () => {
@@ -349,6 +371,38 @@ describe("SplitGridNode", () => {
 
       expect(screen.getByText("Connect image")).toBeInTheDocument();
       expect(screen.queryByAltText("Source grid")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Draggable grid lines", () => {
+    it("renders one draggable line per interior boundary (cols-1 vertical, rows-1 horizontal)", () => {
+      setStoreState(connectedImageState(SOURCE_IMAGE));
+      const { container } = renderNode({ sourceImage: SOURCE_IMAGE, gridRows: 2, gridCols: 3 });
+
+      expect(container.querySelectorAll('[style*="col-resize"]').length).toBe(2); // 3 cols → 2 lines
+      expect(container.querySelectorAll('[style*="row-resize"]').length).toBe(1); // 2 rows → 1 line
+    });
+
+    it("renders no draggable lines while a workflow is running", () => {
+      setStoreState({ ...connectedImageState(SOURCE_IMAGE), isRunning: true });
+      const { container } = renderNode({ sourceImage: SOURCE_IMAGE, gridRows: 2, gridCols: 3 });
+
+      expect(container.querySelectorAll('[style*="col-resize"]').length).toBe(0);
+      expect(container.querySelectorAll('[style*="row-resize"]').length).toBe(0);
+    });
+
+    it("positions cell outlines from custom offsets when lines have been dragged", () => {
+      setStoreState(connectedImageState(SOURCE_IMAGE));
+      const { container } = renderNode({
+        sourceImage: SOURCE_IMAGE,
+        gridRows: 1,
+        gridCols: 2,
+        colOffsets: [0.25],
+      });
+
+      const overlay = container.querySelector('[style*="grid-template-columns"]') as HTMLElement;
+      // 0.25 boundary → column fractions 0.25fr / 0.75fr (not the uniform 0.5/0.5)
+      expect(overlay.style.gridTemplateColumns).toBe("0.25fr 0.75fr");
     });
   });
 

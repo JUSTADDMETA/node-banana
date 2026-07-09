@@ -10,7 +10,17 @@
  */
 
 import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { Handle, NodeResizer, Position, useReactFlow, type NodeProps, type Node } from "@xyflow/react";
+import {
+  BaseEdge,
+  getBezierPath,
+  Handle,
+  NodeResizer,
+  Position,
+  useReactFlow,
+  type EdgeProps,
+  type NodeProps,
+  type Node,
+} from "@xyflow/react";
 import type {
   AspectRatio,
   LLMModelType,
@@ -46,10 +56,46 @@ export const TemplateEditorContext = createContext<TemplateEditorContextValue>({
   setOverrides: () => {},
 });
 
+/**
+ * Editor connection ("noodle") — a curved bezier with a wide invisible hit
+ * path, exactly like the main canvas. Deletion is handled the same way too: the
+ * modal shows a floating toolbar above the cursor when a noodle is clicked (see
+ * SplitGridTemplateModal), so the edge itself carries no inline control.
+ */
+export function TemplateEditableEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style,
+  markerEnd,
+}: EdgeProps) {
+  const [edgePath] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
+      {/* Wide invisible hit path — makes the noodle easy to click */}
+      <path d={edgePath} fill="none" strokeWidth={16} stroke="transparent" className="react-flow__edge-interaction" />
+    </>
+  );
+}
+
 // Mirrors GenerateImageNode's gemini constants
 export const GEMINI_IMAGE_MODELS: { value: ModelType; label: string }[] = [
   { value: "nano-banana", label: "Nano Banana" },
   { value: "nano-banana-2", label: "Nano Banana 2" },
+  { value: "nano-banana-2-lite", label: "Nano Banana 2 Lite" },
   { value: "nano-banana-pro", label: "Nano Banana Pro" },
 ];
 const BASE_ASPECT_RATIOS: AspectRatio[] = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
@@ -168,9 +214,12 @@ function MiniFloatingHeader({
 }) {
   return (
     <div className="absolute left-0 right-0 -top-[26px] px-1 py-1 flex items-center justify-between pointer-events-none">
-      <div className="flex-1 min-w-0 flex items-center gap-1.5 pl-2">
+      {/* Title strip doubles as a drag handle (bodies are nodrag). No `nodrag`
+          class + pointer-events-auto lets React Flow start a node drag here,
+          mirroring the main-canvas FloatingNodeHeader. */}
+      <div className="flex-1 min-w-0 flex items-center gap-1.5 pl-2 pointer-events-auto cursor-grab active:cursor-grabbing">
         {provider && <ProviderBadge provider={provider} />}
-        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 truncate">
+        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400 truncate select-none">
           {title}
         </span>
       </div>

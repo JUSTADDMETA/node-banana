@@ -24,10 +24,12 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type EdgeTypes,
   type FinalConnectionState,
   type NodeTypes,
 } from "@xyflow/react";
 import { useWorkflowStore } from "@/store/workflowStore";
+import { useWheelPanZoom } from "@/hooks/useWheelPanZoom";
 import type {
   LLMGenerateNodeData,
   NanoBananaNodeData,
@@ -43,6 +45,13 @@ import {
   getSplitGridTemplate,
 } from "@/store/utils/splitGridTemplate";
 import {
+  RouterRail,
+  RouterWires,
+  isInRailDropZone,
+  type RouterWire,
+  type RailSize,
+} from "./RouterRail";
+import {
   getTemplateEntry,
   getTemplateNodeIcon,
   TEMPLATE_NODE_CATALOG,
@@ -52,6 +61,7 @@ import {
 import {
   GEMINI_IMAGE_MODELS,
   SplitGridTemplateNode,
+  TemplateEditableEdge,
   TemplateEditorContext,
   type TemplateNodeData,
   type TemplateRFNode,
@@ -60,6 +70,17 @@ import {
 const nodeTypes: NodeTypes = {
   splitGridTemplateNode: SplitGridTemplateNode,
 };
+
+const edgeTypes: EdgeTypes = {
+  templateEditable: TemplateEditableEdge,
+};
+
+const TEMPLATE_EDGE_TYPE = "templateEditable";
+
+// Match the main canvas: on macOS a left-drag must not pan (that reads as
+// "dragging a connection moved everything"); panning is via the trackpad.
+const isMacOS =
+  typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
 const EDGE_COLOR: Record<TemplateHandleKind, string> = {
   image: "#0d9668",
@@ -147,9 +168,18 @@ function templateToRfNodes(
   });
 }
 
+/** The downstream-router wiring stored on the template, as editor wire records. */
+function templateToRouterWires(template: SplitGridTemplate): RouterWire[] {
+  return (template.router ?? []).map((connection) => ({
+    source: connection.source,
+    sourceHandle: connection.sourceHandle,
+  }));
+}
+
 function templateToRfEdges(template: SplitGridTemplate): Edge[] {
   return template.edges.map((templateEdge) => ({
     id: templateEdge.id,
+    type: TEMPLATE_EDGE_TYPE,
     source: templateEdge.source,
     sourceHandle: templateEdge.sourceHandle,
     target: templateEdge.target,
@@ -162,8 +192,23 @@ function templateToRfEdges(template: SplitGridTemplate): Edge[] {
 function serializeTemplate(
   baseNodeId: string,
   rfNodes: TemplateRFNode[],
-  rfEdges: Edge[]
+  rfEdges: Edge[],
+  routerWires: RouterWire[]
 ): SplitGridTemplate {
+  // The fixed rail's wires become the router wiring (sorted for a stable,
+  // non-dirty baseline); targetHandle equals the source handle's type.
+  const router = routerWires
+    .map((wire) => ({
+      source: wire.source,
+      sourceHandle: wire.sourceHandle,
+      targetHandle: wire.sourceHandle,
+    }))
+    .sort(
+      (a, b) =>
+        a.source.localeCompare(b.source) ||
+        a.sourceHandle.localeCompare(b.sourceHandle) ||
+        a.targetHandle.localeCompare(b.targetHandle)
+    );
   return {
     baseNodeId,
     nodes: rfNodes.map((node) => {
@@ -195,6 +240,7 @@ function serializeTemplate(
         target: edge.target,
         targetHandle: edge.targetHandle!,
       })),
+    ...(router.length ? { router } : {}),
   };
 }
 
@@ -302,6 +348,12 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   const isRunning = useWorkflowStore((state) => state.isRunning);
   const incrementModalCount = useWorkflowStore((state) => state.incrementModalCount);
   const decrementModalCount = useWorkflowStore((state) => state.decrementModalCount);
+  const canvasNavigationSettings = useWorkflowStore((state) => state.canvasNavigationSettings);
+
+  // Match the main canvas's wheel navigation (scroll-to-pan when zoomMode is
+  // altScroll/ctrlScroll) instead of React Flow's default scroll-to-zoom.
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);
+  useWheelPanZoom(canvasWrapperRef, canvasNavigationSettings, true);
 
   const initialTemplate = useMemo(() => getSplitGridTemplate(nodeData), [nodeData]);
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TemplateRFNode>(
@@ -310,8 +362,20 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>(
     templateToRfEdges(initialTemplate)
   );
+  // Downstream-router wires live outside the flow (the rail is a fixed overlay)
+  const [routerWires, setRouterWires] = useState<RouterWire[]>(() =>
+    templateToRouterWires(initialTemplate)
+  );
+  const [wrapperSize, setWrapperSize] = useState<RailSize>({ width: 0, height: 0 });
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [dropMenu, setDropMenu] = useState<TemplateDropMenuState | null>(null);
+  // Floating delete toolbar — same interaction as the main canvas: click a
+  // noodle (or a router wire) and a toolbar appears just above the cursor.
+  const [edgeToolbar, setEdgeToolbar] = useState<
+    | { x: number; y: number; target: { kind: "edge"; id: string } }
+    | { x: number; y: number; target: { kind: "wire"; source: string; sourceHandle: string } }
+    | null
+  >(null);
   // Drags that end over the backdrop synthesize a click on it — only treat a
   // click as backdrop-close when the pointer also went DOWN on the backdrop
   const backdropPointerDownRef = useRef(false);
@@ -331,6 +395,112 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     return () => decrementModalCount();
   }, [incrementModalCount, decrementModalCount]);
 
+  // Track the canvas wrapper size so the fixed rail can be placed + hit-tested
+  useEffect(() => {
+    const el = canvasWrapperRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setWrapperSize({ width: el.clientWidth, height: el.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Drop router wires whose terminal node was deleted from the set
+  useEffect(() => {
+    setRouterWires((prev) => {
+      const ids = new Set(rfNodes.map((node) => node.id));
+      const next = prev.filter((wire) => ids.has(wire.source));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [rfNodes]);
+
+  const addRouterWire = useCallback((source: string, sourceHandle: string) => {
+    setRouterWires((prev) =>
+      prev.some((w) => w.source === source && w.sourceHandle === sourceHandle)
+        ? prev
+        : [...prev, { source, sourceHandle }]
+    );
+  }, []);
+
+  const disconnectRouterType = useCallback((type: string) => {
+    setRouterWires((prev) => prev.filter((w) => w.sourceHandle !== type));
+  }, []);
+
+  // Delete one specific router wire (its midpoint × button)
+  const disconnectRouterWire = useCallback((source: string, sourceHandle: string) => {
+    setRouterWires((prev) =>
+      prev.filter((w) => !(w.source === source && w.sourceHandle === sourceHandle))
+    );
+  }, []);
+
+  const deleteEdge = useCallback(
+    (id: string) => {
+      setRfEdges((edges) => edges.filter((edge) => edge.id !== id));
+    },
+    [setRfEdges]
+  );
+
+  const handleToolbarDelete = useCallback(() => {
+    setEdgeToolbar((current) => {
+      if (!current) return null;
+      if (current.target.kind === "edge") deleteEdge(current.target.id);
+      else disconnectRouterWire(current.target.source, current.target.sourceHandle);
+      return null;
+    });
+  }, [deleteEdge, disconnectRouterWire]);
+
+  // Click a noodle or a router wire → show the delete toolbar just above the
+  // cursor; a click anywhere else dismisses it (but not clicks on the toolbar
+  // itself). Mirrors the main-canvas EdgeToolbar, which also detects edge
+  // clicks via a native mousedown listener.
+  useEffect(() => {
+    const wrapper = canvasWrapperRef.current;
+    if (!wrapper) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      if (!target || target.closest("[data-edge-toolbar]")) return;
+      const above = { x: event.clientX, y: event.clientY - 40 };
+      const edgeEl = target.closest(".react-flow__edge");
+      if (edgeEl) {
+        const id =
+          edgeEl.getAttribute("data-id") ??
+          edgeEl.getAttribute("data-testid")?.replace(/^rf__edge-/, "") ??
+          null;
+        if (id) setEdgeToolbar({ ...above, target: { kind: "edge", id } });
+        return;
+      }
+      const wireEl = target.closest("[data-wire-source]");
+      if (wireEl) {
+        const source = wireEl.getAttribute("data-wire-source");
+        const sourceHandle = wireEl.getAttribute("data-wire-handle");
+        if (source && sourceHandle) {
+          setEdgeToolbar({ ...above, target: { kind: "wire", source, sourceHandle } });
+        }
+        return;
+      }
+      setEdgeToolbar(null);
+    };
+    wrapper.addEventListener("mousedown", handlePointerDown);
+    return () => wrapper.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  // Dismiss the toolbar if its target disappears (its node/edge/wire is removed)
+  useEffect(() => {
+    setEdgeToolbar((current) => {
+      if (!current) return current;
+      const target = current.target;
+      if (target.kind === "edge") {
+        return rfEdges.some((edge) => edge.id === target.id) ? current : null;
+      }
+      return routerWires.some(
+        (w) => w.source === target.source && w.sourceHandle === target.sourceHandle
+      )
+        ? current
+        : null;
+    });
+  }, [rfEdges, routerWires]);
+
   // Dirty check: compare against the initial template mapped through the same
   // serializer, so an untouched editor is never considered dirty
   const initialSerializedRef = useRef<string | null>(null);
@@ -339,15 +509,16 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
       serializeTemplate(
         baseNodeId,
         templateToRfNodes(initialTemplate, nodeData.sourceImage),
-        templateToRfEdges(initialTemplate)
+        templateToRfEdges(initialTemplate),
+        templateToRouterWires(initialTemplate)
       )
     );
   }
   const isDirty = useCallback(
     () =>
-      JSON.stringify(serializeTemplate(baseNodeId, rfNodes, rfEdges)) !==
+      JSON.stringify(serializeTemplate(baseNodeId, rfNodes, rfEdges, routerWires)) !==
       initialSerializedRef.current,
-    [baseNodeId, rfNodes, rfEdges]
+    [baseNodeId, rfNodes, rfEdges, routerWires]
   );
 
   const requestClose = useCallback(() => {
@@ -362,7 +533,9 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (dropMenu) {
+      if (edgeToolbar) {
+        setEdgeToolbar(null);
+      } else if (dropMenu) {
         setDropMenu(null);
       } else if (showDiscardConfirm) {
         setShowDiscardConfirm(false);
@@ -372,7 +545,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [dropMenu, showDiscardConfirm, requestClose]);
+  }, [edgeToolbar, dropMenu, showDiscardConfirm, requestClose]);
 
   const setOverrides = useCallback(
     (id: string, overrides: Record<string, unknown>) => {
@@ -400,6 +573,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     (template: SplitGridTemplate) => {
       setRfNodes(templateToRfNodes(template, nodeData.sourceImage));
       setRfEdges(templateToRfEdges(template));
+      setRouterWires([]); // presets carry no router wiring
       idCounterRef.current = 0;
       refitSoon();
     },
@@ -453,7 +627,10 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               !(edge.target === connection.target && edge.targetHandle === connection.targetHandle)
           );
         }
-        return addEdge({ ...connection, style: edgeStyleFor(connection.sourceHandle) }, next);
+        return addEdge(
+          { ...connection, type: TEMPLATE_EDGE_TYPE, style: edgeStyleFor(connection.sourceHandle) },
+          next
+        );
       });
     },
     [setRfEdges]
@@ -467,16 +644,28 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     [isValidConnection, addConnectedEdge]
   );
 
-  // Dropping a connection in empty space opens the add-node menu, main-canvas style
+  // Dropping a connection over the fixed rail wires it to the router; dropping
+  // in empty space opens the add-node menu (main-canvas style).
   const handleConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
       if (connectionState.isValid) return;
       const fromHandle = connectionState.fromHandle;
       const fromNode = connectionState.fromNode;
       if (!fromHandle?.id || !fromNode) return;
+      const point = "changedTouches" in event ? event.changedTouches[0] : event;
+
+      // Drop an output onto the router rail → wire it to the shared router
+      const rect = canvasWrapperRef.current?.getBoundingClientRect();
+      if (rect && fromHandle.type === "source") {
+        const wrapperPoint = { x: point.clientX - rect.left, y: point.clientY - rect.top };
+        if (isInRailDropZone(wrapperPoint, wrapperSize, routerWires)) {
+          addRouterWire(fromNode.id, fromHandle.id);
+          return;
+        }
+      }
+
       const targetElement = event.target as HTMLElement | null;
       if (!targetElement?.closest(".react-flow__pane")) return;
-      const point = "changedTouches" in event ? event.changedTouches[0] : event;
       setDropMenu({
         screen: { x: point.clientX, y: point.clientY },
         flow: screenToFlowPosition({ x: point.clientX, y: point.clientY }),
@@ -485,7 +674,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
         fromHandleType: fromHandle.type,
       });
     },
-    [screenToFlowPosition]
+    [screenToFlowPosition, wrapperSize, routerWires, addRouterWire]
   );
 
   const dropMenuOptions = useMemo(() => {
@@ -542,6 +731,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
 
   const cellCount =
     clampGridDimension(nodeData.gridRows) * clampGridDimension(nodeData.gridCols);
+  const perCellNodeCount = rfNodes.length;
 
   // Advisory warnings for templates that would materialize un-runnable cells
   const warnings = useMemo(() => {
@@ -566,8 +756,13 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
       const labels = [...new Set(unwired.map((node) => getTemplateEntry(node.data.nodeType).label))];
       list.push(`${labels.join(", ")} node${unwired.length === 1 ? " is" : "s are"} missing an image input`);
     }
+    // Text terminals collapse to a single cell through the shared router (only
+    // image outputs aggregate), so flag it rather than silently dropping cells.
+    if (routerWires.some((wire) => wire.sourceHandle !== "image")) {
+      list.push("Only image terminals aggregate through the Router — text collapses to one cell");
+    }
     return list;
-  }, [rfNodes, rfEdges]);
+  }, [rfNodes, rfEdges, routerWires]);
 
   const handleApply = useCallback(() => {
     if (isRunning) return;
@@ -575,15 +770,18 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     // one undo checkpoint, so one Cmd+Z reverts the whole apply
     materializeSplitGridCells(nodeId, {
       force: true,
-      template: serializeTemplate(baseNodeId, rfNodes, rfEdges),
+      template: serializeTemplate(baseNodeId, rfNodes, rfEdges, routerWires),
     });
     onClose();
-  }, [isRunning, baseNodeId, rfNodes, rfEdges, nodeId, materializeSplitGridCells, onClose]);
+  }, [isRunning, baseNodeId, rfNodes, rfEdges, routerWires, nodeId, materializeSplitGridCells, onClose]);
 
   return createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
-      onWheelCapture={(event) => event.stopPropagation()}
+      // Bubble-phase (not capture): the mini-canvas's native wheel-to-pan
+      // listener on the wrapper must run first; we still stop the wheel from
+      // leaking to the frozen main canvas behind the modal.
+      onWheel={(event) => event.stopPropagation()}
       onPointerDown={(event) => {
         backdropPointerDownRef.current = event.target === event.currentTarget;
       }}
@@ -637,7 +835,12 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
         </div>
 
         {/* Mini canvas */}
-        <div className="flex-1 min-h-0 relative bg-neutral-900">
+        <div ref={canvasWrapperRef} className="flex-1 min-h-0 relative bg-neutral-900">
+          {/* Router wires render BEHIND the canvas so nodes occlude them, like
+              normal edges (the pane is transparent, so they show in the gaps) */}
+          <RouterWires wires={routerWires} nodes={rfNodes} size={wrapperSize} />
+
+          <div className="absolute inset-0">
           <TemplateEditorContext.Provider value={editorContext}>
             <ReactFlow
               nodes={rfNodes}
@@ -648,18 +851,33 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               onConnectEnd={handleConnectEnd}
               isValidConnection={isValidConnection}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               fitView
               fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
               minZoom={0.2}
               maxZoom={1.5}
+              zoomOnScroll={false}
+              panOnDrag={!isMacOS}
+              // The router is a fixed, always-visible overlay on the right, so
+              // panning toward it mid-connection only jostles the graph.
+              autoPanOnConnect={false}
               deleteKeyCode={["Backspace", "Delete"]}
-              defaultEdgeOptions={{ animated: false }}
+              defaultEdgeOptions={{ type: TEMPLATE_EDGE_TYPE, animated: false }}
               proOptions={{ hideAttribution: true }}
             >
               <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#404040" />
               <Controls showInteractive={false} className="!bg-neutral-800 !border-neutral-700 !shadow-none [&>button]:!bg-neutral-800 [&>button]:!border-neutral-700 [&>button]:!text-neutral-300 [&>button:hover]:!bg-neutral-700" />
             </ReactFlow>
           </TemplateEditorContext.Provider>
+          </div>
+
+          {/* Fixed downstream-router rail + invisible wire click targets (on top) */}
+          <RouterRail
+            wires={routerWires}
+            nodes={rfNodes}
+            size={wrapperSize}
+            onDisconnectType={disconnectRouterType}
+          />
 
           {/* Connection drop menu */}
           {dropMenu && (
@@ -670,13 +888,38 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               onClose={() => setDropMenu(null)}
             />
           )}
+
+          {/* Floating delete toolbar — same look/behavior as the main canvas
+              EdgeToolbar, minus pause (cells run in one shot) */}
+          {edgeToolbar && (
+            <div
+              data-edge-toolbar
+              className="fixed z-[110] flex items-center gap-1 bg-neutral-800 border border-neutral-600 rounded-lg shadow-xl p-1"
+              style={{ left: edgeToolbar.x, top: edgeToolbar.y, transform: "translateX(-50%)" }}
+            >
+              <button
+                onClick={handleToolbarDelete}
+                className="p-1.5 rounded hover:bg-neutral-700 text-neutral-400 hover:text-red-400 transition-colors"
+                title="Delete"
+                aria-label="Delete connection"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                  />
+                </svg>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-4 px-5 py-3.5 border-t border-neutral-700/50 shrink-0">
           <div className="text-xs text-neutral-500 min-w-0">
             <span>
-              {rfNodes.length} node{rfNodes.length === 1 ? "" : "s"} per cell · {nodeData.gridRows}×{nodeData.gridCols} grid → {cellCount} group{cellCount === 1 ? "" : "s"}
+              {perCellNodeCount} node{perCellNodeCount === 1 ? "" : "s"} per cell · {nodeData.gridRows}×{nodeData.gridCols} grid → {cellCount} group{cellCount === 1 ? "" : "s"}
             </span>
             {warnings.map((warning) => (
               <span key={warning} className="ml-3 text-amber-400">
