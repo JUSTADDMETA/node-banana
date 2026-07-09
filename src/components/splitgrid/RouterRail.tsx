@@ -47,8 +47,8 @@ const EMPTY_COLOR = "#6b7280";
 const ROW_H = 28;
 const LABEL_H = 28; // room for the "Router" caption + its top gap
 const CAPTION_GAP = 10; // vertical gap between the sockets and the "Router" caption
-const RAIL_RIGHT = 12; // distance from the wrapper's right edge
-const CONTENT_W = 72;
+const RAIL_RIGHT = 14; // distance from the wrapper's right edge
+const CONTENT_W = 42; // no per-type labels, so the socket can hug the edge
 const SOCKET_LEFT = 26; // socket center, measured from the rail content's left
 
 /** Distinct wired types, in a stable order (one socket row per type). */
@@ -75,7 +75,7 @@ export function isInRailDropZone(
   if (size.width === 0) return false;
   const { blockTop, blockH, contentLeft } = railMetrics(wires, size);
   return (
-    point.x >= contentLeft - 16 &&
+    point.x >= contentLeft - 56 &&
     point.x <= size.width &&
     point.y >= blockTop - 24 &&
     point.y <= blockTop + blockH + 24
@@ -201,17 +201,18 @@ export function RouterRail({
           const top = i * ROW_H + ROW_H / 2;
           const label = type ? TYPE_LABELS[type] ?? type : null;
           const color = type ? TYPE_COLORS[type] ?? EMPTY_COLOR : EMPTY_COLOR;
+          // Type is conveyed by socket color (matching the main-canvas handles);
+          // the label lives in the hover tooltip so the rail can hug the edge.
           return (
             <div key={type ?? "empty"} className="group">
-              {/* Clickable row (typed sockets only) to disconnect that type */}
               {type && (
                 <div
                   className="absolute cursor-pointer"
                   style={{
-                    top: top - ROW_H / 2,
-                    left: 0,
-                    width: CONTENT_W,
-                    height: ROW_H,
+                    top: top - 12,
+                    left: SOCKET_LEFT - 12,
+                    width: 24,
+                    height: 24,
                     pointerEvents: "auto",
                   }}
                   title={`Disconnect ${label}`}
@@ -219,7 +220,7 @@ export function RouterRail({
                 />
               )}
               <div
-                className="absolute rounded-full"
+                className="absolute rounded-full transition-shadow group-hover:ring-2 group-hover:ring-white/30"
                 style={{
                   top,
                   left: SOCKET_LEFT,
@@ -231,14 +232,6 @@ export function RouterRail({
                   boxShadow: "0 0 0 1px rgba(0,0,0,.35)",
                 }}
               />
-              {label && (
-                <span
-                  className="absolute text-[11px] font-medium leading-none whitespace-nowrap select-none group-hover:line-through"
-                  style={{ top, left: SOCKET_LEFT + 12, transform: "translateY(-50%)", color }}
-                >
-                  {label}
-                </span>
-              )}
             </div>
           );
         })}
