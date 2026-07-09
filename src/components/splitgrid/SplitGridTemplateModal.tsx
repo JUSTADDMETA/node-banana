@@ -858,6 +858,9 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               maxZoom={1.5}
               zoomOnScroll={false}
               panOnDrag={!isMacOS}
+              // The router is a fixed, always-visible overlay on the right, so
+              // panning toward it mid-connection only jostles the graph.
+              autoPanOnConnect={false}
               deleteKeyCode={["Backspace", "Delete"]}
               defaultEdgeOptions={{ type: TEMPLATE_EDGE_TYPE, animated: false }}
               proOptions={{ hideAttribution: true }}

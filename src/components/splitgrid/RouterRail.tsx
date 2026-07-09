@@ -64,7 +64,8 @@ const EMPTY_COLOR = "#6b7280";
 const ROW_H = 28;
 const LABEL_H = 28; // room for the "Router" caption + its top gap
 const CAPTION_GAP = 10; // vertical gap between the sockets and the "Router" caption
-const RAIL_RIGHT = 14; // distance from the wrapper's right edge
+const RAIL_RIGHT = 44; // distance from the wrapper's right edge (kept off the
+// edge so dragging a noodle onto the socket doesn't graze the pane edge)
 const CONTENT_W = 42; // no per-type labels, so the socket can hug the edge
 const SOCKET_LEFT = 26; // socket center, measured from the rail content's left
 
