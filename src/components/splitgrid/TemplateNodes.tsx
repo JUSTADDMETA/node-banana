@@ -9,8 +9,17 @@
  * browser for the full multi-provider model catalog.
  */
 
-import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { Handle, NodeResizer, Position, useReactFlow, type NodeProps, type Node } from "@xyflow/react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Handle,
+  NodeResizer,
+  Position,
+  useNodeConnections,
+  useReactFlow,
+  useUpdateNodeInternals,
+  type NodeProps,
+  type Node,
+} from "@xyflow/react";
 import type {
   AspectRatio,
   LLMModelType,
@@ -31,6 +40,8 @@ export interface TemplateNodeData extends Record<string, unknown> {
   nodeType: NodeType;
   overrides: Record<string, unknown>;
   isBase: boolean;
+  /** The fixed, non-replicated downstream-router port (1 total, not 1 per cell) */
+  isRouterPort?: boolean;
   sourceImage?: string | null;
   /** Measured settings-panel height, subtracted when persisting node size */
   _editorPanelHeight?: number;
@@ -549,6 +560,85 @@ function LlmBody({ nodeId, overrides }: { nodeId: string; overrides: Record<stri
   );
 }
 
+/** Handle colors for the router port, mirroring RouterNode.tsx on the main canvas */
+const PORT_HANDLE_COLORS: Record<string, string> = {
+  image: "#10b981",
+  text: "#3b82f6",
+  video: "#ec4899",
+  audio: "rgb(167, 139, 250)",
+  "3d": "#f97316",
+  easeCurve: "#ffffff",
+};
+
+/**
+ * The fixed "downstream router" port — a router-style sink pinned to the right
+ * of the cell node set. Mirrors RouterNode: it grows a typed input handle for
+ * each terminal type wired into it, plus a persistent gray generic drop target.
+ * Input-only in the editor; the real Router's onward wiring happens on the main
+ * canvas after materialization.
+ */
+function RouterPortBody({ nodeId }: { nodeId: string }) {
+  const connections = useNodeConnections({ id: nodeId, handleType: "target" });
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  const activeTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const connection of connections) {
+      const handle = connection.targetHandle;
+      if (handle && handle !== "generic-input") set.add(handle);
+    }
+    return Array.from(set).sort();
+  }, [connections]);
+
+  // Re-register handles when a new type is wired so edges attach cleanly
+  useEffect(() => {
+    updateNodeInternals(nodeId);
+  }, [activeTypes.length, nodeId, updateNodeInternals]);
+
+  const spacing = 22;
+  const baseTop = 16;
+  return (
+    <>
+      {activeTypes.map((type, index) => (
+        <Handle
+          key={`in-${type}`}
+          type="target"
+          position={Position.Left}
+          id={type}
+          data-handletype={type}
+          style={{
+            top: baseTop + index * spacing,
+            backgroundColor: PORT_HANDLE_COLORS[type] ?? "#6b7280",
+            width: 12,
+            height: 12,
+            border: "2px solid #1e1e1e",
+          }}
+        />
+      ))}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="generic-input"
+        style={{
+          top: baseTop + activeTypes.length * spacing,
+          backgroundColor: "#6b7280",
+          width: 12,
+          height: 12,
+          border: "2px solid #1e1e1e",
+        }}
+      />
+      <div className="w-full h-full rounded-lg bg-neutral-800/60 border border-neutral-600 flex flex-col items-center justify-center gap-1 px-3">
+        <span className="text-neutral-500 [&>svg]:w-6 [&>svg]:h-6">{getTemplateNodeIcon("router")}</span>
+        <span className="text-[10px] text-neutral-400 text-center leading-tight">
+          {activeTypes.length
+            ? `Routes ${activeTypes.length} type${activeTypes.length > 1 ? "s" : ""} into one shared Router`
+            : "Drag a terminal's output here"}
+        </span>
+      </div>
+    </>
+  );
+}
+
 function GenericBody({ nodeType, description }: { nodeType: NodeType; description: string }) {
   const icon = getTemplateNodeIcon(nodeType);
   return (
@@ -560,6 +650,26 @@ function GenericBody({ nodeType, description }: { nodeType: NodeType; descriptio
 }
 
 function TemplateNodeComponent({ id, data, selected }: NodeProps<TemplateRFNode>) {
+  // The fixed downstream-router port: no resizer (fixed size), a shared badge,
+  // and a router-style body. It is never replicated per cell.
+  if (data.isRouterPort) {
+    return (
+      <div className="relative h-full w-full">
+        <MiniFloatingHeader
+          title="Downstream Router"
+          right={
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/25">
+              shared · 1 total
+            </span>
+          }
+        />
+        <MiniCard selected={selected}>
+          <RouterPortBody nodeId={id} />
+        </MiniCard>
+      </div>
+    );
+  }
+
   const entry = getTemplateEntry(data.nodeType);
   const isGenerate = data.nodeType === "nanoBanana";
   const selectedModel = data.overrides.selectedModel as SelectedModel | undefined;
