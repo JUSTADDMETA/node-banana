@@ -19,6 +19,7 @@ const mockPasteNodes = vi.fn();
 const mockClearClipboard = vi.fn();
 const mockSetShowQuickstart = vi.fn();
 const mockUseWorkflowStore = vi.fn();
+const mockViewport = vi.hoisted(() => ({ zoom: 1 }));
 
 vi.mock("@/store/workflowStore", () => ({
   useWorkflowStore: (selector?: (state: unknown) => unknown) => {
@@ -40,6 +41,8 @@ vi.mock("@xyflow/react", async () => {
   const actual = await vi.importActual("@xyflow/react");
   return {
     ...actual,
+    useStore: (selector: (state: { transform: [number, number, number]; nodeLookup: Map<string, unknown> }) => unknown) =>
+      selector({ transform: [0, 0, mockViewport.zoom], nodeLookup: new Map() }),
     useReactFlow: () => ({
       screenToFlowPosition: mockScreenToFlowPosition,
       getViewport: mockGetViewport,
@@ -155,6 +158,7 @@ function TestWrapper({ children }: { children: React.ReactNode }) {
 describe("WorkflowCanvas", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockViewport.zoom = 1;
     // Default mock implementation
     mockUseWorkflowStore.mockImplementation((selector) => {
       return selector(createDefaultState());
@@ -171,6 +175,17 @@ describe("WorkflowCanvas", () => {
 
       // ReactFlow container should be present
       expect(document.querySelector(".react-flow")).toBeInTheDocument();
+    });
+
+    it("marks the canvas as overview mode below the edge visibility threshold", () => {
+      mockViewport.zoom = 0.2;
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      expect(document.querySelector(".bg-canvas-bg")).toHaveClass("canvas-overview");
     });
 
     it("should render Background component", () => {

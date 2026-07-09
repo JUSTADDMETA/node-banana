@@ -5,6 +5,7 @@ import { useStore, ViewportPortal, type ReactFlowState } from "@xyflow/react";
 import { useShallow } from "zustand/shallow";
 import { useWorkflowStore, GROUP_COLORS } from "@/store/workflowStore";
 import { GroupColor } from "@/types";
+import { isOverviewZoom } from "@/utils/canvasPerformance";
 
 const COLOR_OPTIONS: { color: GroupColor; label: string }[] = [
   { color: "neutral", label: "Gray" },
@@ -56,10 +57,15 @@ function GroupBackground({ groupId }: GroupBackgroundProps) {
 interface GroupControlsProps {
   groupId: string;
   zoom: number;
+  showInteractiveControls: boolean;
 }
 
 // Renders the group header and resize handles - displayed above nodes (z-index 5)
-const GroupControls = memo(function GroupControls({ groupId, zoom }: GroupControlsProps) {
+const GroupControls = memo(function GroupControls({
+  groupId,
+  zoom,
+  showInteractiveControls,
+}: GroupControlsProps) {
   const { group, updateGroup, deleteGroup, moveGroupNodes, toggleGroupLock } =
     useWorkflowStore(
       useShallow((state) => ({
@@ -90,6 +96,14 @@ const GroupControls = memo(function GroupControls({ groupId, zoom }: GroupContro
       setShowColorPicker(false);
     }
   }, [showMenu]);
+
+  useEffect(() => {
+    if (!showInteractiveControls) {
+      setShowMenu(false);
+      setShowColorPicker(false);
+      setIsEditing(false);
+    }
+  }, [showInteractiveControls]);
 
   useEffect(() => {
     if (group?.name && !isEditing) {
@@ -353,7 +367,7 @@ const GroupControls = memo(function GroupControls({ groupId, zoom }: GroupContro
             </div>
 
             {/* Three-dot menu toggle - always visible */}
-            <div className="relative">
+            {showInteractiveControls && <div className="relative group-interactive-controls">
               <button
                 onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
                 className="w-6 h-6 rounded-md flex flex-col items-center justify-center gap-[2px] hover:bg-white/20 transition-colors"
@@ -487,11 +501,12 @@ const GroupControls = memo(function GroupControls({ groupId, zoom }: GroupContro
                   </button>
                 </div>
               )}
-            </div>
+            </div>}
           </div>
         </div>
       </div>
 
+      {showInteractiveControls && <div className="group-resize-controls">
       {/* Resize handles - interactive */}
       <div
         className="absolute top-0 left-0 w-3 h-3 cursor-nw-resize pointer-events-auto"
@@ -525,6 +540,7 @@ const GroupControls = memo(function GroupControls({ groupId, zoom }: GroupContro
         className="absolute right-0 top-3 bottom-3 w-2 cursor-e-resize pointer-events-auto"
         onMouseDown={(e) => handleResizeMouseDown(e, "e")}
       />
+      </div>}
     </div>
   );
 });
@@ -555,14 +571,20 @@ export function GroupBackgroundsPortal() {
 export function GroupControlsOverlay() {
   const groupIds = useWorkflowStore(useShallow((state) => Object.keys(state.groups)));
   const zoom = useStore(selectViewportZoom);
+  const showInteractiveControls = !isOverviewZoom(zoom);
 
   if (groupIds.length === 0) return null;
 
   return (
     <ViewportPortal>
-      <div style={{ position: "absolute", top: 0, left: 0, zIndex: 1000, pointerEvents: "none" }}>
+      <div className="group-controls-overlay" style={{ position: "absolute", top: 0, left: 0, zIndex: 1000, pointerEvents: "none" }}>
         {groupIds.map((groupId) => (
-          <GroupControls key={groupId} groupId={groupId} zoom={zoom} />
+          <GroupControls
+            key={groupId}
+            groupId={groupId}
+            zoom={zoom}
+            showInteractiveControls={showInteractiveControls}
+          />
         ))}
       </div>
     </ViewportPortal>

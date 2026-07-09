@@ -55,6 +55,24 @@ body {
   pointer-events: none;
 }
 
+/* Large-workflow performance mode: images and nodes remain visible while
+   expensive connection and control layers are skipped during navigation. */
+.canvas-panning .react-flow__edges,
+.canvas-overview .react-flow__edges {
+  visibility: hidden;
+}
+
+.canvas-panning .group-interactive-controls,
+.canvas-panning .group-resize-controls,
+.canvas-panning .react-flow__resize-control {
+  visibility: hidden;
+}
+
+.canvas-panning .react-flow__node > * {
+  box-shadow: none !important;
+  transition: none !important;
+}
+
 /* Remove default React Flow styling for output nodes to match custom nodes */
 .react-flow__node-output {
   border: none !important;

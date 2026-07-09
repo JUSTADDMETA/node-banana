@@ -8,13 +8,15 @@ import {
 } from "@/components/GroupsOverlay";
 import { Group } from "@/types";
 
+const mockViewport = vi.hoisted(() => ({ zoom: 1 }));
+
 // Mock ReactFlow hooks and components
 vi.mock("@xyflow/react", () => ({
   useReactFlow: () => ({
     getViewport: () => ({ zoom: 1, x: 0, y: 0 }),
   }),
   useStore: (selector: (state: { transform: [number, number, number] }) => unknown) =>
-    selector({ transform: [0, 0, 1] }),
+    selector({ transform: [0, 0, mockViewport.zoom] }),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="viewport-portal">{children}</div>
   ),
@@ -68,6 +70,7 @@ const createDefaultState = (overrides: { groups?: Record<string, Group> } = {}) 
 describe("GroupBackgroundsPortal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockViewport.zoom = 1;
     mockUseWorkflowStore.mockImplementation((selector) => {
       return selector(createDefaultState());
     });
@@ -170,6 +173,7 @@ describe("GroupBackgroundsPortal", () => {
 describe("GroupControlsOverlay", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockViewport.zoom = 1;
     mockUseWorkflowStore.mockImplementation((selector) => {
       return selector(createDefaultState());
     });
@@ -188,6 +192,21 @@ describe("GroupControlsOverlay", () => {
 
   it("selects only zoom from viewport state", () => {
     expect(selectViewportZoom({ transform: [125, -80, 0.4] } as never)).toBe(0.4);
+  });
+
+  it("keeps group titles but omits interactive controls at overview zoom", () => {
+    mockViewport.zoom = 0.2;
+    mockUseWorkflowStore.mockImplementation((selector) => {
+      return selector(
+        createDefaultState({ groups: { "group-1": createMockGroup({ name: "Overview Group" }) } })
+      );
+    });
+
+    const { container } = render(<GroupControlsOverlay />);
+
+    expect(screen.getByText("Overview Group")).toBeInTheDocument();
+    expect(screen.queryByTitle("Group options")).not.toBeInTheDocument();
+    expect(container.querySelector(".group-resize-controls")).not.toBeInTheDocument();
   });
 
   describe("Group Controls Rendering", () => {

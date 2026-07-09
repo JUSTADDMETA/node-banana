@@ -15,6 +15,7 @@ import {
   Node,
   OnSelectionChangeParams,
   ViewportPortal,
+  useStore,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -82,6 +83,7 @@ import { LLMFallbackPopover } from "./nodes/LLMFallbackPopover";
 import { browseRegistry } from "@/utils/browseRegistry";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
 import { useWheelPanZoom } from "@/hooks/useWheelPanZoom";
+import { selectCanvasOverview, setCanvasPanningClass } from "@/utils/canvasPerformance";
 import { SplitGridTemplateModal } from "./splitgrid/SplitGridTemplateModal";
 import { createPortal } from "react-dom";
 import { useAnnotationStore } from "@/store/annotationStore";
@@ -289,6 +291,7 @@ export function WorkflowCanvas() {
   const setHoveredNodeId = useWorkflowStore((state) => state.setHoveredNodeId);
   const openAnnotationModal = useAnnotationStore((state) => state.openModal);
   const { screenToFlowPosition, getViewport, setCenter } = useReactFlow();
+  const isCanvasOverview = useStore(selectCanvasOverview);
   const { show: showToast } = useToast();
   const [isDragOver, setIsDragOver] = useState(false);
   const [dropType, setDropType] = useState<"image" | "audio" | "workflow" | "node" | null>(null);
@@ -329,6 +332,13 @@ export function WorkflowCanvas() {
     setLockedFeatures(currentState.lockedFeatures);
 
     return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      document.documentElement.classList.remove("canvas-interacting");
+      setCanvasPanningClass(false);
+    };
   }, []);
 
   // Detect if canvas is empty for showing quickstart
@@ -2029,7 +2039,9 @@ export function WorkflowCanvas() {
   return (
     <div
       ref={reactFlowWrapper}
-      className={`flex-1 bg-canvas-bg relative ${isDragOver ? "ring-2 ring-inset ring-blue-500" : ""}`}
+      className={`flex-1 bg-canvas-bg relative ${
+        isCanvasOverview ? "canvas-overview" : ""
+      } ${isDragOver ? "ring-2 ring-inset ring-blue-500" : ""}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -2100,8 +2112,8 @@ export function WorkflowCanvas() {
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         onConnectEnd={handleConnectEnd}
-        onMoveStart={() => { isPanningRef.current = true; setHoveredNodeId(null); document.documentElement.classList.add("canvas-interacting"); }}
-        onMoveEnd={() => { isPanningRef.current = false; document.documentElement.classList.remove("canvas-interacting"); }}
+        onMoveStart={() => { isPanningRef.current = true; setHoveredNodeId(null); document.documentElement.classList.add("canvas-interacting"); setCanvasPanningClass(true); }}
+        onMoveEnd={() => { isPanningRef.current = false; document.documentElement.classList.remove("canvas-interacting"); setCanvasPanningClass(false); }}
         onNodeDragStart={() => { isDraggingNodeRef.current = true; document.documentElement.classList.add("canvas-interacting"); }}
         onNodeDragStop={(event, node) => { isDraggingNodeRef.current = false; document.documentElement.classList.remove("canvas-interacting"); handleNodeDragStop(event, node); }}
         onSelectionChange={handleSelectionChange}
