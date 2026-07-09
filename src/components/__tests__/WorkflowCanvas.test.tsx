@@ -267,6 +267,20 @@ describe("WorkflowCanvas", () => {
       expect(document.querySelector(".react-flow__minimap")).toBeInTheDocument();
     });
 
+    it("allows the minimap to be hidden and restored", () => {
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Hide minimap" }));
+      expect(document.querySelector(".react-flow__minimap")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Show minimap" }));
+      expect(document.querySelector(".react-flow__minimap")).toBeInTheDocument();
+    });
+
     it("should render EdgeToolbar component", () => {
       render(
         <TestWrapper>
