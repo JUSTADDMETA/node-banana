@@ -706,5 +706,119 @@ describe("materializeSplitGridCells", () => {
       expect((pastedSplit.data as SplitGridNodeData).routerNodeId ?? null).toBeNull();
       expect((pastedSplit.data as SplitGridNodeData).cells ?? []).toHaveLength(0);
     });
+
+    it("nulls routerNodeId and rebuilds the router after it is manually deleted", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate() })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      const routerId = getSplitData().routerNodeId!;
+
+      // Delete the shared router on the canvas
+      act(() => {
+        useWorkflowStore.getState().onNodesChange([{ type: "remove" as const, id: routerId }]);
+      });
+      expect(getSplitData().routerNodeId ?? null).toBeNull(); // self-heal
+      expect(useWorkflowStore.getState().nodes.filter((n) => n.type === "router")).toHaveLength(0);
+
+      // On the next run/materialize the router is rebuilt (was previously stuck)
+      let rebuilt = false;
+      act(() => {
+        rebuilt = useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      expect(rebuilt).toBe(true);
+      const state = useWorkflowStore.getState();
+      expect(state.nodes.filter((n) => n.type === "router")).toHaveLength(1);
+      expect(getSplitData().routerNodeId).toBeTruthy();
+      expect(state.edges.filter((e) => e.target === getSplitData().routerNodeId)).toHaveLength(4);
+    });
+
+    it("recreates the router on re-apply after a manual delete", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate() })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      const routerId = getSplitData().routerNodeId!;
+      act(() => {
+        useWorkflowStore.getState().onNodesChange([{ type: "remove" as const, id: routerId }]);
+      });
+      expect(useWorkflowStore.getState().nodes.filter((n) => n.type === "router")).toHaveLength(0);
+
+      // Re-apply the identical template (as the modal's Apply does)
+      act(() => {
+        useWorkflowStore
+          .getState()
+          .materializeSplitGridCells(SPLIT_ID, { force: true, template: routerWiredTemplate() });
+      });
+      expect(useWorkflowStore.getState().nodes.filter((n) => n.type === "router")).toHaveLength(1);
+      expect(getSplitData().routerNodeId).toBeTruthy();
+    });
+
+    it("repositions a reused router to the right when the grid widens", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate(), gridRows: 2, gridCols: 2 })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      const routerId = getSplitData().routerNodeId!;
+      const beforeX = useWorkflowStore.getState().nodes.find((n) => n.id === routerId)!.position.x;
+
+      // Widen 2x2 -> 2x3 (more columns extends the grid rightward)
+      act(() => {
+        useWorkflowStore.getState().updateNodeData(SPLIT_ID, { gridCols: 3 });
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+
+      const state = useWorkflowStore.getState();
+      const router = state.nodes.find((n) => n.id === routerId)!;
+      const cellRight = Math.max(
+        ...state.nodes
+          .filter((n) => n.groupId)
+          .map((n) => n.position.x + ((n.style?.width as number) ?? 300))
+      );
+      expect(router.position.x).toBeGreaterThan(beforeX);
+      expect(router.position.x).toBeGreaterThan(cellRight);
+    });
+
+    it("keeps a user-moved router position when the grid does not grow into it", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate() })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      const routerId = getSplitData().routerNodeId!;
+
+      // User parks the router far to the right
+      act(() => {
+        useWorkflowStore.setState((s) => ({
+          nodes: s.nodes.map((n) =>
+            n.id === routerId ? { ...n, position: { x: 5000, y: 1234 } } : n
+          ),
+        }));
+      });
+
+      // A rows-only resize does not extend the grid past x=5000
+      act(() => {
+        useWorkflowStore.getState().updateNodeData(SPLIT_ID, { gridRows: 3 });
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+
+      const router = useWorkflowStore.getState().nodes.find((n) => n.id === routerId)!;
+      expect(router.position).toEqual({ x: 5000, y: 1234 }); // preserved
+    });
   });
 });

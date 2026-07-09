@@ -681,6 +681,59 @@ describe("splitGridTemplate utilities", () => {
       expect(result.routerEdges).toHaveLength(0);
       expect(result.routerPosition).toBeNull();
     });
+
+    it("carries the terminal's typed handle onto router edges for a text terminal", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [{ source: "cell-prompt", sourceHandle: "text", targetHandle: "text" }],
+      };
+      const { options } = makeBuildOptions(template, 1, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      expect(result.routerEdges).toHaveLength(2); // one per cell
+      for (const e of result.routerEdges) {
+        expect(e.target).toBe("router-1");
+        expect(e.sourceHandle).toBe("text");
+        expect(e.targetHandle).toBe("text");
+      }
+    });
+
+    it("emits connections*cells router edges with unique ids for multiple terminals", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [
+          { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+          { source: "cell-prompt", sourceHandle: "text", targetHandle: "text" },
+        ],
+      };
+      const { options } = makeBuildOptions(template, 2, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      expect(result.routerEdges).toHaveLength(2 * 4); // 2 terminals * 4 cells
+      const ids = result.routerEdges.map((e) => e.id);
+      expect(new Set(ids).size).toBe(ids.length); // all unique
+      expect(result.routerEdges.every((e) => e.target === "router-1")).toBe(true);
+      expect(result.routerEdges.filter((e) => e.targetHandle === "image")).toHaveLength(4);
+      expect(result.routerEdges.filter((e) => e.targetHandle === "text")).toHaveLength(4);
+    });
+
+    it("ignores router connections with an unknown source or a non-router targetHandle", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [
+          { source: "does-not-exist", sourceHandle: "image", targetHandle: "image" },
+          { source: "cell-generate", sourceHandle: "image", targetHandle: "bogus" },
+        ],
+      };
+      const { options } = makeBuildOptions(template, 2, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      expect(result.routerEdges).toHaveLength(0);
+      expect(result.routerPosition).toBeNull();
+    });
   });
 
   describe("grid offset helpers", () => {
