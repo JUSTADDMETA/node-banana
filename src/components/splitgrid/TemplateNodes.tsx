@@ -11,10 +11,15 @@
 
 import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
+  BaseEdge,
+  EdgeLabelRenderer,
+  getBezierPath,
   Handle,
   NodeResizer,
   Position,
   useReactFlow,
+  useStore,
+  type EdgeProps,
   type NodeProps,
   type Node,
 } from "@xyflow/react";
@@ -47,11 +52,90 @@ export type TemplateRFNode = Node<TemplateNodeData, "splitGridTemplateNode">;
 
 interface TemplateEditorContextValue {
   setOverrides: (nodeId: string, overrides: Record<string, unknown>) => void;
+  deleteEdge: (edgeId: string) => void;
 }
 
 export const TemplateEditorContext = createContext<TemplateEditorContextValue>({
   setOverrides: () => {},
+  deleteEdge: () => {},
 });
+
+/**
+ * Editor edge with an always-present delete control at its midpoint. Clicking
+ * the thin connection line to select-then-delete is fiddly (and easy to miss,
+ * which lands on the pane and pans instead), so every connection carries a real
+ * button — rendered in the EdgeLabelRenderer layer so it tracks pan/zoom and is
+ * clickable regardless of how the SVG path hit-tests.
+ */
+export function TemplateEditableEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style,
+  markerEnd,
+}: EdgeProps) {
+  const { deleteEdge } = useContext(TemplateEditorContext);
+  // The EdgeLabelRenderer layer is zoom-scaled; counter-scale so the button
+  // stays a constant, comfortably-clickable screen size at any zoom.
+  const zoom = useStore((state) => state.transform[2]);
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
+      {/* Wide invisible hit path — keeps hover/selection forgiving */}
+      <path d={edgePath} fill="none" strokeWidth={16} stroke="transparent" className="react-flow__edge-interaction" />
+      <EdgeLabelRenderer>
+        {/* Zero-size anchor pinned to the edge midpoint; grid-centers the button
+            on the point so the counter-scale stays centered. */}
+        <div
+          className="nodrag nopan"
+          style={{
+            position: "absolute",
+            transform: `translate(${labelX}px, ${labelY}px)`,
+            display: "grid",
+            placeItems: "center",
+            width: 0,
+            height: 0,
+            pointerEvents: "none",
+          }}
+        >
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              deleteEdge(id);
+            }}
+            title="Delete connection"
+            aria-label="Delete connection"
+            className="flex items-center justify-center rounded-full bg-neutral-800 border border-neutral-600 text-neutral-400 shadow-md transition-colors hover:bg-red-500/20 hover:border-red-500 hover:text-red-400"
+            style={{
+              width: 20,
+              height: 20,
+              pointerEvents: "all",
+              transform: `scale(${1 / zoom})`,
+            }}
+          >
+            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
 
 // Mirrors GenerateImageNode's gemini constants
 export const GEMINI_IMAGE_MODELS: { value: ModelType; label: string }[] = [

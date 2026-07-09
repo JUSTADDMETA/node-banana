@@ -24,6 +24,7 @@ import {
   useReactFlow,
   type Connection,
   type Edge,
+  type EdgeTypes,
   type FinalConnectionState,
   type NodeTypes,
 } from "@xyflow/react";
@@ -54,6 +55,7 @@ import {
 import {
   GEMINI_IMAGE_MODELS,
   SplitGridTemplateNode,
+  TemplateEditableEdge,
   TemplateEditorContext,
   type TemplateNodeData,
   type TemplateRFNode,
@@ -62,6 +64,17 @@ import {
 const nodeTypes: NodeTypes = {
   splitGridTemplateNode: SplitGridTemplateNode,
 };
+
+const edgeTypes: EdgeTypes = {
+  templateEditable: TemplateEditableEdge,
+};
+
+const TEMPLATE_EDGE_TYPE = "templateEditable";
+
+// Match the main canvas: on macOS a left-drag must not pan (that reads as
+// "dragging a connection moved everything"); panning is via the trackpad.
+const isMacOS =
+  typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
 const EDGE_COLOR: Record<TemplateHandleKind, string> = {
   image: "#0d9668",
@@ -160,6 +173,7 @@ function templateToRouterWires(template: SplitGridTemplate): RouterWire[] {
 function templateToRfEdges(template: SplitGridTemplate): Edge[] {
   return template.edges.map((templateEdge) => ({
     id: templateEdge.id,
+    type: TEMPLATE_EDGE_TYPE,
     source: templateEdge.source,
     sourceHandle: templateEdge.sourceHandle,
     target: templateEdge.target,
@@ -400,6 +414,15 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     setRouterWires((prev) => prev.filter((w) => w.sourceHandle !== type));
   }, []);
 
+  // Each connection carries its own midpoint delete button (TemplateEditableEdge)
+  // that calls this through the editor context.
+  const deleteEdge = useCallback(
+    (id: string) => {
+      setRfEdges((edges) => edges.filter((edge) => edge.id !== id));
+    },
+    [setRfEdges]
+  );
+
   // Dirty check: compare against the initial template mapped through the same
   // serializer, so an untouched editor is never considered dirty
   const initialSerializedRef = useRef<string | null>(null);
@@ -452,7 +475,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     },
     [setRfNodes]
   );
-  const editorContext = useMemo(() => ({ setOverrides }), [setOverrides]);
+  const editorContext = useMemo(() => ({ setOverrides, deleteEdge }), [setOverrides, deleteEdge]);
 
   const makeTemplateNodeId = useCallback(
     (type: NodeType, existing: TemplateRFNode[]): string => {
@@ -524,7 +547,10 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               !(edge.target === connection.target && edge.targetHandle === connection.targetHandle)
           );
         }
-        return addEdge({ ...connection, style: edgeStyleFor(connection.sourceHandle) }, next);
+        return addEdge(
+          { ...connection, type: TEMPLATE_EDGE_TYPE, style: edgeStyleFor(connection.sourceHandle) },
+          next
+        );
       });
     },
     [setRfEdges]
@@ -672,7 +698,10 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   return createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
-      onWheelCapture={(event) => event.stopPropagation()}
+      // Bubble-phase (not capture): the mini-canvas's native wheel-to-pan
+      // listener on the wrapper must run first; we still stop the wheel from
+      // leaking to the frozen main canvas behind the modal.
+      onWheel={(event) => event.stopPropagation()}
       onPointerDown={(event) => {
         backdropPointerDownRef.current = event.target === event.currentTarget;
       }}
@@ -737,13 +766,15 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               onConnectEnd={handleConnectEnd}
               isValidConnection={isValidConnection}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               fitView
               fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
               minZoom={0.2}
               maxZoom={1.5}
               zoomOnScroll={false}
+              panOnDrag={!isMacOS}
               deleteKeyCode={["Backspace", "Delete"]}
-              defaultEdgeOptions={{ animated: false }}
+              defaultEdgeOptions={{ type: TEMPLATE_EDGE_TYPE, animated: false }}
               proOptions={{ hideAttribution: true }}
             >
               <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#404040" />
