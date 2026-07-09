@@ -42,8 +42,8 @@ import {
   createClassicSplitGridTemplate,
   createDefaultSplitGridTemplate,
   getSplitGridTemplate,
-  SPLIT_GRID_ROUTER_PORT_ID,
 } from "@/store/utils/splitGridTemplate";
+import { RouterRail, isInRailDropZone, type RouterWire, type RailSize } from "./RouterRail";
 import {
   getTemplateEntry,
   getTemplateNodeIcon,
@@ -120,59 +120,11 @@ function editorNodeDimensions(type: NodeType): { width: number; height: number }
   return defaultNodeDimensions[type] ?? { width: 300, height: 280 };
 }
 
-const PORT_WIDTH = 130;
-const PORT_HEIGHT = 60; // initial; RouterPortBody resizes to fit its sockets
-const PORT_GAP = 140;
-
-/**
- * The fixed downstream-router port: pinned to the right of the node-set
- * bounding box, vertically centered. It is a UI fixture (non-draggable,
- * non-deletable) whose incoming edges serialize into `template.router` — it is
- * never emitted as a template node, so it is never replicated per cell.
- */
-function routerPortRfNode(template: SplitGridTemplate): TemplateRFNode {
-  let maxX = 0;
-  let minY = 0;
-  let maxY = 0;
-  let seen = false;
-  for (const node of template.nodes) {
-    const dims = node.size ?? editorNodeDimensions(node.type);
-    const right = node.position.x + dims.width;
-    const bottom = node.position.y + dims.height;
-    if (!seen) {
-      maxX = right;
-      minY = node.position.y;
-      maxY = bottom;
-      seen = true;
-    } else {
-      maxX = Math.max(maxX, right);
-      minY = Math.min(minY, node.position.y);
-      maxY = Math.max(maxY, bottom);
-    }
-  }
-  const centerY = seen ? (minY + maxY) / 2 : 0;
-  return {
-    id: SPLIT_GRID_ROUTER_PORT_ID,
-    type: "splitGridTemplateNode",
-    position: { x: (seen ? maxX : 0) + PORT_GAP, y: centerY - PORT_HEIGHT / 2 },
-    deletable: false,
-    draggable: false,
-    selectable: false,
-    style: { width: PORT_WIDTH, height: PORT_HEIGHT },
-    data: {
-      nodeType: "router",
-      overrides: {},
-      isBase: false,
-      isRouterPort: true,
-    } satisfies TemplateNodeData,
-  };
-}
-
 function templateToRfNodes(
   template: SplitGridTemplate,
   sourceImage: string | null
 ): TemplateRFNode[] {
-  const cellNodes: TemplateRFNode[] = template.nodes.map((templateNode) => {
+  return template.nodes.map((templateNode) => {
     // Nodes with an in-flow settings panel auto-grow to fit it on mount
     const dims = templateNode.size ?? editorNodeDimensions(templateNode.type);
     const isBase = templateNode.id === template.baseNodeId;
@@ -195,11 +147,18 @@ function templateToRfNodes(
       } satisfies TemplateNodeData,
     };
   });
-  return [...cellNodes, routerPortRfNode(template)];
+}
+
+/** The downstream-router wiring stored on the template, as editor wire records. */
+function templateToRouterWires(template: SplitGridTemplate): RouterWire[] {
+  return (template.router ?? []).map((connection) => ({
+    source: connection.source,
+    sourceHandle: connection.sourceHandle,
+  }));
 }
 
 function templateToRfEdges(template: SplitGridTemplate): Edge[] {
-  const edges: Edge[] = template.edges.map((templateEdge) => ({
+  return template.edges.map((templateEdge) => ({
     id: templateEdge.id,
     source: templateEdge.source,
     sourceHandle: templateEdge.sourceHandle,
@@ -207,37 +166,22 @@ function templateToRfEdges(template: SplitGridTemplate): Edge[] {
     targetHandle: templateEdge.targetHandle,
     style: edgeStyleFor(templateEdge.sourceHandle),
   }));
-  // Reconstruct the fixed port's incoming edges so the wiring is visible + round-trips
-  for (const conn of template.router ?? []) {
-    edges.push({
-      id: `port-${conn.source}-${conn.sourceHandle}`,
-      source: conn.source,
-      sourceHandle: conn.sourceHandle,
-      target: SPLIT_GRID_ROUTER_PORT_ID,
-      targetHandle: conn.targetHandle,
-      style: edgeStyleFor(conn.sourceHandle),
-    });
-  }
-  return edges;
 }
 
 /** Serialize editor state back into a template (also used for dirty checks) */
 function serializeTemplate(
   baseNodeId: string,
   rfNodes: TemplateRFNode[],
-  rfEdges: Edge[]
+  rfEdges: Edge[],
+  routerWires: RouterWire[]
 ): SplitGridTemplate {
-  // Port-targeted edges become the router wiring (sorted for a stable, non-dirty
-  // baseline); the port node itself never enters template.nodes.
-  const router = rfEdges
-    .filter(
-      (edge) =>
-        edge.target === SPLIT_GRID_ROUTER_PORT_ID && edge.sourceHandle && edge.targetHandle
-    )
-    .map((edge) => ({
-      source: edge.source,
-      sourceHandle: edge.sourceHandle!,
-      targetHandle: edge.targetHandle!,
+  // The fixed rail's wires become the router wiring (sorted for a stable,
+  // non-dirty baseline); targetHandle equals the source handle's type.
+  const router = routerWires
+    .map((wire) => ({
+      source: wire.source,
+      sourceHandle: wire.sourceHandle,
+      targetHandle: wire.sourceHandle,
     }))
     .sort(
       (a, b) =>
@@ -247,7 +191,7 @@ function serializeTemplate(
     );
   return {
     baseNodeId,
-    nodes: rfNodes.filter((node) => !node.data.isRouterPort).map((node) => {
+    nodes: rfNodes.map((node) => {
       // Persist the node's real size, minus the editor-only settings panel
       // (real nodes grow their own panel at runtime, like the main canvas)
       const width =
@@ -268,10 +212,7 @@ function serializeTemplate(
       };
     }),
     edges: rfEdges
-      .filter(
-        (edge) =>
-          edge.sourceHandle && edge.targetHandle && edge.target !== SPLIT_GRID_ROUTER_PORT_ID
-      )
+      .filter((edge) => edge.sourceHandle && edge.targetHandle)
       .map((edge) => ({
         id: edge.id,
         source: edge.source,
@@ -401,6 +342,11 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>(
     templateToRfEdges(initialTemplate)
   );
+  // Downstream-router wires live outside the flow (the rail is a fixed overlay)
+  const [routerWires, setRouterWires] = useState<RouterWire[]>(() =>
+    templateToRouterWires(initialTemplate)
+  );
+  const [wrapperSize, setWrapperSize] = useState<RailSize>({ width: 0, height: 0 });
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [dropMenu, setDropMenu] = useState<TemplateDropMenuState | null>(null);
   // Drags that end over the backdrop synthesize a click on it — only treat a
@@ -422,6 +368,38 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     return () => decrementModalCount();
   }, [incrementModalCount, decrementModalCount]);
 
+  // Track the canvas wrapper size so the fixed rail can be placed + hit-tested
+  useEffect(() => {
+    const el = canvasWrapperRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setWrapperSize({ width: el.clientWidth, height: el.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Drop router wires whose terminal node was deleted from the set
+  useEffect(() => {
+    setRouterWires((prev) => {
+      const ids = new Set(rfNodes.map((node) => node.id));
+      const next = prev.filter((wire) => ids.has(wire.source));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [rfNodes]);
+
+  const addRouterWire = useCallback((source: string, sourceHandle: string) => {
+    setRouterWires((prev) =>
+      prev.some((w) => w.source === source && w.sourceHandle === sourceHandle)
+        ? prev
+        : [...prev, { source, sourceHandle }]
+    );
+  }, []);
+
+  const disconnectRouterType = useCallback((type: string) => {
+    setRouterWires((prev) => prev.filter((w) => w.sourceHandle !== type));
+  }, []);
+
   // Dirty check: compare against the initial template mapped through the same
   // serializer, so an untouched editor is never considered dirty
   const initialSerializedRef = useRef<string | null>(null);
@@ -430,15 +408,16 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
       serializeTemplate(
         baseNodeId,
         templateToRfNodes(initialTemplate, nodeData.sourceImage),
-        templateToRfEdges(initialTemplate)
+        templateToRfEdges(initialTemplate),
+        templateToRouterWires(initialTemplate)
       )
     );
   }
   const isDirty = useCallback(
     () =>
-      JSON.stringify(serializeTemplate(baseNodeId, rfNodes, rfEdges)) !==
+      JSON.stringify(serializeTemplate(baseNodeId, rfNodes, rfEdges, routerWires)) !==
       initialSerializedRef.current,
-    [baseNodeId, rfNodes, rfEdges]
+    [baseNodeId, rfNodes, rfEdges, routerWires]
   );
 
   const requestClose = useCallback(() => {
@@ -491,6 +470,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     (template: SplitGridTemplate) => {
       setRfNodes(templateToRfNodes(template, nodeData.sourceImage));
       setRfEdges(templateToRfEdges(template));
+      setRouterWires([]); // presets carry no router wiring
       idCounterRef.current = 0;
       refitSoon();
     },
@@ -523,15 +503,6 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
       const sourceNode = rfNodes.find((node) => node.id === source);
       const targetNode = rfNodes.find((node) => node.id === target);
       if (!sourceNode || !targetNode) return false;
-      // The downstream-router port is a type-agnostic sink (never a source):
-      // accept any real output handle the source owns, no cycle check needed.
-      if (sourceNode.data.isRouterPort) return false;
-      if (targetNode.data.isRouterPort) {
-        if (!sourceHandle) return false;
-        return getTemplateEntry(sourceNode.data.nodeType).outputs.some(
-          (handle) => handle.id === sourceHandle
-        );
-      }
       const sourceEntry = getTemplateEntry(sourceNode.data.nodeType);
       const targetEntry = getTemplateEntry(targetNode.data.nodeType);
       const output = sourceEntry.outputs.find((handle) => handle.id === sourceHandle);
@@ -546,12 +517,8 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     (connection: Connection) => {
       setRfEdges((edges) => {
         let next = edges;
-        // Text inputs accept a single connection — replace the existing one. The
-        // router port is multi-input, so it is exempt from the replacement.
-        if (
-          connection.targetHandle === "text" &&
-          connection.target !== SPLIT_GRID_ROUTER_PORT_ID
-        ) {
+        // Text inputs accept a single connection — replace the existing one
+        if (connection.targetHandle === "text") {
           next = next.filter(
             (edge) =>
               !(edge.target === connection.target && edge.targetHandle === connection.targetHandle)
@@ -566,30 +533,33 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!isValidConnection(connection)) return;
-      // Any drop onto the port resolves to the source's typed handle. This
-      // covers the generic drop target AND prevents landing on a mismatched
-      // typed handle (e.g. a text output onto an existing "image" handle), which
-      // would otherwise store a type-corrupted connection (mirrors WorkflowCanvas
-      // resolveRouterHandle).
-      let resolved = connection;
-      if (connection.target === SPLIT_GRID_ROUTER_PORT_ID) {
-        resolved = { ...connection, targetHandle: connection.sourceHandle };
-      }
-      addConnectedEdge(resolved);
+      addConnectedEdge(connection);
     },
     [isValidConnection, addConnectedEdge]
   );
 
-  // Dropping a connection in empty space opens the add-node menu, main-canvas style
+  // Dropping a connection over the fixed rail wires it to the router; dropping
+  // in empty space opens the add-node menu (main-canvas style).
   const handleConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
       if (connectionState.isValid) return;
       const fromHandle = connectionState.fromHandle;
       const fromNode = connectionState.fromNode;
       if (!fromHandle?.id || !fromNode) return;
+      const point = "changedTouches" in event ? event.changedTouches[0] : event;
+
+      // Drop an output onto the router rail → wire it to the shared router
+      const rect = canvasWrapperRef.current?.getBoundingClientRect();
+      if (rect && fromHandle.type === "source") {
+        const wrapperPoint = { x: point.clientX - rect.left, y: point.clientY - rect.top };
+        if (isInRailDropZone(wrapperPoint, wrapperSize, routerWires)) {
+          addRouterWire(fromNode.id, fromHandle.id);
+          return;
+        }
+      }
+
       const targetElement = event.target as HTMLElement | null;
       if (!targetElement?.closest(".react-flow__pane")) return;
-      const point = "changedTouches" in event ? event.changedTouches[0] : event;
       setDropMenu({
         screen: { x: point.clientX, y: point.clientY },
         flow: screenToFlowPosition({ x: point.clientX, y: point.clientY }),
@@ -598,7 +568,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
         fromHandleType: fromHandle.type,
       });
     },
-    [screenToFlowPosition]
+    [screenToFlowPosition, wrapperSize, routerWires, addRouterWire]
   );
 
   const dropMenuOptions = useMemo(() => {
@@ -632,14 +602,8 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
         connection = { source: newId, sourceHandle: kind, target: dropMenu.fromNodeId, targetHandle: kind };
       }
 
-      const newNodeRight = position.x + dims.width;
       setRfNodes((nodes) => [
-        // Keep the fixed port clear of a node added to its left/over it
-        ...nodes.map((node) =>
-          node.data.isRouterPort && newNodeRight + PORT_GAP > node.position.x
-            ? { ...node, position: { ...node.position, x: newNodeRight + PORT_GAP } }
-            : node
-        ),
+        ...nodes,
         {
           id: newId,
           type: "splitGridTemplateNode" as const,
@@ -661,8 +625,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
 
   const cellCount =
     clampGridDimension(nodeData.gridRows) * clampGridDimension(nodeData.gridCols);
-  // The router port is shared (1 total), not part of the per-cell node count
-  const perCellNodeCount = rfNodes.filter((node) => !node.data.isRouterPort).length;
+  const perCellNodeCount = rfNodes.length;
 
   // Advisory warnings for templates that would materialize un-runnable cells
   const warnings = useMemo(() => {
@@ -678,7 +641,6 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     // Image-processing/output nodes are dead (or fail validation) without an image
     const IMAGE_OPTIONAL = new Set(["nanoBanana", "llmGenerate"]);
     const unwired = rfNodes.filter((node) => {
-      if (node.data.isRouterPort) return false;
       if (node.data.isBase || IMAGE_OPTIONAL.has(node.data.nodeType)) return false;
       const entry = getTemplateEntry(node.data.nodeType);
       if (!entry.inputs.some((handle) => handle.id === "image")) return false;
@@ -690,17 +652,11 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     }
     // Text terminals collapse to a single cell through the shared router (only
     // image outputs aggregate), so flag it rather than silently dropping cells.
-    const routerHasNonImage = rfEdges.some(
-      (edge) =>
-        edge.target === SPLIT_GRID_ROUTER_PORT_ID &&
-        edge.sourceHandle &&
-        edge.sourceHandle !== "image"
-    );
-    if (routerHasNonImage) {
-      list.push("Only image terminals aggregate through the Downstream Router — text collapses to one cell");
+    if (routerWires.some((wire) => wire.sourceHandle !== "image")) {
+      list.push("Only image terminals aggregate through the Router — text collapses to one cell");
     }
     return list;
-  }, [rfNodes, rfEdges]);
+  }, [rfNodes, rfEdges, routerWires]);
 
   const handleApply = useCallback(() => {
     if (isRunning) return;
@@ -708,10 +664,10 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     // one undo checkpoint, so one Cmd+Z reverts the whole apply
     materializeSplitGridCells(nodeId, {
       force: true,
-      template: serializeTemplate(baseNodeId, rfNodes, rfEdges),
+      template: serializeTemplate(baseNodeId, rfNodes, rfEdges, routerWires),
     });
     onClose();
-  }, [isRunning, baseNodeId, rfNodes, rfEdges, nodeId, materializeSplitGridCells, onClose]);
+  }, [isRunning, baseNodeId, rfNodes, rfEdges, routerWires, nodeId, materializeSplitGridCells, onClose]);
 
   return createPortal(
     <div
@@ -794,6 +750,14 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               <Controls showInteractive={false} className="!bg-neutral-800 !border-neutral-700 !shadow-none [&>button]:!bg-neutral-800 [&>button]:!border-neutral-700 [&>button]:!text-neutral-300 [&>button:hover]:!bg-neutral-700" />
             </ReactFlow>
           </TemplateEditorContext.Provider>
+
+          {/* Fixed downstream-router rail (pinned to the right edge) */}
+          <RouterRail
+            wires={routerWires}
+            nodes={rfNodes}
+            size={wrapperSize}
+            onDisconnectType={disconnectRouterType}
+          />
 
           {/* Connection drop menu */}
           {dropMenu && (

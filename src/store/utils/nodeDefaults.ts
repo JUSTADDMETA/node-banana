@@ -93,14 +93,6 @@ export const GROUP_COLOR_ORDER: GroupColor[] = [
 export const SPLIT_GRID_BASE_NODE_ID = "cell-image";
 
 /**
- * Reserved id of the fixed downstream-router port pseudo-node in the cell
- * template editor. Never a real template node — its incoming edges are
- * serialized into `SplitGridTemplate.router` instead. Distinct from any
- * `tmpl-*` editor id or preset id so it can never collide.
- */
-export const SPLIT_GRID_ROUTER_PORT_ID = "cell-router-port";
-
-/**
  * The minimal split-grid cell template: just the base image node that
  * receives the cell image. Lives here (not splitGridTemplate.ts) so the
  * template utilities can depend on nodeDefaults without a cycle.

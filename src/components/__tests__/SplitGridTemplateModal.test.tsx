@@ -355,11 +355,13 @@ describe("SplitGridTemplateModal", () => {
       router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
     };
 
-    it("renders the fixed downstream-router port with its empty-state label", () => {
+    it("emits no router wiring for an unwired node set", () => {
       renderModal();
 
-      // With no terminal wired, the empty gray socket shows the port's name
-      expect(screen.getByText("Downstream Router")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+      const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+      expect(options.template.router ?? []).toHaveLength(0);
     });
 
     it("round-trips the router wiring into the applied template", () => {
@@ -371,7 +373,7 @@ describe("SplitGridTemplateModal", () => {
       expect(options.template.router).toEqual([
         { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
       ]);
-      // The port itself is never emitted as a template node
+      // The router is never emitted as a template node (it's a fixed overlay)
       expect(
         options.template.nodes.some((node: { type: string }) => node.type === "router")
       ).toBe(false);

@@ -25,10 +25,9 @@ import {
   createDefaultSplitGridTemplate,
   defaultNodeDimensions,
   SPLIT_GRID_BASE_NODE_ID,
-  SPLIT_GRID_ROUTER_PORT_ID,
 } from "./nodeDefaults";
 
-export { createDefaultSplitGridTemplate, SPLIT_GRID_BASE_NODE_ID, SPLIT_GRID_ROUTER_PORT_ID };
+export { createDefaultSplitGridTemplate, SPLIT_GRID_BASE_NODE_ID };
 
 /** Handle types the Router node can render (mirrors RouterNode ALL_HANDLE_TYPES). */
 const ROUTER_HANDLE_TYPES = new Set(["image", "text", "video", "audio", "3d", "easeCurve"]);
