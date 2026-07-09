@@ -212,20 +212,18 @@ export function RouterRail({
   nodes,
   size,
   onDisconnectType,
-  onDisconnectWire,
 }: {
   wires: RouterWire[];
   nodes: TemplateRFNode[];
   size: RailSize;
   onDisconnectType: (type: string) => void;
-  onDisconnectWire: (source: string, sourceHandle: string) => void;
 }) {
   const viewport = useViewport();
   const { types, railH, blockTop, contentLeft } = useMemo(
     () => railMetrics(wires, size),
     [wires, size]
   );
-  // Wire midpoints for the delete buttons (same geometry as the stroke layer)
+  // Wire geometry for the invisible click targets (same paths as the strokes)
   const geoms = useMemo(
     () => routerWireGeoms(wires, nodes, size, viewport),
     [wires, nodes, size, viewport]
@@ -237,29 +235,27 @@ export function RouterRail({
 
   return (
     <>
-      {/* Per-wire delete buttons at each wire's midpoint (revealed on hover) */}
-      {geoms.map((geom, i) => (
-        <div
-          key={`del-${geom.wire.source}-${geom.wire.sourceHandle}-${i}`}
-          className="absolute z-[21]"
-          style={{ left: geom.mid.x, top: geom.mid.y, transform: "translate(-50%, -50%)" }}
-        >
-          <button
-            type="button"
-            onClick={() => onDisconnectWire(geom.wire.source, geom.wire.sourceHandle)}
-            title="Delete router connection"
-            aria-label="Delete router connection"
-            className="group grid place-items-center"
-            style={{ width: 28, height: 28, background: "transparent", pointerEvents: "auto" }}
-          >
-            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-neutral-800 border border-neutral-600 text-neutral-400 shadow-md opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-hover:text-red-400 group-hover:border-red-500 group-hover:bg-red-500/20">
-              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </span>
-          </button>
-        </div>
-      ))}
+      {/* Invisible click targets tracing each wire. Only the stroke band is
+          interactive (pointer-events: stroke), so empty space still passes
+          through to the canvas. The modal turns a click here into the same
+          floating delete toolbar you get clicking a main-canvas noodle. */}
+      <svg
+        className="absolute inset-0 z-[21]"
+        style={{ overflow: "visible", pointerEvents: "none" }}
+      >
+        {geoms.map((geom, i) => (
+          <path
+            key={`hit-${geom.wire.source}-${geom.wire.sourceHandle}-${i}`}
+            d={geom.path}
+            fill="none"
+            stroke="transparent"
+            strokeWidth={14}
+            data-wire-source={geom.wire.source}
+            data-wire-handle={geom.wire.sourceHandle}
+            style={{ pointerEvents: "stroke", cursor: "pointer" }}
+          />
+        ))}
+      </svg>
 
       {/* The fixed rail */}
       <div

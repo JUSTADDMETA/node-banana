@@ -12,13 +12,11 @@
 import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   BaseEdge,
-  EdgeLabelRenderer,
   getBezierPath,
   Handle,
   NodeResizer,
   Position,
   useReactFlow,
-  useStore,
   type EdgeProps,
   type NodeProps,
   type Node,
@@ -52,20 +50,17 @@ export type TemplateRFNode = Node<TemplateNodeData, "splitGridTemplateNode">;
 
 interface TemplateEditorContextValue {
   setOverrides: (nodeId: string, overrides: Record<string, unknown>) => void;
-  deleteEdge: (edgeId: string) => void;
 }
 
 export const TemplateEditorContext = createContext<TemplateEditorContextValue>({
   setOverrides: () => {},
-  deleteEdge: () => {},
 });
 
 /**
- * Editor edge with an always-present delete control at its midpoint. Clicking
- * the thin connection line to select-then-delete is fiddly (and easy to miss,
- * which lands on the pane and pans instead), so every connection carries a real
- * button — rendered in the EdgeLabelRenderer layer so it tracks pan/zoom and is
- * clickable regardless of how the SVG path hit-tests.
+ * Editor connection ("noodle") — a curved bezier with a wide invisible hit
+ * path, exactly like the main canvas. Deletion is handled the same way too: the
+ * modal shows a floating toolbar above the cursor when a noodle is clicked (see
+ * SplitGridTemplateModal), so the edge itself carries no inline control.
  */
 export function TemplateEditableEdge({
   id,
@@ -78,11 +73,7 @@ export function TemplateEditableEdge({
   style,
   markerEnd,
 }: EdgeProps) {
-  const { deleteEdge } = useContext(TemplateEditorContext);
-  // The EdgeLabelRenderer layer is zoom-scaled; counter-scale so the button
-  // stays a constant, comfortably-clickable screen size at any zoom.
-  const zoom = useStore((state) => state.transform[2]);
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const [edgePath] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -94,49 +85,8 @@ export function TemplateEditableEdge({
   return (
     <>
       <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={style} />
-      {/* Wide invisible hit path — keeps hover/selection forgiving */}
+      {/* Wide invisible hit path — makes the noodle easy to click */}
       <path d={edgePath} fill="none" strokeWidth={16} stroke="transparent" className="react-flow__edge-interaction" />
-      <EdgeLabelRenderer>
-        {/* Zero-size anchor pinned to the edge midpoint; grid-centers the button
-            on the point so the counter-scale stays centered. */}
-        <div
-          className="nodrag nopan"
-          style={{
-            position: "absolute",
-            transform: `translate(${labelX}px, ${labelY}px)`,
-            display: "grid",
-            placeItems: "center",
-            width: 0,
-            height: 0,
-            pointerEvents: "none",
-          }}
-        >
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              deleteEdge(id);
-            }}
-            title="Delete connection"
-            aria-label="Delete connection"
-            className="group grid place-items-center"
-            style={{
-              width: 28,
-              height: 28,
-              background: "transparent",
-              pointerEvents: "all",
-              transform: `scale(${1 / zoom})`,
-            }}
-          >
-            {/* Hidden until the midpoint is hovered, so connections stay clean */}
-            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-neutral-800 border border-neutral-600 text-neutral-400 shadow-md opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-hover:text-red-400 group-hover:border-red-500 group-hover:bg-red-500/20">
-              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </span>
-          </button>
-        </div>
-      </EdgeLabelRenderer>
     </>
   );
 }

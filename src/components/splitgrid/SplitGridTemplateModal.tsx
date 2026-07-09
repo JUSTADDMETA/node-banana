@@ -369,6 +369,13 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   const [wrapperSize, setWrapperSize] = useState<RailSize>({ width: 0, height: 0 });
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [dropMenu, setDropMenu] = useState<TemplateDropMenuState | null>(null);
+  // Floating delete toolbar — same interaction as the main canvas: click a
+  // noodle (or a router wire) and a toolbar appears just above the cursor.
+  const [edgeToolbar, setEdgeToolbar] = useState<
+    | { x: number; y: number; target: { kind: "edge"; id: string } }
+    | { x: number; y: number; target: { kind: "wire"; source: string; sourceHandle: string } }
+    | null
+  >(null);
   // Drags that end over the backdrop synthesize a click on it — only treat a
   // click as backdrop-close when the pointer also went DOWN on the backdrop
   const backdropPointerDownRef = useRef(false);
@@ -427,14 +434,72 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     );
   }, []);
 
-  // Each connection carries its own midpoint delete button (TemplateEditableEdge)
-  // that calls this through the editor context.
   const deleteEdge = useCallback(
     (id: string) => {
       setRfEdges((edges) => edges.filter((edge) => edge.id !== id));
     },
     [setRfEdges]
   );
+
+  const handleToolbarDelete = useCallback(() => {
+    setEdgeToolbar((current) => {
+      if (!current) return null;
+      if (current.target.kind === "edge") deleteEdge(current.target.id);
+      else disconnectRouterWire(current.target.source, current.target.sourceHandle);
+      return null;
+    });
+  }, [deleteEdge, disconnectRouterWire]);
+
+  // Click a noodle or a router wire → show the delete toolbar just above the
+  // cursor; a click anywhere else dismisses it (but not clicks on the toolbar
+  // itself). Mirrors the main-canvas EdgeToolbar, which also detects edge
+  // clicks via a native mousedown listener.
+  useEffect(() => {
+    const wrapper = canvasWrapperRef.current;
+    if (!wrapper) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      if (!target || target.closest("[data-edge-toolbar]")) return;
+      const above = { x: event.clientX, y: event.clientY - 40 };
+      const edgeEl = target.closest(".react-flow__edge");
+      if (edgeEl) {
+        const id =
+          edgeEl.getAttribute("data-id") ??
+          edgeEl.getAttribute("data-testid")?.replace(/^rf__edge-/, "") ??
+          null;
+        if (id) setEdgeToolbar({ ...above, target: { kind: "edge", id } });
+        return;
+      }
+      const wireEl = target.closest("[data-wire-source]");
+      if (wireEl) {
+        const source = wireEl.getAttribute("data-wire-source");
+        const sourceHandle = wireEl.getAttribute("data-wire-handle");
+        if (source && sourceHandle) {
+          setEdgeToolbar({ ...above, target: { kind: "wire", source, sourceHandle } });
+        }
+        return;
+      }
+      setEdgeToolbar(null);
+    };
+    wrapper.addEventListener("mousedown", handlePointerDown);
+    return () => wrapper.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  // Dismiss the toolbar if its target disappears (its node/edge/wire is removed)
+  useEffect(() => {
+    setEdgeToolbar((current) => {
+      if (!current) return current;
+      const target = current.target;
+      if (target.kind === "edge") {
+        return rfEdges.some((edge) => edge.id === target.id) ? current : null;
+      }
+      return routerWires.some(
+        (w) => w.source === target.source && w.sourceHandle === target.sourceHandle
+      )
+        ? current
+        : null;
+    });
+  }, [rfEdges, routerWires]);
 
   // Dirty check: compare against the initial template mapped through the same
   // serializer, so an untouched editor is never considered dirty
@@ -468,7 +533,9 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (dropMenu) {
+      if (edgeToolbar) {
+        setEdgeToolbar(null);
+      } else if (dropMenu) {
         setDropMenu(null);
       } else if (showDiscardConfirm) {
         setShowDiscardConfirm(false);
@@ -478,7 +545,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [dropMenu, showDiscardConfirm, requestClose]);
+  }, [edgeToolbar, dropMenu, showDiscardConfirm, requestClose]);
 
   const setOverrides = useCallback(
     (id: string, overrides: Record<string, unknown>) => {
@@ -488,7 +555,7 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     },
     [setRfNodes]
   );
-  const editorContext = useMemo(() => ({ setOverrides, deleteEdge }), [setOverrides, deleteEdge]);
+  const editorContext = useMemo(() => ({ setOverrides }), [setOverrides]);
 
   const makeTemplateNodeId = useCallback(
     (type: NodeType, existing: TemplateRFNode[]): string => {
@@ -801,13 +868,12 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
           </TemplateEditorContext.Provider>
           </div>
 
-          {/* Fixed downstream-router rail + wire delete buttons (on top) */}
+          {/* Fixed downstream-router rail + invisible wire click targets (on top) */}
           <RouterRail
             wires={routerWires}
             nodes={rfNodes}
             size={wrapperSize}
             onDisconnectType={disconnectRouterType}
-            onDisconnectWire={disconnectRouterWire}
           />
 
           {/* Connection drop menu */}
@@ -818,6 +884,31 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               onSelect={handleDropMenuSelect}
               onClose={() => setDropMenu(null)}
             />
+          )}
+
+          {/* Floating delete toolbar — same look/behavior as the main canvas
+              EdgeToolbar, minus pause (cells run in one shot) */}
+          {edgeToolbar && (
+            <div
+              data-edge-toolbar
+              className="fixed z-[110] flex items-center gap-1 bg-neutral-800 border border-neutral-600 rounded-lg shadow-xl p-1"
+              style={{ left: edgeToolbar.x, top: edgeToolbar.y, transform: "translateX(-50%)" }}
+            >
+              <button
+                onClick={handleToolbarDelete}
+                className="p-1.5 rounded hover:bg-neutral-700 text-neutral-400 hover:text-red-400 transition-colors"
+                title="Delete"
+                aria-label="Delete connection"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                  />
+                </svg>
+              </button>
+            </div>
           )}
         </div>
 
