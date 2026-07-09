@@ -566,14 +566,13 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!isValidConnection(connection)) return;
-      // Dropping onto the port's generic handle: resolve it to the source's
-      // typed handle so the port renders the right handle and the wiring
-      // serializes as a concrete type (mirrors WorkflowCanvas resolveRouterHandle).
+      // Any drop onto the port resolves to the source's typed handle. This
+      // covers the generic drop target AND prevents landing on a mismatched
+      // typed handle (e.g. a text output onto an existing "image" handle), which
+      // would otherwise store a type-corrupted connection (mirrors WorkflowCanvas
+      // resolveRouterHandle).
       let resolved = connection;
-      if (
-        connection.target === SPLIT_GRID_ROUTER_PORT_ID &&
-        (connection.targetHandle === "generic-input" || !connection.targetHandle)
-      ) {
+      if (connection.target === SPLIT_GRID_ROUTER_PORT_ID) {
         resolved = { ...connection, targetHandle: connection.sourceHandle };
       }
       addConnectedEdge(resolved);
@@ -633,8 +632,14 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
         connection = { source: newId, sourceHandle: kind, target: dropMenu.fromNodeId, targetHandle: kind };
       }
 
+      const newNodeRight = position.x + dims.width;
       setRfNodes((nodes) => [
-        ...nodes,
+        // Keep the fixed port clear of a node added to its left/over it
+        ...nodes.map((node) =>
+          node.data.isRouterPort && newNodeRight + PORT_GAP > node.position.x
+            ? { ...node, position: { ...node.position, x: newNodeRight + PORT_GAP } }
+            : node
+        ),
         {
           id: newId,
           type: "splitGridTemplateNode" as const,
@@ -682,6 +687,17 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     if (unwired.length > 0) {
       const labels = [...new Set(unwired.map((node) => getTemplateEntry(node.data.nodeType).label))];
       list.push(`${labels.join(", ")} node${unwired.length === 1 ? " is" : "s are"} missing an image input`);
+    }
+    // Text terminals collapse to a single cell through the shared router (only
+    // image outputs aggregate), so flag it rather than silently dropping cells.
+    const routerHasNonImage = rfEdges.some(
+      (edge) =>
+        edge.target === SPLIT_GRID_ROUTER_PORT_ID &&
+        edge.sourceHandle &&
+        edge.sourceHandle !== "image"
+    );
+    if (routerHasNonImage) {
+      list.push("Only image terminals aggregate through the Downstream Router — text collapses to one cell");
     }
     return list;
   }, [rfNodes, rfEdges]);

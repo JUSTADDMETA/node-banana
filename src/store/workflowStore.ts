@@ -1465,10 +1465,20 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           ...current.nodes
             .filter((n) => !staleNodeIds.has(n.id) && n.id !== removedRouterId)
             .map((n) => {
-              // Reused shared router: reposition it against the new grid in
-              // place, preserving its grown height and onward wiring.
+              // Reused shared router: keep the user's chosen spot unless the grid
+              // grew right up to it, then re-slot it just right of the grid and
+              // center it by its actual (possibly grown) height.
               if (existingRouterId && n.id === existingRouterId && built.routerPosition) {
-                return { ...n, position: built.routerPosition };
+                if (n.position.x >= built.routerPosition.x) return n;
+                const height =
+                  (n.style?.height as number | undefined) ??
+                  n.measured?.height ??
+                  defaultNodeDimensions.router.height;
+                const centerY = built.routerPosition.y + defaultNodeDimensions.router.height / 2;
+                return {
+                  ...n,
+                  position: { x: built.routerPosition.x, y: centerY - height / 2 },
+                };
               }
               // Surviving nodes (user nodes dragged into a cell group, pasted
               // copies) must not keep a groupId pointing at a deleted group

@@ -30,15 +30,28 @@ import {
 
 export { createDefaultSplitGridTemplate, SPLIT_GRID_BASE_NODE_ID, SPLIT_GRID_ROUTER_PORT_ID };
 
+/** Handle types the Router node can render (mirrors RouterNode ALL_HANDLE_TYPES). */
+const ROUTER_HANDLE_TYPES = new Set(["image", "text", "video", "audio", "3d", "easeCurve"]);
+
 /**
  * Terminal→router-port connections declared on the template (empty when the
  * downstream router port is unwired). The single source of truth consumers use
  * to decide whether a shared router should be materialized.
+ *
+ * Connections from untrusted templates (AI-generated / hand-edited JSON) are
+ * validated here — the source must be a real template node and the targetHandle
+ * a type the Router can actually render — so a malformed entry can never
+ * produce an orphan router or an edge on a handle that never appears.
  */
 export function getRouterConnections(
   template: SplitGridTemplate
 ): SplitGridTemplateRouterConnection[] {
-  return template.router ?? [];
+  if (!template.router || template.router.length === 0) return [];
+  const nodeIds = new Set(template.nodes.map((node) => node.id));
+  return template.router.filter(
+    (connection) =>
+      nodeIds.has(connection.source) && ROUTER_HANDLE_TYPES.has(connection.targetHandle)
+  );
 }
 
 /** Stable ordering for router connections so hashing/serialization is deterministic. */
@@ -196,10 +209,10 @@ export function computeMaterializedKey(
 ): string {
   // Only fold the router in when present, so legacy/no-router templates hash to
   // the exact same string as before this feature and never spuriously rebuild.
+  // Use the validated set so malformed entries don't drift the key.
+  const connections = getRouterConnections(template);
   const router =
-    template.router && template.router.length > 0
-      ? [...template.router].sort(compareRouterConnections)
-      : null;
+    connections.length > 0 ? [...connections].sort(compareRouterConnections) : null;
   return JSON.stringify({
     rows,
     cols,
@@ -262,6 +275,15 @@ export function needsMaterialization(
   const cells = data.cells ?? [];
   if (cells.length === 0) return true;
   const template = options?.template ?? getSplitGridTemplate(data);
+  // A wired downstream router must exist. If it was manually deleted on the
+  // canvas (or a save is missing it) the cells can still match, so rebuild to
+  // restore the router and its terminal wiring.
+  if (
+    getRouterConnections(template).length > 0 &&
+    (!data.routerNodeId || !existingNodeIds.has(data.routerNodeId))
+  ) {
+    return true;
+  }
   const key = computeMaterializedKey(rows, cols, template);
   if (data.materializedKey !== key) return true;
   if (cells.length !== rows * cols) return true;
