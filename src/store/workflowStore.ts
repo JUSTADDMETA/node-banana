@@ -70,6 +70,7 @@ import {
   buildCellInstances,
   clampGridDimension,
   computeMaterializedKey,
+  getRouterConnections,
   getSplitGridCells,
   getSplitGridTemplate,
   needsMaterialization,
@@ -204,6 +205,28 @@ function buildConnectionEdgeData(
   }
 
   return baseData;
+}
+
+/**
+ * Null out any split-grid node's routerNodeId that points at a node being
+ * removed, so a manually-deleted shared router leaves no dangling reference
+ * (a stale id would otherwise block the reuse check on the next materialize).
+ */
+function healSplitGridRouterRefs(
+  nodes: WorkflowNode[],
+  removedIds: Set<string>
+): WorkflowNode[] {
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.type !== "splitGrid") return node;
+    const routerNodeId = (node.data as SplitGridNodeData).routerNodeId;
+    if (routerNodeId && removedIds.has(routerNodeId)) {
+      changed = true;
+      return { ...node, data: { ...node.data, routerNodeId: null } as WorkflowNodeData };
+    }
+    return node;
+  });
+  return changed ? next : nodes;
 }
 
 // Workflow file format
@@ -841,7 +864,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         remainingNodes
       );
       return {
-        nodes: remainingNodes,
+        nodes: healSplitGridRouterRefs(remainingNodes, new Set([nodeId])),
         edges: state.edges.filter(
           (edge) => edge.source !== nodeId && edge.target !== nodeId
         ),
@@ -885,13 +908,15 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     }
 
     set((state) => {
-      const nextNodes = applyNodeChanges(changes, state.nodes);
+      let nextNodes = applyNodeChanges(changes, state.nodes);
       let groups = state.groups;
       if (hasRemoveChange) {
         const removedIds = new Set(
           changes.filter((c) => c.type === "remove").map((c) => c.id)
         );
         groups = pruneEmptiedGroups(state.groups, state.nodes, removedIds, nextNodes);
+        // A manually-deleted shared router must not leave a dangling routerNodeId
+        nextNodes = healSplitGridRouterRefs(nextNodes, removedIds);
       }
       return {
         nodes: nextNodes,
@@ -1082,7 +1107,14 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         const allCopied =
           cells.length > 0 &&
           cells.every((cell) => cell.nodeIds.every((id) => idMapping.has(id)));
-        if (allCopied) {
+        // The pasted split must drive its OWN shared router, never the original's.
+        // Keep the copied cells only when the router was copied too (or the
+        // template wants none); otherwise detach so the paste rebuilds a fresh
+        // set + its own router on next split/apply.
+        const oldRouterId = splitData.routerNodeId;
+        const templateWantsRouter = getRouterConnections(template).length > 0;
+        const routerCopied = !!oldRouterId && idMapping.has(oldRouterId);
+        if (allCopied && (!templateWantsRouter || routerCopied)) {
           const remappedCells = cells.map((cell) => ({
             ...cell,
             baseImageNodeId: idMapping.get(cell.baseImageNodeId)!,
@@ -1097,6 +1129,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
             template,
             cells: remappedCells,
             childNodeIds: [],
+            routerNodeId: routerCopied ? idMapping.get(oldRouterId!)! : null,
             materializedKey:
               cells.length === rows * cols ? computeMaterializedKey(rows, cols, template) : null,
           } as WorkflowNodeData;
@@ -1106,6 +1139,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
             template,
             cells: [],
             childNodeIds: [],
+            routerNodeId: null,
             materializedKey: null,
           } as WorkflowNodeData;
         }
@@ -1349,6 +1383,17 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     const rows = clampGridDimension(data.gridRows);
     const cols = clampGridDimension(data.gridCols);
 
+    // Shared downstream router lifecycle: reuse the persisted router across
+    // rebuilds (so the user's onward wiring survives), mint a fresh id only when
+    // the port newly gains wiring, and mark the old one for removal when the
+    // port is cleared. The router is never a cell member, so cell teardown below
+    // never touches it or its onward edges.
+    const hasRouter = getRouterConnections(template).length > 0;
+    const existingRouterId =
+      data.routerNodeId && existingNodeIds.has(data.routerNodeId) ? data.routerNodeId : null;
+    const routerNodeId = hasRouter ? existingRouterId ?? `router-${++nodeIdCounter}` : null;
+    const removedRouterId = !hasRouter ? existingRouterId : null;
+
     // Single checkpoint: one undo restores replaced cells and removes new ones
     pushUndoCheckpoint(get, set);
 
@@ -1384,12 +1429,33 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       groupColor,
       makeEdgeData: (connection) =>
         buildConnectionEdgeData(connection as Connection, state.nodes, state.edges),
+      routerNodeId,
     });
 
     const materializedKey = computeMaterializedKey(rows, cols, template);
     const removedEdges = state.edges.filter(
-      (edge) => staleNodeIds.has(edge.source) || staleNodeIds.has(edge.target)
+      (edge) =>
+        staleNodeIds.has(edge.source) ||
+        staleNodeIds.has(edge.target) ||
+        edge.source === removedRouterId ||
+        edge.target === removedRouterId
     );
+
+    // A newly wired router needs a real node; a reused one is repositioned in
+    // place inside the set() below so its grown height + onward edges survive.
+    const newRouterNode: WorkflowNode | null =
+      routerNodeId && !existingRouterId && built.routerPosition
+        ? {
+            id: routerNodeId,
+            type: "router",
+            position: built.routerPosition,
+            data: createDefaultNodeData("router"),
+            style: {
+              width: defaultNodeDimensions.router.width,
+              height: defaultNodeDimensions.router.height,
+            },
+          }
+        : null;
 
     set((current) => {
       const remainingGroups = { ...current.groups };
@@ -1397,8 +1463,13 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       return {
         nodes: [
           ...current.nodes
-            .filter((n) => !staleNodeIds.has(n.id))
+            .filter((n) => !staleNodeIds.has(n.id) && n.id !== removedRouterId)
             .map((n) => {
+              // Reused shared router: reposition it against the new grid in
+              // place, preserving its grown height and onward wiring.
+              if (existingRouterId && n.id === existingRouterId && built.routerPosition) {
+                return { ...n, position: built.routerPosition };
+              }
               // Surviving nodes (user nodes dragged into a cell group, pasted
               // copies) must not keep a groupId pointing at a deleted group
               const node =
@@ -1411,6 +1482,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
                       template,
                       cells: built.cells,
                       materializedKey,
+                      routerNodeId,
                       targetCount: rows * cols,
                       childNodeIds: [],
                       isConfigured: true,
@@ -1419,12 +1491,18 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
                 : node;
             }),
           ...built.nodes,
+          ...(newRouterNode ? [newRouterNode] : []),
         ] as WorkflowNode[],
         edges: [
           ...current.edges.filter(
-            (edge) => !staleNodeIds.has(edge.source) && !staleNodeIds.has(edge.target)
+            (edge) =>
+              !staleNodeIds.has(edge.source) &&
+              !staleNodeIds.has(edge.target) &&
+              edge.source !== removedRouterId &&
+              edge.target !== removedRouterId
           ),
           ...built.edges,
+          ...built.routerEdges,
         ],
         groups: { ...remainingGroups, ...built.groups },
         hasUnsavedChanges: true,

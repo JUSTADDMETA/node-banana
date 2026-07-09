@@ -16,6 +16,7 @@ import type {
   GroupColor,
   SplitGridNodeData,
   SplitGridTemplate,
+  SplitGridTemplateRouterConnection,
   SplitGridCell,
 } from "@/types";
 import { MODEL_DISPLAY_NAMES } from "@/types";
@@ -24,9 +25,33 @@ import {
   createDefaultSplitGridTemplate,
   defaultNodeDimensions,
   SPLIT_GRID_BASE_NODE_ID,
+  SPLIT_GRID_ROUTER_PORT_ID,
 } from "./nodeDefaults";
 
-export { createDefaultSplitGridTemplate, SPLIT_GRID_BASE_NODE_ID };
+export { createDefaultSplitGridTemplate, SPLIT_GRID_BASE_NODE_ID, SPLIT_GRID_ROUTER_PORT_ID };
+
+/**
+ * Terminal→router-port connections declared on the template (empty when the
+ * downstream router port is unwired). The single source of truth consumers use
+ * to decide whether a shared router should be materialized.
+ */
+export function getRouterConnections(
+  template: SplitGridTemplate
+): SplitGridTemplateRouterConnection[] {
+  return template.router ?? [];
+}
+
+/** Stable ordering for router connections so hashing/serialization is deterministic. */
+function compareRouterConnections(
+  a: SplitGridTemplateRouterConnection,
+  b: SplitGridTemplateRouterConnection
+): number {
+  return (
+    a.source.localeCompare(b.source) ||
+    a.sourceHandle.localeCompare(b.sourceHandle) ||
+    a.targetHandle.localeCompare(b.targetHandle)
+  );
+}
 
 export const MIN_GRID_DIMENSION = 1;
 export const MAX_GRID_DIMENSION = 16;
@@ -169,12 +194,19 @@ export function computeMaterializedKey(
   cols: number,
   template: SplitGridTemplate
 ): string {
+  // Only fold the router in when present, so legacy/no-router templates hash to
+  // the exact same string as before this feature and never spuriously rebuild.
+  const router =
+    template.router && template.router.length > 0
+      ? [...template.router].sort(compareRouterConnections)
+      : null;
   return JSON.stringify({
     rows,
     cols,
     baseNodeId: template.baseNodeId,
     nodes: [...template.nodes].sort((a, b) => a.id.localeCompare(b.id)),
     edges: [...template.edges].sort((a, b) => a.id.localeCompare(b.id)),
+    ...(router ? { router } : {}),
   });
 }
 
@@ -252,6 +284,13 @@ export interface BuildCellInstancesOptions {
     target: string;
     targetHandle: string;
   }) => Record<string, unknown>;
+  /**
+   * Real id of the shared downstream router. When set (and the template wires
+   * one or more terminals to the router port), each cell's copy of every wired
+   * terminal is connected into this single router. The router node itself is
+   * created/reused by the store, not here.
+   */
+  routerNodeId?: string | null;
 }
 
 export interface CellInstancesResult {
@@ -259,11 +298,17 @@ export interface CellInstancesResult {
   edges: WorkflowEdge[];
   groups: Record<string, NodeGroup>;
   cells: SplitGridCell[];
+  /** Per-cell terminal→router edges (empty when no router is wired). */
+  routerEdges: WorkflowEdge[];
+  /** Where to place the single shared router (right of the grid, centered); null when none. */
+  routerPosition: { x: number; y: number } | null;
 }
 
 const CLUSTER_GAP = 60;
 const SPLIT_NODE_MARGIN = 100;
 const GROUP_PADDING = 20;
+/** Horizontal gap between the rightmost cell group and the shared router. */
+const ROUTER_GAP = 160;
 
 function templateNodeDimensions(
   templateNode: Pick<SplitGridTemplate["nodes"][number], "type" | "size">
@@ -279,6 +324,10 @@ function templateNodeDimensions(
 export function buildCellInstances(options: BuildCellInstancesOptions): CellInstancesResult {
   const { splitNode, template, rows, cols, makeNodeId, makeGroupId, groupColor, makeEdgeData } =
     options;
+  // The shared router is only wired when the store supplies its id AND the
+  // template designates at least one terminal for the port.
+  const routerConnections = options.routerNodeId ? getRouterConnections(template) : [];
+  const routerEnabled = Boolean(options.routerNodeId) && routerConnections.length > 0;
 
   // Template bounding box (normalizes arbitrary editor positions to offsets)
   let minX = Infinity;
@@ -306,6 +355,7 @@ export function buildCellInstances(options: BuildCellInstancesOptions): CellInst
   const edges: WorkflowEdge[] = [];
   const groups: Record<string, NodeGroup> = {};
   const cells: SplitGridCell[] = [];
+  const routerEdges: WorkflowEdge[] = [];
 
   for (let index = 0; index < rows * cols; index++) {
     const row = Math.floor(index / cols);
@@ -372,6 +422,27 @@ export function buildCellInstances(options: BuildCellInstancesOptions): CellInst
       } as WorkflowEdge);
     }
 
+    // Wire this cell's copy of each designated terminal into the single shared
+    // router (all cells fan into one router; targetHandle is the typed router
+    // input so RouterNode derives the correct handle).
+    if (routerEnabled) {
+      for (const conn of routerConnections) {
+        const terminalRealId = idMap.get(conn.source);
+        if (!terminalRealId) continue;
+        const routerConnection = {
+          source: terminalRealId,
+          sourceHandle: conn.sourceHandle,
+          target: options.routerNodeId!,
+          targetHandle: conn.targetHandle,
+        };
+        routerEdges.push({
+          id: `edge-${terminalRealId}-${options.routerNodeId}-${conn.sourceHandle}-${conn.targetHandle}`,
+          ...routerConnection,
+          data: makeEdgeData(routerConnection),
+        } as WorkflowEdge);
+      }
+    }
+
     // Group wrapping the cell
     groups[groupId] = {
       id: groupId,
@@ -391,5 +462,25 @@ export function buildCellInstances(options: BuildCellInstancesOptions): CellInst
     });
   }
 
-  return { nodes, edges, groups, cells };
+  // Place the single shared router to the right of the whole grid, vertically
+  // centered on the cell groups (whose bounds already include GROUP_PADDING).
+  let routerPosition: { x: number; y: number } | null = null;
+  const groupFrames = Object.values(groups);
+  if (routerEnabled && groupFrames.length > 0) {
+    let gridMaxX = -Infinity;
+    let gridMinY = Infinity;
+    let gridMaxY = -Infinity;
+    for (const group of groupFrames) {
+      gridMaxX = Math.max(gridMaxX, group.position.x + group.size.width);
+      gridMinY = Math.min(gridMinY, group.position.y);
+      gridMaxY = Math.max(gridMaxY, group.position.y + group.size.height);
+    }
+    const routerHeight = defaultNodeDimensions.router.height;
+    routerPosition = {
+      x: gridMaxX + ROUTER_GAP,
+      y: (gridMinY + gridMaxY) / 2 - routerHeight / 2,
+    };
+  }
+
+  return { nodes, edges, groups, cells, routerEdges, routerPosition };
 }
