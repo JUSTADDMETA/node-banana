@@ -264,7 +264,9 @@ describe("WorkflowCanvas", () => {
       );
 
       // MiniMap should be rendered
-      expect(document.querySelector(".react-flow__minimap")).toBeInTheDocument();
+      const minimap = document.querySelector(".react-flow__minimap");
+      expect(minimap).toBeInTheDocument();
+      expect(minimap).not.toHaveStyle({ width: "100%", height: "100%" });
     });
 
     it("allows the minimap to be hidden and restored", () => {

@@ -2224,12 +2224,9 @@ export function WorkflowCanvas() {
         />
         <Controls className={`bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg [&>button]:bg-neutral-800 [&>button]:border-neutral-700 [&>button]:fill-neutral-300 [&>button:hover]:bg-neutral-700 [&>button:hover]:fill-neutral-100 ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`} />
         {isMinimapVisible ? (
-          <div
-            className={`absolute bottom-[15px] right-[15px] z-[5] h-[150px] w-[200px] overflow-hidden rounded-lg shadow-lg ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
-          >
+          <>
             <MiniMap
-              className="bg-neutral-800 border border-neutral-700 rounded-lg"
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", margin: 0 }}
+              className={`bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
               maskColor="rgba(0, 0, 0, 0.6)"
               pannable
               zoomable
@@ -2240,13 +2237,13 @@ export function WorkflowCanvas() {
               aria-label="Hide minimap"
               title="Hide minimap"
               onClick={() => setIsMinimapVisible(false)}
-              className="nodrag nopan nowheel absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-neutral-600/80 bg-neutral-950/85 text-neutral-400 shadow-sm backdrop-blur-sm transition-colors hover:border-neutral-500 hover:bg-neutral-800 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              className={`nodrag nopan nowheel absolute bottom-[130px] right-[23px] z-[6] flex h-7 w-7 items-center justify-center rounded-md border border-neutral-600/80 bg-neutral-950/85 text-neutral-400 shadow-sm backdrop-blur-sm transition-colors hover:border-neutral-500 hover:bg-neutral-800 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
             >
               <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none">
                 <path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
               </svg>
             </button>
-          </div>
+          </>
         ) : (
           <button
             type="button"
