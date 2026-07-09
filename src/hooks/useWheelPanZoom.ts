@@ -18,6 +18,59 @@ import type { CanvasNavigationSettings } from "@/types/canvas";
 const isMacOS =
   typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
+interface ViewportState {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+interface ViewportPanBatcherOptions {
+  getViewport: () => ViewportState;
+  setViewport: (viewport: ViewportState) => void;
+  requestFrame?: (callback: FrameRequestCallback) => number;
+  cancelFrame?: (handle: number) => void;
+}
+
+export function createViewportPanBatcher({
+  getViewport,
+  setViewport,
+  requestFrame = requestAnimationFrame,
+  cancelFrame = cancelAnimationFrame,
+}: ViewportPanBatcherOptions): {
+  queue: (deltaX: number, deltaY: number) => void;
+  dispose: () => void;
+} {
+  let frameId: number | null = null;
+  let pendingDeltaX = 0;
+  let pendingDeltaY = 0;
+
+  const flush = () => {
+    frameId = null;
+    const viewport = getViewport();
+    setViewport({
+      x: viewport.x - pendingDeltaX,
+      y: viewport.y - pendingDeltaY,
+      zoom: viewport.zoom,
+    });
+    pendingDeltaX = 0;
+    pendingDeltaY = 0;
+  };
+
+  return {
+    queue(deltaX, deltaY) {
+      pendingDeltaX += deltaX;
+      pendingDeltaY += deltaY;
+      if (frameId === null) frameId = requestFrame(flush);
+    },
+    dispose() {
+      if (frameId !== null) cancelFrame(frameId);
+      frameId = null;
+      pendingDeltaX = 0;
+      pendingDeltaY = 0;
+    },
+  };
+}
+
 // Detect if a wheel event is from a mouse (vs trackpad).
 function isMouseWheel(event: WheelEvent): boolean {
   // Mouse wheels typically use deltaMode 1 (lines); trackpads use deltaMode 0
@@ -71,6 +124,7 @@ export function useWheelPanZoom(
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper || !enabled) return;
+    const panBatcher = createViewportPanBatcher({ getViewport, setViewport });
 
     const handleWheel = (event: WheelEvent) => {
       // Let inner scroll areas (nowheel/textarea) keep their own scrolling.
@@ -105,12 +159,7 @@ export function useWheelPanZoom(
         } else {
           // Trackpad pan (also blocks horizontal swipe navigation).
           event.preventDefault();
-          const viewport = getViewport();
-          setViewport({
-            x: viewport.x - event.deltaX,
-            y: viewport.y - event.deltaY,
-            zoom: viewport.zoom,
-          });
+          panBatcher.queue(event.deltaX, event.deltaY);
         }
         return;
       }
@@ -124,6 +173,9 @@ export function useWheelPanZoom(
     };
 
     wrapper.addEventListener("wheel", handleWheel, { passive: false });
-    return () => wrapper.removeEventListener("wheel", handleWheel);
+    return () => {
+      wrapper.removeEventListener("wheel", handleWheel);
+      panBatcher.dispose();
+    };
   }, [wrapperRef, enabled, settings, getViewport, setViewport, zoomIn, zoomOut]);
 }
