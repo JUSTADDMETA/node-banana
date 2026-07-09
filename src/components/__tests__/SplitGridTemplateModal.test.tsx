@@ -355,11 +355,11 @@ describe("SplitGridTemplateModal", () => {
       router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
     };
 
-    it("renders the fixed downstream-router port", () => {
+    it("renders the fixed downstream-router port with its empty-state label", () => {
       renderModal();
 
+      // With no terminal wired, the empty gray socket shows the port's name
       expect(screen.getByText("Downstream Router")).toBeInTheDocument();
-      expect(screen.getByText("shared · 1 total")).toBeInTheDocument();
     });
 
     it("round-trips the router wiring into the applied template", () => {

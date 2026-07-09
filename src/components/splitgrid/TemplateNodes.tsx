@@ -560,7 +560,7 @@ function LlmBody({ nodeId, overrides }: { nodeId: string; overrides: Record<stri
   );
 }
 
-/** Handle colors for the router port, mirroring RouterNode.tsx on the main canvas */
+/** Socket colors + labels for the router port, mirroring the main-canvas handles */
 const PORT_HANDLE_COLORS: Record<string, string> = {
   image: "#10b981",
   text: "#3b82f6",
@@ -569,17 +569,64 @@ const PORT_HANDLE_COLORS: Record<string, string> = {
   "3d": "#f97316",
   easeCurve: "#ffffff",
 };
+const PORT_TYPE_LABELS: Record<string, string> = {
+  image: "Image",
+  text: "Text",
+  video: "Video",
+  audio: "Audio",
+  "3d": "3D",
+  easeCurve: "Curve",
+};
+const PORT_EMPTY_COLOR = "#6b7280";
+const PORT_ROW_H = 26;
+const PORT_TOP_PAD = 8;
+const PORT_SOCKET_LEFT = 18; // socket center, inset right of the brace
+
+/** A rounded curly brace embracing the sockets from their left (opening right). */
+function PortBrace({ height }: { height: number }) {
+  const h = Math.max(height, 28);
+  const mid = h / 2;
+  const curl = Math.min(9, mid - 5);
+  const d = [
+    `M 9 3`,
+    `C 5 3 5 4 5 8`,
+    `L 5 ${mid - curl}`,
+    `C 5 ${mid - 3} 5 ${mid - 3} 1 ${mid}`,
+    `C 5 ${mid + 3} 5 ${mid + 3} 5 ${mid + curl}`,
+    `L 5 ${h - 8}`,
+    `C 5 ${h - 4} 5 ${h - 3} 9 ${h - 3}`,
+  ].join(" ");
+  return (
+    <svg
+      width="10"
+      height={h}
+      viewBox={`0 0 10 ${h}`}
+      className="absolute overflow-visible pointer-events-none"
+      style={{ left: 2, top: PORT_TOP_PAD }}
+      fill="none"
+    >
+      <path
+        d={d}
+        stroke="#8a8a8a"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 /**
- * The fixed "downstream router" port — a router-style sink pinned to the right
- * of the cell node set. Mirrors RouterNode: it grows a typed input handle for
- * each terminal type wired into it, plus a persistent gray generic drop target.
- * Input-only in the editor; the real Router's onward wiring happens on the main
- * canvas after materialization.
+ * The fixed "downstream router" port — a ComfyUI-style rounded bracket pinned to
+ * the right of the cell node set. Each terminal wired in grows a typed, colored
+ * socket labelled with its type; a persistent empty gray socket at the bottom is
+ * the drop target for the next connection. Input-only in the editor; the real
+ * Router's onward wiring happens on the main canvas after materialization.
  */
 function RouterPortBody({ nodeId }: { nodeId: string }) {
   const connections = useNodeConnections({ id: nodeId, handleType: "target" });
   const updateNodeInternals = useUpdateNodeInternals();
+  const { setNodes } = useReactFlow();
 
   const activeTypes = useMemo(() => {
     const set = new Set<string>();
@@ -590,52 +637,68 @@ function RouterPortBody({ nodeId }: { nodeId: string }) {
     return Array.from(set).sort();
   }, [connections]);
 
-  // Re-register handles when a new type is wired so edges attach cleanly
-  useEffect(() => {
-    updateNodeInternals(nodeId);
-  }, [activeTypes.length, nodeId, updateNodeInternals]);
+  // One row per wired type, then the always-present empty drop socket.
+  const rows: (string | null)[] = [...activeTypes, null];
+  const braceHeight = rows.length * PORT_ROW_H;
+  const nodeHeight = PORT_TOP_PAD * 2 + braceHeight;
 
-  const spacing = 22;
-  const baseTop = 16;
+  // Keep the node box sized to its sockets and re-register handles on change.
+  useEffect(() => {
+    setNodes((nodes) =>
+      nodes.map((node) => {
+        if (node.id !== nodeId) return node;
+        const current = (node.style?.height as number | undefined) ?? 0;
+        if (current === nodeHeight) return node;
+        return { ...node, style: { ...node.style, height: nodeHeight } };
+      })
+    );
+    updateNodeInternals(nodeId);
+  }, [nodeId, nodeHeight, setNodes, updateNodeInternals]);
+
   return (
-    <>
-      {activeTypes.map((type, index) => (
-        <Handle
-          key={`in-${type}`}
-          type="target"
-          position={Position.Left}
-          id={type}
-          data-handletype={type}
-          style={{
-            top: baseTop + index * spacing,
-            backgroundColor: PORT_HANDLE_COLORS[type] ?? "#6b7280",
-            width: 12,
-            height: 12,
-            border: "2px solid #1e1e1e",
-          }}
-        />
-      ))}
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="generic-input"
-        style={{
-          top: baseTop + activeTypes.length * spacing,
-          backgroundColor: "#6b7280",
-          width: 12,
-          height: 12,
-          border: "2px solid #1e1e1e",
-        }}
-      />
-      <div className="w-full h-full rounded-lg bg-neutral-800/60 border border-neutral-600 flex flex-col items-center justify-center gap-1 px-3">
-        <span className="text-neutral-500 [&>svg]:w-6 [&>svg]:h-6">{getTemplateNodeIcon("router")}</span>
-        <span className="text-[10px] text-neutral-400 text-center leading-tight">
-          {activeTypes.length
-            ? `Routes ${activeTypes.length} type${activeTypes.length > 1 ? "s" : ""} into one shared Router`
-            : "Drag a terminal's output here"}
-        </span>
-      </div>
-    </>
+    <div className="relative h-full w-full overflow-visible">
+      <PortBrace height={braceHeight} />
+      {rows.map((type, index) => {
+        const top = PORT_TOP_PAD + index * PORT_ROW_H + PORT_ROW_H / 2;
+        const label = type ? PORT_TYPE_LABELS[type] ?? type : null;
+        const color = type ? PORT_HANDLE_COLORS[type] ?? PORT_EMPTY_COLOR : PORT_EMPTY_COLOR;
+        return (
+          <div key={type ?? "generic-input"}>
+            <Handle
+              type="target"
+              position={Position.Left}
+              id={type ?? "generic-input"}
+              data-handletype={type ?? undefined}
+              title={label ?? "Drag a terminal's output here"}
+              style={{
+                top,
+                left: PORT_SOCKET_LEFT,
+                transform: "translate(-50%, -50%)",
+                backgroundColor: color,
+                width: 11,
+                height: 11,
+                border: "2px solid #1e1e1e",
+              }}
+            />
+            {label ? (
+              <span
+                className="absolute text-[11px] font-medium leading-none -translate-y-1/2 whitespace-nowrap pointer-events-none select-none"
+                style={{ top, left: PORT_SOCKET_LEFT + 13, color }}
+              >
+                {label}
+              </span>
+            ) : activeTypes.length === 0 ? (
+              <span
+                className="absolute text-[11px] font-medium leading-none -translate-y-1/2 whitespace-nowrap text-neutral-500 pointer-events-none select-none"
+                style={{ top, left: PORT_SOCKET_LEFT + 13 }}
+              >
+                Downstream Router
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -650,24 +713,10 @@ function GenericBody({ nodeType, description }: { nodeType: NodeType; descriptio
 }
 
 function TemplateNodeComponent({ id, data, selected }: NodeProps<TemplateRFNode>) {
-  // The fixed downstream-router port: no resizer (fixed size), a shared badge,
-  // and a router-style body. It is never replicated per cell.
+  // The fixed downstream-router port: a chrome-less rounded bracket + typed
+  // sockets pinned to the right of the node set. It is never replicated per cell.
   if (data.isRouterPort) {
-    return (
-      <div className="relative h-full w-full">
-        <MiniFloatingHeader
-          title="Downstream Router"
-          right={
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/25">
-              shared · 1 total
-            </span>
-          }
-        />
-        <MiniCard selected={selected}>
-          <RouterPortBody nodeId={id} />
-        </MiniCard>
-      </div>
-    );
+    return <RouterPortBody nodeId={id} />;
   }
 
   const entry = getTemplateEntry(data.nodeType);

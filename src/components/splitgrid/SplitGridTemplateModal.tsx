@@ -120,8 +120,8 @@ function editorNodeDimensions(type: NodeType): { width: number; height: number }
   return defaultNodeDimensions[type] ?? { width: 300, height: 280 };
 }
 
-const PORT_WIDTH = 200;
-const PORT_HEIGHT = 80;
+const PORT_WIDTH = 130;
+const PORT_HEIGHT = 60; // initial; RouterPortBody resizes to fit its sockets
 const PORT_GAP = 140;
 
 /**
