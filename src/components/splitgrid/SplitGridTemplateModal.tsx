@@ -44,7 +44,13 @@ import {
   createDefaultSplitGridTemplate,
   getSplitGridTemplate,
 } from "@/store/utils/splitGridTemplate";
-import { RouterRail, isInRailDropZone, type RouterWire, type RailSize } from "./RouterRail";
+import {
+  RouterRail,
+  RouterWires,
+  isInRailDropZone,
+  type RouterWire,
+  type RailSize,
+} from "./RouterRail";
 import {
   getTemplateEntry,
   getTemplateNodeIcon,
@@ -414,6 +420,13 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
     setRouterWires((prev) => prev.filter((w) => w.sourceHandle !== type));
   }, []);
 
+  // Delete one specific router wire (its midpoint × button)
+  const disconnectRouterWire = useCallback((source: string, sourceHandle: string) => {
+    setRouterWires((prev) =>
+      prev.filter((w) => !(w.source === source && w.sourceHandle === sourceHandle))
+    );
+  }, []);
+
   // Each connection carries its own midpoint delete button (TemplateEditableEdge)
   // that calls this through the editor context.
   const deleteEdge = useCallback(
@@ -756,6 +769,11 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
 
         {/* Mini canvas */}
         <div ref={canvasWrapperRef} className="flex-1 min-h-0 relative bg-neutral-900">
+          {/* Router wires render BEHIND the canvas so nodes occlude them, like
+              normal edges (the pane is transparent, so they show in the gaps) */}
+          <RouterWires wires={routerWires} nodes={rfNodes} size={wrapperSize} />
+
+          <div className="absolute inset-0">
           <TemplateEditorContext.Provider value={editorContext}>
             <ReactFlow
               nodes={rfNodes}
@@ -781,13 +799,15 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               <Controls showInteractive={false} className="!bg-neutral-800 !border-neutral-700 !shadow-none [&>button]:!bg-neutral-800 [&>button]:!border-neutral-700 [&>button]:!text-neutral-300 [&>button:hover]:!bg-neutral-700" />
             </ReactFlow>
           </TemplateEditorContext.Provider>
+          </div>
 
-          {/* Fixed downstream-router rail (pinned to the right edge) */}
+          {/* Fixed downstream-router rail + wire delete buttons (on top) */}
           <RouterRail
             wires={routerWires}
             nodes={rfNodes}
             size={wrapperSize}
             onDisconnectType={disconnectRouterType}
+            onDisconnectWire={disconnectRouterWire}
           />
 
           {/* Connection drop menu */}

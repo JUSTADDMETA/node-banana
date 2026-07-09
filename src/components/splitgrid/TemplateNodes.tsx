@@ -119,17 +119,21 @@ export function TemplateEditableEdge({
             }}
             title="Delete connection"
             aria-label="Delete connection"
-            className="flex items-center justify-center rounded-full bg-neutral-800 border border-neutral-600 text-neutral-400 shadow-md transition-colors hover:bg-red-500/20 hover:border-red-500 hover:text-red-400"
+            className="group grid place-items-center"
             style={{
-              width: 20,
-              height: 20,
+              width: 28,
+              height: 28,
+              background: "transparent",
               pointerEvents: "all",
               transform: `scale(${1 / zoom})`,
             }}
           >
-            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            {/* Hidden until the midpoint is hovered, so connections stay clean */}
+            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-neutral-800 border border-neutral-600 text-neutral-400 shadow-md opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-hover:text-red-400 group-hover:border-red-500 group-hover:bg-red-500/20">
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </span>
           </button>
         </div>
       </EdgeLabelRenderer>

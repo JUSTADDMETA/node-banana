@@ -10,6 +10,11 @@
  * The rail is NOT a React Flow node, so its edges are drawn here: each wire runs
  * from the terminal's output handle (converted from flow to pane coordinates via
  * the live viewport) to its type socket (fixed pane coordinates).
+ *
+ * Rendering is split across two layers so the wires read like normal edges:
+ * `RouterWires` draws just the strokes and is mounted BEHIND the React Flow
+ * canvas (so opaque nodes occlude it); `RouterRail` draws the fixed rail plus
+ * the per-wire delete buttons ON TOP.
  */
 
 import { useMemo } from "react";
@@ -24,6 +29,18 @@ export interface RouterWire {
 export interface RailSize {
   width: number;
   height: number;
+}
+
+interface RouterViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export interface RouterWireGeom {
+  wire: RouterWire;
+  path: string;
+  mid: { x: number; y: number };
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -82,6 +99,98 @@ export function isInRailDropZone(
   );
 }
 
+/** Terminal output-handle position in pane coordinates (follows pan + zoom). */
+function terminalPos(
+  wire: RouterWire,
+  nodes: TemplateRFNode[],
+  viewport: RouterViewport
+): { x: number; y: number } | null {
+  const node = nodes.find((n) => n.id === wire.source);
+  if (!node) return null;
+  const width =
+    node.measured?.width ??
+    (node.width as number | undefined) ??
+    (node.style?.width as number | undefined) ??
+    300;
+  const height =
+    node.measured?.height ??
+    (node.height as number | undefined) ??
+    (node.style?.height as number | undefined) ??
+    200;
+  const flowX = node.position.x + width;
+  const flowY = node.position.y + height / 2;
+  return { x: flowX * viewport.zoom + viewport.x, y: flowY * viewport.zoom + viewport.y };
+}
+
+/**
+ * Per-wire geometry (path + midpoint), shared by the stroke layer and the
+ * delete-button layer so both agree exactly. Midpoint is the cubic bezier
+ * evaluated at t=0.5.
+ */
+export function routerWireGeoms(
+  wires: RouterWire[],
+  nodes: TemplateRFNode[],
+  size: RailSize,
+  viewport: RouterViewport
+): RouterWireGeom[] {
+  const { types, blockTop, contentLeft } = railMetrics(wires, size);
+  const typeIndex = new Map(types.map((type, i) => [type, i]));
+  const socketX = contentLeft + SOCKET_LEFT;
+  const socketY = (rowIndex: number) => blockTop + rowIndex * ROW_H + ROW_H / 2;
+
+  const geoms: RouterWireGeom[] = [];
+  for (const wire of wires) {
+    const from = terminalPos(wire, nodes, viewport);
+    if (!from) continue;
+    const to = { x: socketX, y: socketY(typeIndex.get(wire.sourceHandle) ?? 0) };
+    const dx = Math.max(40, (to.x - from.x) * 0.5);
+    const c1 = { x: from.x + dx, y: from.y };
+    const c2 = { x: to.x - dx, y: to.y };
+    const path = `M ${from.x} ${from.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${to.x} ${to.y}`;
+    const mid = {
+      x: 0.125 * from.x + 0.375 * c1.x + 0.375 * c2.x + 0.125 * to.x,
+      y: 0.125 * from.y + 0.375 * c1.y + 0.375 * c2.y + 0.125 * to.y,
+    };
+    geoms.push({ wire, path, mid });
+  }
+  return geoms;
+}
+
+/**
+ * Just the wire strokes — mounted BEHIND the React Flow canvas so nodes occlude
+ * them (the pane is transparent, so the wires show through the gaps).
+ */
+export function RouterWires({
+  wires,
+  nodes,
+  size,
+}: {
+  wires: RouterWire[];
+  nodes: TemplateRFNode[];
+  size: RailSize;
+}) {
+  const viewport = useViewport();
+  const geoms = useMemo(
+    () => routerWireGeoms(wires, nodes, size, viewport),
+    [wires, nodes, size, viewport]
+  );
+  if (size.width === 0 || size.height === 0) return null;
+  return (
+    <svg className="absolute inset-0" style={{ overflow: "visible", pointerEvents: "none" }}>
+      {geoms.map((geom, i) => (
+        <path
+          key={`${geom.wire.source}-${geom.wire.sourceHandle}-${i}`}
+          d={geom.path}
+          stroke={TYPE_COLORS[geom.wire.sourceHandle] ?? "#888888"}
+          strokeWidth={2}
+          fill="none"
+          opacity={0.9}
+        />
+      ))}
+    </svg>
+  );
+}
+
 /** A rounded curly brace opening toward the sockets on its right. */
 function bracePath(height: number): string {
   const h = Math.max(height, 30);
@@ -103,71 +212,54 @@ export function RouterRail({
   nodes,
   size,
   onDisconnectType,
+  onDisconnectWire,
 }: {
   wires: RouterWire[];
   nodes: TemplateRFNode[];
   size: RailSize;
   onDisconnectType: (type: string) => void;
+  onDisconnectWire: (source: string, sourceHandle: string) => void;
 }) {
   const viewport = useViewport();
   const { types, railH, blockTop, contentLeft } = useMemo(
     () => railMetrics(wires, size),
     [wires, size]
   );
-  const typeIndex = useMemo(() => new Map(types.map((type, i) => [type, i])), [types]);
+  // Wire midpoints for the delete buttons (same geometry as the stroke layer)
+  const geoms = useMemo(
+    () => routerWireGeoms(wires, nodes, size, viewport),
+    [wires, nodes, size, viewport]
+  );
 
   if (size.width === 0 || size.height === 0) return null;
-
-  const socketX = contentLeft + SOCKET_LEFT;
-  const socketY = (rowIndex: number) => blockTop + rowIndex * ROW_H + ROW_H / 2;
-
-  // Terminal output-handle position in pane coordinates (follows pan + zoom).
-  const terminalPos = (wire: RouterWire): { x: number; y: number } | null => {
-    const node = nodes.find((n) => n.id === wire.source);
-    if (!node) return null;
-    const width =
-      node.measured?.width ??
-      (node.width as number | undefined) ??
-      (node.style?.width as number | undefined) ??
-      300;
-    const height =
-      node.measured?.height ??
-      (node.height as number | undefined) ??
-      (node.style?.height as number | undefined) ??
-      200;
-    const flowX = node.position.x + width;
-    const flowY = node.position.y + height / 2;
-    return { x: flowX * viewport.zoom + viewport.x, y: flowY * viewport.zoom + viewport.y };
-  };
 
   const rows: (string | null)[] = [...types, null];
 
   return (
     <>
-      {/* Wire edges: terminal output → its type socket (purely visual) */}
-      <svg
-        className="absolute inset-0 z-10"
-        style={{ overflow: "visible", pointerEvents: "none" }}
-      >
-        {wires.map((wire, i) => {
-          const from = terminalPos(wire);
-          if (!from) return null;
-          const to = { x: socketX, y: socketY(typeIndex.get(wire.sourceHandle) ?? 0) };
-          const dx = Math.max(40, (to.x - from.x) * 0.5);
-          const d = `M ${from.x} ${from.y} C ${from.x + dx} ${from.y} ${to.x - dx} ${to.y} ${to.x} ${to.y}`;
-          const color = TYPE_COLORS[wire.sourceHandle] ?? "#888888";
-          return (
-            <path
-              key={`${wire.source}-${wire.sourceHandle}-${i}`}
-              d={d}
-              stroke={color}
-              strokeWidth={2}
-              fill="none"
-              opacity={0.9}
-            />
-          );
-        })}
-      </svg>
+      {/* Per-wire delete buttons at each wire's midpoint (revealed on hover) */}
+      {geoms.map((geom, i) => (
+        <div
+          key={`del-${geom.wire.source}-${geom.wire.sourceHandle}-${i}`}
+          className="absolute z-[21]"
+          style={{ left: geom.mid.x, top: geom.mid.y, transform: "translate(-50%, -50%)" }}
+        >
+          <button
+            type="button"
+            onClick={() => onDisconnectWire(geom.wire.source, geom.wire.sourceHandle)}
+            title="Delete router connection"
+            aria-label="Delete router connection"
+            className="group grid place-items-center"
+            style={{ width: 28, height: 28, background: "transparent", pointerEvents: "auto" }}
+          >
+            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-neutral-800 border border-neutral-600 text-neutral-400 shadow-md opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-hover:text-red-400 group-hover:border-red-500 group-hover:bg-red-500/20">
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </span>
+          </button>
+        </div>
+      ))}
 
       {/* The fixed rail */}
       <div
