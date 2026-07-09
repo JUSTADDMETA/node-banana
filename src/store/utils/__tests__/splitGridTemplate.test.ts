@@ -254,6 +254,18 @@ describe("splitGridTemplate utilities", () => {
       expect(classicKey).not.toBe(defaultKey);
       expect(seededKey).not.toBe(classicKey);
     });
+
+    it("differs when a terminal is wired to the router port", () => {
+      const base = createClassicSplitGridTemplate();
+      const wired: SplitGridTemplate = {
+        ...base,
+        router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
+      };
+      const baseKey = computeMaterializedKey(2, 2, base);
+      expect(computeMaterializedKey(2, 2, wired)).not.toBe(baseKey);
+      // An empty router array is treated as no router (byte-identical to legacy)
+      expect(computeMaterializedKey(2, 2, { ...wired, router: [] })).toBe(baseKey);
+    });
   });
 
   describe("getSplitGridCells", () => {
@@ -613,6 +625,61 @@ describe("splitGridTemplate utilities", () => {
       // Default fields survive the merge
       expect(data.status).toBe("idle");
       expect(data.outputImage).toBeNull();
+    });
+
+    it("emits one terminal->router edge per cell and a router position when a router is wired", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
+      };
+      const { options } = makeBuildOptions(template, 2, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      // The router node itself is created by the store, not here
+      expect(result.nodes.filter((n) => n.type === "router")).toHaveLength(0);
+      // 3 real nodes per cell; the router is never a cell member
+      expect(result.nodes).toHaveLength(4 * 3);
+      for (const cell of result.cells) expect(cell.nodeIds).toHaveLength(3);
+
+      // One typed router edge per cell, from the generate node
+      expect(result.routerEdges).toHaveLength(4);
+      for (const e of result.routerEdges) {
+        expect(e.target).toBe("router-1");
+        expect(e.sourceHandle).toBe("image");
+        expect(e.targetHandle).toBe("image");
+      }
+      // Router edges are separate from the intra-cell edges
+      expect(result.edges.some((e) => e.target === "router-1")).toBe(false);
+
+      // Positioned to the right of the whole grid
+      expect(result.routerPosition).not.toBeNull();
+      const gridRight = Math.max(
+        ...Object.values(result.groups).map((g) => g.position.x + g.size.width)
+      );
+      expect(result.routerPosition!.x).toBeGreaterThan(gridRight);
+    });
+
+    it("emits no router edges or position when routerNodeId is not supplied", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
+      };
+      const { options } = makeBuildOptions(template, 2, 2);
+
+      const result = buildCellInstances(options);
+
+      expect(result.routerEdges).toHaveLength(0);
+      expect(result.routerPosition).toBeNull();
+    });
+
+    it("emits no router edges when a routerNodeId is supplied but the port is unwired", () => {
+      const { options } = makeBuildOptions(createClassicSplitGridTemplate(), 2, 2);
+
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+
+      expect(result.routerEdges).toHaveLength(0);
+      expect(result.routerPosition).toBeNull();
     });
   });
 

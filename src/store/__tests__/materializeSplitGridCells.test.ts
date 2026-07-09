@@ -467,4 +467,244 @@ describe("materializeSplitGridCells", () => {
       expect(data.materializedKey).toBeNull();
     });
   });
+
+  describe("shared downstream router", () => {
+    // Classic template with its generate node wired to the fixed router port.
+    function routerWiredTemplate() {
+      const t = createClassicSplitGridTemplate();
+      return {
+        ...t,
+        router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
+      };
+    }
+
+    it("creates exactly one shared router right of the grid with a terminal->router edge per cell", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate() })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+
+      const state = useWorkflowStore.getState();
+      const routers = state.nodes.filter((n) => n.type === "router");
+      expect(routers).toHaveLength(1);
+      const router = routers[0];
+
+      // Tracked on the split node, shared (no group), grid groups unchanged
+      expect(getSplitData().routerNodeId).toBe(router.id);
+      expect(router.groupId).toBeUndefined();
+      expect(Object.keys(state.groups)).toHaveLength(4);
+
+      // One typed edge per cell, from each cell's generate node into the router
+      const routerEdges = state.edges.filter((e) => e.target === router.id);
+      expect(routerEdges).toHaveLength(4);
+      const generateIds = new Set(
+        state.nodes.filter((n) => n.type === "nanoBanana").map((n) => n.id)
+      );
+      for (const e of routerEdges) {
+        expect(generateIds.has(e.source)).toBe(true);
+        expect(e.targetHandle).toBe("image");
+        expect(e.type).not.toBe("reference");
+      }
+
+      // Positioned to the right of every cell node
+      const cellRightEdges = state.nodes
+        .filter((n) => n.groupId)
+        .map((n) => n.position.x + ((n.style?.width as number) ?? 300));
+      expect(router.position.x).toBeGreaterThan(Math.max(...cellRightEdges));
+
+      // split + 12 cell nodes + 1 router; 4 ref + 8 intra + 4 router edges
+      expect(state.nodes).toHaveLength(14);
+      expect(state.edges).toHaveLength(16);
+    });
+
+    it("creates no router when the template port is unwired", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: createClassicSplitGridTemplate() })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      const state = useWorkflowStore.getState();
+      expect(state.nodes.filter((n) => n.type === "router")).toHaveLength(0);
+      expect(getSplitData().routerNodeId ?? null).toBeNull();
+    });
+
+    it("reuses the router id and preserves onward wiring across a grid resize", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate() })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      const routerId = getSplitData().routerNodeId!;
+      expect(routerId).toBeTruthy();
+
+      // User wires the router onward to an output node on the main canvas
+      act(() => {
+        useWorkflowStore.setState((s) => ({
+          nodes: [...s.nodes, makeNode("out-1", "output")],
+          edges: [
+            ...s.edges,
+            {
+              id: "edge-router-out",
+              source: routerId,
+              sourceHandle: "image",
+              target: "out-1",
+              targetHandle: "image",
+            },
+          ],
+        }));
+      });
+
+      // Resize 2x2 -> 3x2 and rematerialize
+      act(() => {
+        useWorkflowStore.getState().updateNodeData(SPLIT_ID, { gridRows: 3 });
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+
+      const state = useWorkflowStore.getState();
+      expect(getSplitData().routerNodeId).toBe(routerId); // id stable
+      expect(state.nodes.filter((n) => n.type === "router")).toHaveLength(1);
+      expect(state.edges.filter((e) => e.target === routerId)).toHaveLength(6); // rewired to 6 cells
+      // Onward wiring survives
+      expect(
+        state.edges.some((e) => e.id === "edge-router-out" && e.source === routerId)
+      ).toBe(true);
+    });
+
+    it("removes the shared router and its edges when the port is unwired on re-apply", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate() })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      const routerId = getSplitData().routerNodeId!;
+      act(() => {
+        useWorkflowStore.setState((s) => ({
+          nodes: [...s.nodes, makeNode("out-1", "output")],
+          edges: [
+            ...s.edges,
+            {
+              id: "edge-router-out",
+              source: routerId,
+              sourceHandle: "image",
+              target: "out-1",
+              targetHandle: "image",
+            },
+          ],
+        }));
+      });
+
+      // Re-apply with a port-less template (user disconnected the port)
+      act(() => {
+        useWorkflowStore
+          .getState()
+          .materializeSplitGridCells(SPLIT_ID, {
+            force: true,
+            template: createClassicSplitGridTemplate(),
+          });
+      });
+
+      const state = useWorkflowStore.getState();
+      expect(state.nodes.filter((n) => n.type === "router")).toHaveLength(0);
+      expect(state.edges.some((e) => e.source === routerId || e.target === routerId)).toBe(false);
+      expect(getSplitData().routerNodeId).toBeNull();
+    });
+
+    it("restores the pre-router state on a single undo", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate() })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      expect(useWorkflowStore.getState().nodes.filter((n) => n.type === "router")).toHaveLength(1);
+
+      act(() => {
+        useWorkflowStore.getState().undo();
+      });
+      const state = useWorkflowStore.getState();
+      expect(state.nodes).toHaveLength(1);
+      expect(state.nodes[0].id).toBe(SPLIT_ID);
+      expect(state.nodes.filter((n) => n.type === "router")).toHaveLength(0);
+      expect(getSplitData().routerNodeId ?? null).toBeNull();
+    });
+
+    it("remaps routerNodeId when the router is copied with the split node", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate(), gridRows: 1, gridCols: 1 })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+
+      const before = useWorkflowStore.getState();
+      const split = before.nodes.find((n) => n.id === SPLIT_ID)!;
+      const routerId = (split.data as SplitGridNodeData).routerNodeId!;
+      const cellNodeIds = (split.data as SplitGridNodeData).cells!.flatMap((c) => c.nodeIds);
+      const clipboardNodes = [
+        split,
+        ...before.nodes.filter((n) => cellNodeIds.includes(n.id) || n.id === routerId),
+      ];
+
+      act(() => {
+        useWorkflowStore.setState({
+          clipboard: { nodes: clipboardNodes, edges: before.edges },
+        });
+        useWorkflowStore.getState().pasteNodes({ x: 800, y: 0 });
+      });
+
+      const after = useWorkflowStore.getState();
+      const pastedSplit = after.nodes.find((n) => n.type === "splitGrid" && n.id !== SPLIT_ID)!;
+      const newRouterId = (pastedSplit.data as SplitGridNodeData).routerNodeId!;
+      expect(newRouterId).toBeTruthy();
+      expect(newRouterId).not.toBe(routerId); // its OWN router, not the original's
+      expect(after.nodes.some((n) => n.id === newRouterId && n.type === "router")).toBe(true);
+      expect(after.edges.some((e) => e.target === newRouterId)).toBe(true);
+    });
+
+    it("detaches routerNodeId when the split is pasted without its router", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate(), gridRows: 1, gridCols: 1 })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+
+      const before = useWorkflowStore.getState();
+      const split = before.nodes.find((n) => n.id === SPLIT_ID)!;
+      const routerId = (split.data as SplitGridNodeData).routerNodeId!;
+      const cellNodeIds = (split.data as SplitGridNodeData).cells!.flatMap((c) => c.nodeIds);
+      // Clipboard WITHOUT the router node (and without router edges)
+      const clipboardNodes = [split, ...before.nodes.filter((n) => cellNodeIds.includes(n.id))];
+      const clipboardEdges = before.edges.filter(
+        (e) => e.source !== routerId && e.target !== routerId
+      );
+
+      act(() => {
+        useWorkflowStore.setState({
+          clipboard: { nodes: clipboardNodes, edges: clipboardEdges },
+        });
+        useWorkflowStore.getState().pasteNodes({ x: 800, y: 0 });
+      });
+
+      const after = useWorkflowStore.getState();
+      const pastedSplit = after.nodes.find((n) => n.type === "splitGrid" && n.id !== SPLIT_ID)!;
+      // Detached: the paste rebuilds its own cells + router on next split/apply
+      expect((pastedSplit.data as SplitGridNodeData).routerNodeId ?? null).toBeNull();
+      expect((pastedSplit.data as SplitGridNodeData).cells ?? []).toHaveLength(0);
+    });
+  });
 });

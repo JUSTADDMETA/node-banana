@@ -339,4 +339,52 @@ describe("SplitGridTemplateModal", () => {
       expect(screen.queryByText(GENERATE_WARNING)).not.toBeInTheDocument();
     });
   });
+
+  describe("Downstream router port", () => {
+    const wiredTemplate: SplitGridNodeData["template"] = {
+      baseNodeId: "cell-image",
+      nodes: [
+        { id: "cell-image", type: "imageInput", position: { x: 0, y: 0 } },
+        { id: "cell-prompt", type: "prompt", position: { x: 0, y: 310 } },
+        { id: "cell-generate", type: "nanoBanana", position: { x: 340, y: 0 } },
+      ],
+      edges: [
+        { id: "e1", source: "cell-image", sourceHandle: "image", target: "cell-generate", targetHandle: "image" },
+        { id: "e2", source: "cell-prompt", sourceHandle: "text", target: "cell-generate", targetHandle: "text" },
+      ],
+      router: [{ source: "cell-generate", sourceHandle: "image", targetHandle: "image" }],
+    };
+
+    it("renders the fixed downstream-router port", () => {
+      renderModal();
+
+      expect(screen.getByText("Downstream Router")).toBeInTheDocument();
+      expect(screen.getByText("shared · 1 total")).toBeInTheDocument();
+    });
+
+    it("round-trips the router wiring into the applied template", () => {
+      renderModal({ nodeData: { template: wiredTemplate } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+      const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+      expect(options.template.router).toEqual([
+        { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+      ]);
+      // The port itself is never emitted as a template node
+      expect(
+        options.template.nodes.some((node: { type: string }) => node.type === "router")
+      ).toBe(false);
+    });
+
+    it("clears the router wiring when a preset resets the node set", () => {
+      renderModal({ nodeData: { template: wiredTemplate } });
+
+      fireEvent.click(screen.getByRole("button", { name: "Image only" }));
+      fireEvent.click(screen.getByRole("button", { name: "Apply to 6 cells" }));
+
+      const [, options] = mockMaterializeSplitGridCells.mock.calls[0];
+      expect(options.template.router ?? []).toHaveLength(0);
+    });
+  });
 });
