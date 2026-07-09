@@ -14,6 +14,7 @@ import type {
   WorkflowNodeData,
   NodeGroup,
   GroupColor,
+  HandleType,
   SplitGridNodeData,
   SplitGridTemplate,
   SplitGridTemplateRouterConnection,
@@ -30,27 +31,86 @@ import {
 export { createDefaultSplitGridTemplate, SPLIT_GRID_BASE_NODE_ID };
 
 /** Handle types the Router node can render (mirrors RouterNode ALL_HANDLE_TYPES). */
-const ROUTER_HANDLE_TYPES = new Set(["image", "text", "video", "audio", "3d", "easeCurve"]);
+const ROUTER_HANDLE_TYPES = new Set<HandleType>([
+  "image",
+  "text",
+  "video",
+  "audio",
+  "3d",
+  "easeCurve",
+]);
+
+const STATIC_OUTPUT_HANDLES: Partial<Record<NodeType, readonly HandleType[]>> = {
+  imageInput: ["image"],
+  audioInput: ["audio"],
+  videoInput: ["video"],
+  annotation: ["image"],
+  prompt: ["text"],
+  array: ["text"],
+  promptConstructor: ["text"],
+  nanoBanana: ["image"],
+  generateVideo: ["video"],
+  generate3d: ["3d"],
+  generateAudio: ["audio"],
+  llmGenerate: ["text"],
+  videoStitch: ["video"],
+  easeCurve: ["video", "easeCurve"],
+  videoTrim: ["video"],
+  videoFrameGrab: ["image"],
+  removeBackground: ["image"],
+  imageResize: ["image"],
+  gifEncoder: ["image"],
+  router: ["image", "text", "video", "audio", "3d", "easeCurve"],
+  glbViewer: ["image"],
+};
 
 /**
  * Terminal→router-port connections declared on the template (empty when the
  * downstream router port is unwired). The single source of truth consumers use
  * to decide whether a shared router should be materialized.
  *
- * Connections from untrusted templates (AI-generated / hand-edited JSON) are
- * validated here — the source must be a real template node and the targetHandle
- * a type the Router can actually render — so a malformed entry can never
- * produce an orphan router or an edge on a handle that never appears.
+ * Connections from untrusted templates are normalized here. Structurally
+ * invalid entries, unsupported or mismatched handles, missing source outputs,
+ * and duplicates are discarded before hashing or materialization.
  */
 export function getRouterConnections(
   template: SplitGridTemplate
 ): SplitGridTemplateRouterConnection[] {
-  if (!template.router || template.router.length === 0) return [];
-  const nodeIds = new Set(template.nodes.map((node) => node.id));
-  return template.router.filter(
-    (connection) =>
-      nodeIds.has(connection.source) && ROUTER_HANDLE_TYPES.has(connection.targetHandle)
+  const rawConnections: unknown = template.router;
+  if (!Array.isArray(rawConnections) || rawConnections.length === 0) return [];
+
+  const nodesById = new Map(
+    (Array.isArray(template.nodes) ? template.nodes : []).map((node) => [node.id, node])
   );
+  const uniqueConnections = new Map<string, SplitGridTemplateRouterConnection>();
+
+  for (const value of rawConnections) {
+    if (!value || typeof value !== "object") continue;
+    const connection = value as Record<string, unknown>;
+    const { source, sourceHandle, targetHandle } = connection;
+    if (
+      typeof source !== "string" ||
+      typeof sourceHandle !== "string" ||
+      typeof targetHandle !== "string" ||
+      sourceHandle !== targetHandle ||
+      !ROUTER_HANDLE_TYPES.has(targetHandle as HandleType)
+    ) {
+      continue;
+    }
+
+    const sourceNode = nodesById.get(source);
+    const outputs = sourceNode ? STATIC_OUTPUT_HANDLES[sourceNode.type] ?? [] : [];
+    if (!outputs.includes(sourceHandle as HandleType)) continue;
+
+    const normalized = {
+      source,
+      sourceHandle,
+      targetHandle,
+    } satisfies SplitGridTemplateRouterConnection;
+    uniqueConnections.set(`${source}\u0000${sourceHandle}`, normalized);
+  }
+
+  return [...uniqueConnections.values()].sort(compareRouterConnections);
 }
 
 /** Stable ordering for router connections so hashing/serialization is deterministic. */
@@ -261,7 +321,11 @@ export function hasLegacyCellsOnly(data: SplitGridNodeData): boolean {
 export function needsMaterialization(
   data: SplitGridNodeData,
   existingNodeIds: Set<string>,
-  options?: { ignoreLegacy?: boolean; template?: SplitGridTemplate }
+  options?: {
+    ignoreLegacy?: boolean;
+    template?: SplitGridTemplate;
+    existingRouterNodeIds?: Set<string>;
+  }
 ): boolean {
   const rows = clampGridDimension(data.gridRows);
   const cols = clampGridDimension(data.gridCols);
@@ -279,7 +343,8 @@ export function needsMaterialization(
   // restore the router and its terminal wiring.
   if (
     getRouterConnections(template).length > 0 &&
-    (!data.routerNodeId || !existingNodeIds.has(data.routerNodeId))
+    (!data.routerNodeId ||
+      !(options?.existingRouterNodeIds ?? existingNodeIds).has(data.routerNodeId))
   ) {
     return true;
   }

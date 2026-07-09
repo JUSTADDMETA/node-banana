@@ -579,6 +579,105 @@ describe("materializeSplitGridCells", () => {
       ).toBe(true);
     });
 
+    it("removes onward edges whose router output type is no longer active", () => {
+      useWorkflowStore.setState({
+        nodes: [makeSplitGridNode({ template: routerWiredTemplate() })],
+        edges: [],
+      });
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+      const routerId = getSplitData().routerNodeId!;
+      act(() => {
+        useWorkflowStore.setState((state) => ({
+          nodes: [...state.nodes, makeNode("out-1", "output")],
+          edges: [
+            ...state.edges,
+            {
+              id: "edge-router-out",
+              source: routerId,
+              sourceHandle: "image",
+              target: "out-1",
+              targetHandle: "image",
+            },
+          ],
+        }));
+      });
+
+      const textRouterTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [{ source: "cell-prompt", sourceHandle: "text", targetHandle: "text" }],
+      };
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID, {
+          force: true,
+          template: textRouterTemplate,
+        });
+      });
+
+      const state = useWorkflowStore.getState();
+      expect(getSplitData().routerNodeId).toBe(routerId);
+      expect(state.edges.some((edge) => edge.id === "edge-router-out")).toBe(false);
+      expect(state.edges.filter((edge) => edge.target === routerId)).toHaveLength(4);
+      expect(
+        state.edges
+          .filter((edge) => edge.target === routerId)
+          .every((edge) => edge.targetHandle === "text")
+      ).toBe(true);
+    });
+
+    it("does not reuse a non-router node referenced by corrupt router metadata", () => {
+      const victim = { ...makeNode("victim-1", "output"), position: { x: 50, y: 75 } };
+      useWorkflowStore.setState({
+        nodes: [
+          makeSplitGridNode({
+            template: routerWiredTemplate(),
+            routerNodeId: victim.id,
+          }),
+          victim,
+        ],
+        edges: [],
+      });
+
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID);
+      });
+
+      const state = useWorkflowStore.getState();
+      expect(state.nodes.find((node) => node.id === victim.id)).toMatchObject({
+        type: "output",
+        position: victim.position,
+      });
+      expect(getSplitData().routerNodeId).not.toBe(victim.id);
+      expect(state.nodes.filter((node) => node.type === "router")).toHaveLength(1);
+      expect(state.edges.some((edge) => edge.target === victim.id)).toBe(false);
+    });
+
+    it("does not delete a non-router node when corrupt router metadata is cleared", () => {
+      const victim = makeNode("victim-1", "output");
+      useWorkflowStore.setState({
+        nodes: [
+          makeSplitGridNode({
+            template: createClassicSplitGridTemplate(),
+            routerNodeId: victim.id,
+          }),
+          victim,
+        ],
+        edges: [],
+      });
+
+      act(() => {
+        useWorkflowStore.getState().materializeSplitGridCells(SPLIT_ID, {
+          force: true,
+          template: createClassicSplitGridTemplate(),
+        });
+      });
+
+      const state = useWorkflowStore.getState();
+      expect(state.nodes.some((node) => node.id === victim.id && node.type === "output")).toBe(true);
+      expect(getSplitData().routerNodeId).toBeNull();
+    });
+
     it("removes the shared router and its edges when the port is unwired on re-apply", () => {
       useWorkflowStore.setState({
         nodes: [makeSplitGridNode({ template: routerWiredTemplate() })],

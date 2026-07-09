@@ -156,7 +156,10 @@ export function SplitGridNode({ id, data, selected }: NodeProps<SplitGridNodeTyp
   const cells = getSplitGridCells(nodeData);
   const cellsAreStale = useMemo(() => {
     const existingIds = new Set(nodes.map((node) => node.id));
-    return needsMaterialization(nodeData, existingIds);
+    const existingRouterNodeIds = new Set(
+      nodes.filter((node) => node.type === "router").map((node) => node.id)
+    );
+    return needsMaterialization(nodeData, existingIds, { existingRouterNodeIds });
   }, [nodeData, nodes]);
 
   // Custom interior line positions (from dragging); fall back to uniform.

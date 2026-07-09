@@ -16,6 +16,7 @@ import {
   hasLegacyCellsOnly,
   needsMaterialization,
   buildCellInstances,
+  getRouterConnections,
   sanitizeGridOffsets,
   resolveGridOffsets,
   gridBoundaries,
@@ -733,6 +734,38 @@ describe("splitGridTemplate utilities", () => {
 
       expect(result.routerEdges).toHaveLength(0);
       expect(result.routerPosition).toBeNull();
+    });
+
+    it("normalizes malformed, mismatched, and duplicate router connections", () => {
+      const template: SplitGridTemplate = {
+        ...createClassicSplitGridTemplate(),
+        router: [
+          { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+          { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+          { source: "cell-generate", sourceHandle: "bogus", targetHandle: "image" },
+          { source: "cell-prompt", sourceHandle: "text", targetHandle: "image" },
+        ],
+      };
+
+      expect(getRouterConnections(template)).toEqual([
+        { source: "cell-generate", sourceHandle: "image", targetHandle: "image" },
+      ]);
+
+      const { options } = makeBuildOptions(template, 1, 2);
+      const result = buildCellInstances({ ...options, routerNodeId: "router-1" });
+      expect(result.routerEdges).toHaveLength(2);
+      expect(new Set(result.routerEdges.map((edge) => edge.id)).size).toBe(2);
+    });
+
+    it("treats structurally invalid router metadata as unwired", () => {
+      const base = createClassicSplitGridTemplate();
+      const invalidValues: unknown[] = [{}, [null], [{ source: 42 }]];
+
+      for (const router of invalidValues) {
+        const template = { ...base, router } as SplitGridTemplate;
+        expect(getRouterConnections(template)).toEqual([]);
+        expect(() => computeMaterializedKey(2, 2, template)).not.toThrow();
+      }
     });
   });
 

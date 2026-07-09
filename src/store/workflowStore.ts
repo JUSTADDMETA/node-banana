@@ -1369,17 +1369,21 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     if (!splitNode) return false;
     const data = splitNode.data as SplitGridNodeData;
 
+    const template = options?.template ?? getSplitGridTemplate(data);
     const existingNodeIds = new Set(state.nodes.map((n) => n.id));
+    const existingRouterNodeIds = new Set(
+      state.nodes.filter((node) => node.type === "router").map((node) => node.id)
+    );
     if (
       !needsMaterialization(data, existingNodeIds, {
         ignoreLegacy: options?.force,
         template: options?.template,
+        existingRouterNodeIds,
       })
     ) {
       return false;
     }
 
-    const template = options?.template ?? getSplitGridTemplate(data);
     const rows = clampGridDimension(data.gridRows);
     const cols = clampGridDimension(data.gridCols);
 
@@ -1388,9 +1392,15 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     // the port newly gains wiring, and mark the old one for removal when the
     // port is cleared. The router is never a cell member, so cell teardown below
     // never touches it or its onward edges.
-    const hasRouter = getRouterConnections(template).length > 0;
+    const routerConnections = getRouterConnections(template);
+    const activeRouterHandleTypes = new Set(
+      routerConnections.map((connection) => connection.targetHandle)
+    );
+    const hasRouter = routerConnections.length > 0;
     const existingRouterId =
-      data.routerNodeId && existingNodeIds.has(data.routerNodeId) ? data.routerNodeId : null;
+      data.routerNodeId && existingRouterNodeIds.has(data.routerNodeId)
+        ? data.routerNodeId
+        : null;
     const routerNodeId = hasRouter ? existingRouterId ?? `router-${++nodeIdCounter}` : null;
     const removedRouterId = !hasRouter ? existingRouterId : null;
 
@@ -1438,11 +1448,15 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         staleNodeIds.has(edge.source) ||
         staleNodeIds.has(edge.target) ||
         edge.source === removedRouterId ||
-        edge.target === removedRouterId
+        edge.target === removedRouterId ||
+        (existingRouterId !== null &&
+          edge.source === existingRouterId &&
+          !activeRouterHandleTypes.has(edge.sourceHandle ?? ""))
     );
+    const removedEdgeIds = new Set(removedEdges.map((edge) => edge.id));
 
     // A newly wired router needs a real node; a reused one is repositioned in
-    // place inside the set() below so its grown height + onward edges survive.
+    // place below so its grown height and compatible onward edges survive.
     const newRouterNode: WorkflowNode | null =
       routerNodeId && !existingRouterId && built.routerPosition
         ? {
@@ -1504,13 +1518,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           ...(newRouterNode ? [newRouterNode] : []),
         ] as WorkflowNode[],
         edges: [
-          ...current.edges.filter(
-            (edge) =>
-              !staleNodeIds.has(edge.source) &&
-              !staleNodeIds.has(edge.target) &&
-              edge.source !== removedRouterId &&
-              edge.target !== removedRouterId
-          ),
+          ...current.edges.filter((edge) => !removedEdgeIds.has(edge.id)),
           ...built.edges,
           ...built.routerEdges,
         ],
