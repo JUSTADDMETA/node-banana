@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from "react";
 import { useReactFlow } from "@xyflow/react";
 import type { CanvasNavigationSettings } from "@/types/canvas";
+import { setCanvasWheelPanningClass } from "@/utils/canvasPerformance";
 
 /**
  * Wheel-based pan/zoom for a React Flow canvas, honoring the user's
@@ -29,6 +30,49 @@ interface ViewportPanBatcherOptions {
   setViewport: (viewport: ViewportState) => void;
   requestFrame?: (callback: FrameRequestCallback) => number;
   cancelFrame?: (handle: number) => void;
+}
+
+interface PanActivityTrackerOptions {
+  setActive: (active: boolean) => void;
+  endDelayMs?: number;
+  scheduleEnd?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  cancelEnd?: (handle: ReturnType<typeof setTimeout>) => void;
+}
+
+export function createPanActivityTracker({
+  setActive,
+  endDelayMs = 120,
+  scheduleEnd = setTimeout,
+  cancelEnd = clearTimeout,
+}: PanActivityTrackerOptions): { signal: () => void; dispose: () => void } {
+  let active = false;
+  let endTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const deactivate = () => {
+    endTimer = null;
+    if (!active) return;
+    active = false;
+    setActive(false);
+  };
+
+  return {
+    signal() {
+      if (!active) {
+        active = true;
+        setActive(true);
+      }
+      if (endTimer !== null) cancelEnd(endTimer);
+      endTimer = scheduleEnd(deactivate, endDelayMs);
+    },
+    dispose() {
+      if (endTimer !== null) cancelEnd(endTimer);
+      endTimer = null;
+      if (active) {
+        active = false;
+        setActive(false);
+      }
+    },
+  };
 }
 
 export function createViewportPanBatcher({
@@ -125,6 +169,9 @@ export function useWheelPanZoom(
     const wrapper = wrapperRef.current;
     if (!wrapper || !enabled) return;
     const panBatcher = createViewportPanBatcher({ getViewport, setViewport });
+    const panActivity = createPanActivityTracker({
+      setActive: setCanvasWheelPanningClass,
+    });
 
     const handleWheel = (event: WheelEvent) => {
       // Let inner scroll areas (nowheel/textarea) keep their own scrolling.
@@ -159,6 +206,7 @@ export function useWheelPanZoom(
         } else {
           // Trackpad pan (also blocks horizontal swipe navigation).
           event.preventDefault();
+          panActivity.signal();
           panBatcher.queue(event.deltaX, event.deltaY);
         }
         return;
@@ -176,6 +224,7 @@ export function useWheelPanZoom(
     return () => {
       wrapper.removeEventListener("wheel", handleWheel);
       panBatcher.dispose();
+      panActivity.dispose();
     };
   }, [wrapperRef, enabled, settings, getViewport, setViewport, zoomIn, zoomOut]);
 }

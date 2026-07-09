@@ -1,6 +1,6 @@
 import type { ReactFlowState } from "@xyflow/react";
 
-export const OVERVIEW_ZOOM_THRESHOLD = 0.25;
+export const OVERVIEW_ZOOM_THRESHOLD = 0.4;
 
 export function isOverviewZoom(zoom: number): boolean {
   return zoom < OVERVIEW_ZOOM_THRESHOLD;
@@ -17,4 +17,11 @@ export function setCanvasPanningClass(
   root: HTMLElement = document.documentElement
 ): void {
   root.classList.toggle("canvas-panning", isPanning);
+}
+
+export function setCanvasWheelPanningClass(
+  isPanning: boolean,
+  root: HTMLElement = document.documentElement
+): void {
+  root.classList.toggle("canvas-wheel-panning", isPanning);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createViewportPanBatcher } from "../useWheelPanZoom";
+import { createPanActivityTracker, createViewportPanBatcher } from "../useWheelPanZoom";
 
 describe("createViewportPanBatcher", () => {
   it("coalesces multiple wheel events into one viewport update per frame", () => {
@@ -44,5 +44,45 @@ describe("createViewportPanBatcher", () => {
 
     expect(cancelFrame).toHaveBeenCalledWith(12);
     expect(setViewport).not.toHaveBeenCalled();
+  });
+});
+
+describe("createPanActivityTracker", () => {
+  it("keeps performance mode active until wheel activity settles", () => {
+    let endCallback: (() => void) | null = null;
+    const setActive = vi.fn();
+    const cancelEnd = vi.fn();
+    const tracker = createPanActivityTracker({
+      setActive,
+      scheduleEnd: (callback) => {
+        endCallback = callback;
+        return 9 as ReturnType<typeof setTimeout>;
+      },
+      cancelEnd,
+    });
+
+    tracker.signal();
+    tracker.signal();
+
+    expect(setActive).toHaveBeenCalledTimes(1);
+    expect(setActive).toHaveBeenCalledWith(true);
+    expect(cancelEnd).toHaveBeenCalledWith(9);
+
+    endCallback?.();
+    expect(setActive).toHaveBeenLastCalledWith(false);
+  });
+
+  it("clears performance mode when disposed", () => {
+    const setActive = vi.fn();
+    const tracker = createPanActivityTracker({
+      setActive,
+      scheduleEnd: () => 11 as ReturnType<typeof setTimeout>,
+      cancelEnd: vi.fn(),
+    });
+
+    tracker.signal();
+    tracker.dispose();
+
+    expect(setActive).toHaveBeenLastCalledWith(false);
   });
 });

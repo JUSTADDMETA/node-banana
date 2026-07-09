@@ -151,6 +151,8 @@ const edgeTypes: EdgeTypes = {
   reference: ReferenceEdge,
 };
 
+const OVERVIEW_EDGES: Edge[] = [];
+
 // Connection validation rules
 // - Image handles (green) can only connect to image handles
 // - Text handles (blue) can only connect to text handles
@@ -2107,7 +2109,7 @@ export function WorkflowCanvas() {
 
       <ReactFlow
         nodes={allNodes}
-        edges={edges}
+        edges={isCanvasOverview ? OVERVIEW_EDGES : edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}

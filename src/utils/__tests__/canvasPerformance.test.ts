@@ -3,6 +3,7 @@ import {
   OVERVIEW_ZOOM_THRESHOLD,
   selectCanvasOverview,
   setCanvasPanningClass,
+  setCanvasWheelPanningClass,
 } from "../canvasPerformance";
 
 describe("canvas performance helpers", () => {
@@ -25,5 +26,15 @@ describe("canvas performance helpers", () => {
     setCanvasPanningClass(false, root);
     expect(root).toHaveClass("existing");
     expect(root).not.toHaveClass("canvas-panning");
+  });
+
+  it("toggles wheel-panning independently from React Flow gestures", () => {
+    const root = document.createElement("div");
+
+    setCanvasWheelPanningClass(true, root);
+    expect(root).toHaveClass("canvas-wheel-panning");
+
+    setCanvasWheelPanningClass(false, root);
+    expect(root).not.toHaveClass("canvas-wheel-panning");
   });
 });

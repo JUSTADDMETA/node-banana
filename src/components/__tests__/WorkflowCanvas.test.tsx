@@ -20,6 +20,9 @@ const mockClearClipboard = vi.fn();
 const mockSetShowQuickstart = vi.fn();
 const mockUseWorkflowStore = vi.fn();
 const mockViewport = vi.hoisted(() => ({ zoom: 1 }));
+const mockReactFlowProps = vi.hoisted(() => ({
+  current: null as Record<string, unknown> | null,
+}));
 
 vi.mock("@/store/workflowStore", () => ({
   useWorkflowStore: (selector?: (state: unknown) => unknown) => {
@@ -38,9 +41,14 @@ const mockZoomOut = vi.fn();
 const mockSetViewport = vi.fn();
 
 vi.mock("@xyflow/react", async () => {
-  const actual = await vi.importActual("@xyflow/react");
+  const actual = await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
+  const React = await vi.importActual<typeof import("react")>("react");
   return {
     ...actual,
+    ReactFlow: (props: Record<string, unknown>) => {
+      mockReactFlowProps.current = props;
+      return React.createElement(actual.ReactFlow, props);
+    },
     useStore: (selector: (state: { transform: [number, number, number]; nodeLookup: Map<string, unknown> }) => unknown) =>
       selector({ transform: [0, 0, mockViewport.zoom], nodeLookup: new Map() }),
     useReactFlow: () => ({
@@ -159,6 +167,7 @@ describe("WorkflowCanvas", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockViewport.zoom = 1;
+    mockReactFlowProps.current = null;
     // Default mock implementation
     mockUseWorkflowStore.mockImplementation((selector) => {
       return selector(createDefaultState());
@@ -186,6 +195,27 @@ describe("WorkflowCanvas", () => {
       );
 
       expect(document.querySelector(".bg-canvas-bg")).toHaveClass("canvas-overview");
+    });
+
+    it("removes edges from React Flow while in overview mode", () => {
+      mockViewport.zoom = 0.3;
+      mockUseWorkflowStore.mockImplementation((selector) =>
+        selector(
+          createDefaultState({
+            edges: [
+              { id: "router-edge", source: "source", target: "router" },
+            ],
+          })
+        )
+      );
+
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      expect(mockReactFlowProps.current?.edges).toEqual([]);
     });
 
     it("should render Background component", () => {
