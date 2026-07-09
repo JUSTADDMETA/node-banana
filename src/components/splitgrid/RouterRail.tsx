@@ -45,9 +45,10 @@ const TYPE_LABELS: Record<string, string> = {
 const EMPTY_COLOR = "#6b7280";
 
 const ROW_H = 28;
-const LABEL_H = 20;
-const RAIL_RIGHT = 24; // distance from the wrapper's right edge
-const CONTENT_W = 128;
+const LABEL_H = 28; // room for the "Router" caption + its top gap
+const CAPTION_GAP = 10; // vertical gap between the sockets and the "Router" caption
+const RAIL_RIGHT = 12; // distance from the wrapper's right edge
+const CONTENT_W = 72;
 const SOCKET_LEFT = 26; // socket center, measured from the rail content's left
 
 /** Distinct wired types, in a stable order (one socket row per type). */
@@ -245,7 +246,7 @@ export function RouterRail({
         {/* "Router" caption beneath the connector */}
         <span
           className="absolute text-[11px] font-semibold text-neutral-300 whitespace-nowrap select-none"
-          style={{ top: railH + 3, left: SOCKET_LEFT, transform: "translateX(-50%)" }}
+          style={{ top: railH + CAPTION_GAP, left: SOCKET_LEFT, transform: "translateX(-50%)" }}
         >
           Router
         </span>
