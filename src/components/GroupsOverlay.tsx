@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useState, useRef, useEffect } from "react";
-import { useViewport, ViewportPortal } from "@xyflow/react";
+import { memo, useCallback, useState, useRef, useEffect } from "react";
+import { useStore, ViewportPortal, type ReactFlowState } from "@xyflow/react";
+import { useShallow } from "zustand/shallow";
 import { useWorkflowStore, GROUP_COLORS } from "@/store/workflowStore";
 import { GroupColor } from "@/types";
 
@@ -30,8 +31,7 @@ interface GroupBackgroundProps {
 
 // Renders just the group background - displayed below nodes (z-index 1)
 function GroupBackground({ groupId }: GroupBackgroundProps) {
-  const { groups } = useWorkflowStore();
-  const group = groups[groupId];
+  const group = useWorkflowStore((state) => state.groups[groupId]);
 
   if (!group) return null;
 
@@ -59,9 +59,17 @@ interface GroupControlsProps {
 }
 
 // Renders the group header and resize handles - displayed above nodes (z-index 5)
-function GroupControls({ groupId, zoom }: GroupControlsProps) {
-  const { groups, updateGroup, deleteGroup, moveGroupNodes, toggleGroupLock } = useWorkflowStore();
-  const group = groups[groupId];
+const GroupControls = memo(function GroupControls({ groupId, zoom }: GroupControlsProps) {
+  const { group, updateGroup, deleteGroup, moveGroupNodes, toggleGroupLock } =
+    useWorkflowStore(
+      useShallow((state) => ({
+        group: state.groups[groupId],
+        updateGroup: state.updateGroup,
+        deleteGroup: state.deleteGroup,
+        moveGroupNodes: state.moveGroupNodes,
+        toggleGroupLock: state.toggleGroupLock,
+      }))
+    );
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(group?.name || "");
@@ -519,13 +527,16 @@ function GroupControls({ groupId, zoom }: GroupControlsProps) {
       />
     </div>
   );
+});
+
+export function selectViewportZoom(state: Pick<ReactFlowState, "transform">): number {
+  return state.transform[2];
 }
 
 // Renders group backgrounds inside ReactFlow's viewport using ViewportPortal
 // This participates in React Flow's stacking context so z-index works properly
 export function GroupBackgroundsPortal() {
-  const { groups } = useWorkflowStore();
-  const groupIds = Object.keys(groups);
+  const groupIds = useWorkflowStore(useShallow((state) => Object.keys(state.groups)));
 
   if (groupIds.length === 0) return null;
 
@@ -542,10 +553,8 @@ export function GroupBackgroundsPortal() {
 
 // Renders group controls (headers, resize handles) using ViewportPortal above nodes
 export function GroupControlsOverlay() {
-  const { groups } = useWorkflowStore();
-  const { zoom } = useViewport();
-
-  const groupIds = Object.keys(groups);
+  const groupIds = useWorkflowStore(useShallow((state) => Object.keys(state.groups)));
+  const zoom = useStore(selectViewportZoom);
 
   if (groupIds.length === 0) return null;
 

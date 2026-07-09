@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { GroupBackgroundsPortal, GroupControlsOverlay, GroupsOverlay } from "@/components/GroupsOverlay";
+import {
+  GroupBackgroundsPortal,
+  GroupControlsOverlay,
+  GroupsOverlay,
+  selectViewportZoom,
+} from "@/components/GroupsOverlay";
 import { Group } from "@/types";
 
 // Mock ReactFlow hooks and components
@@ -8,7 +13,8 @@ vi.mock("@xyflow/react", () => ({
   useReactFlow: () => ({
     getViewport: () => ({ zoom: 1, x: 0, y: 0 }),
   }),
-  useViewport: () => ({ zoom: 1, x: 0, y: 0 }),
+  useStore: (selector: (state: { transform: [number, number, number] }) => unknown) =>
+    selector({ transform: [0, 0, 1] }),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="viewport-portal">{children}</div>
   ),
@@ -178,6 +184,10 @@ describe("GroupControlsOverlay", () => {
       const { container } = render(<GroupControlsOverlay />);
       expect(container.firstChild).toBeNull();
     });
+  });
+
+  it("selects only zoom from viewport state", () => {
+    expect(selectViewportZoom({ transform: [125, -80, 0.4] } as never)).toBe(0.4);
   });
 
   describe("Group Controls Rendering", () => {
