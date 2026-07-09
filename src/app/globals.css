@@ -52,7 +52,7 @@ body {
    content to eliminate expensive browser hit-testing against the DOM tree.
    The class is toggled on <html> via direct DOM access (no React re-render). */
 .canvas-interacting .react-flow__node > *,
-.canvas-wheel-panning .react-flow__node > * {
+.canvas-wheel-navigation-active .react-flow__node > * {
   pointer-events: none;
 }
 
@@ -63,21 +63,21 @@ body {
   display: none !important;
 }
 
-.canvas-panning .group-interactive-controls,
-.canvas-wheel-panning .group-interactive-controls,
-.canvas-panning .group-resize-controls,
-.canvas-wheel-panning .group-resize-controls,
-.canvas-panning .react-flow__resize-control,
-.canvas-wheel-panning .react-flow__resize-control {
+.canvas-native-navigation-active .group-interactive-controls,
+.canvas-wheel-navigation-active .group-interactive-controls,
+.canvas-native-navigation-active .group-resize-controls,
+.canvas-wheel-navigation-active .group-resize-controls,
+.canvas-native-navigation-active .react-flow__resize-control,
+.canvas-wheel-navigation-active .react-flow__resize-control {
   visibility: hidden;
 }
 
-.canvas-panning .react-flow__node > * {
+.canvas-native-navigation-active .react-flow__node > * {
   box-shadow: none !important;
   transition: none !important;
 }
 
-.canvas-wheel-panning .react-flow__node > * {
+.canvas-wheel-navigation-active .react-flow__node > * {
   box-shadow: none !important;
   transition: none !important;
 }

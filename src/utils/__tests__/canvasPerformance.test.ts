@@ -21,20 +21,20 @@ describe("canvas performance helpers", () => {
     root.classList.add("existing");
 
     setCanvasPanningClass(true, root);
-    expect(root).toHaveClass("existing", "canvas-panning");
+    expect(root).toHaveClass("existing", "canvas-native-navigation-active");
 
     setCanvasPanningClass(false, root);
     expect(root).toHaveClass("existing");
-    expect(root).not.toHaveClass("canvas-panning");
+    expect(root).not.toHaveClass("canvas-native-navigation-active");
   });
 
   it("toggles wheel-panning independently from React Flow gestures", () => {
     const root = document.createElement("div");
 
     setCanvasWheelPanningClass(true, root);
-    expect(root).toHaveClass("canvas-wheel-panning");
+    expect(root).toHaveClass("canvas-wheel-navigation-active");
 
     setCanvasWheelPanningClass(false, root);
-    expect(root).not.toHaveClass("canvas-wheel-panning");
+    expect(root).not.toHaveClass("canvas-wheel-navigation-active");
   });
 });

@@ -16,12 +16,12 @@ export function setCanvasPanningClass(
   isPanning: boolean,
   root: HTMLElement = document.documentElement
 ): void {
-  root.classList.toggle("canvas-panning", isPanning);
+  root.classList.toggle("canvas-native-navigation-active", isPanning);
 }
 
 export function setCanvasWheelPanningClass(
   isPanning: boolean,
   root: HTMLElement = document.documentElement
 ): void {
-  root.classList.toggle("canvas-wheel-panning", isPanning);
+  root.classList.toggle("canvas-wheel-navigation-active", isPanning);
 }
