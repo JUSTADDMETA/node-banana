@@ -499,6 +499,20 @@ export interface SplitGridTemplateEdge {
 }
 
 /**
+ * One terminal wired into the template's fixed downstream-router port. Each
+ * connection designates a template node whose output feeds the single shared
+ * Router materialized to the right of the whole cell grid.
+ */
+export interface SplitGridTemplateRouterConnection {
+  /** Template node id whose output feeds the router */
+  source: string;
+  /** That node's output handle id ("image" | "text" | …) */
+  sourceHandle: string;
+  /** Resolved Router input type id (equals the source handle's type) */
+  targetHandle: string;
+}
+
+/**
  * Per-cell node template for a split-grid node. Always contains a base
  * image node (`baseNodeId`) that receives the split cell image.
  */
@@ -506,6 +520,13 @@ export interface SplitGridTemplate {
   baseNodeId: string;
   nodes: SplitGridTemplateNode[];
   edges: SplitGridTemplateEdge[];
+  /**
+   * Optional shared downstream router: terminal outputs wired into the fixed
+   * router port. Absent/empty ⇒ no router is materialized. The router is
+   * created once (not per cell) to the right of the whole grid; every cell's
+   * copy of each listed terminal connects into it.
+   */
+  router?: SplitGridTemplateRouterConnection[];
 }
 
 /**
@@ -542,6 +563,13 @@ export interface SplitGridNodeData extends BaseNodeData {
   cells?: SplitGridCell[];
   /** Snapshot key of rows/cols/template at last materialization, for staleness detection */
   materializedKey?: string | null;
+  /**
+   * Real node id of the shared downstream Router materialized from the
+   * template's router port; null/undefined when no terminal is wired to the
+   * port. Persisted so grid-resize rematerializations reuse (reposition +
+   * re-wire) the same Router node, preserving the user's onward wiring.
+   */
+  routerNodeId?: string | null;
   /** @deprecated Legacy pre-template field, kept for backward compatibility */
   targetCount: number;
   /** @deprecated Legacy pre-template field, kept for backward compatibility */
