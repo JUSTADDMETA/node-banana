@@ -195,7 +195,7 @@ describe("GroupControlsOverlay", () => {
   });
 
   it("keeps group titles but omits interactive controls at overview zoom", () => {
-    mockViewport.zoom = 0.2;
+    mockViewport.zoom = 0.1;
     mockUseWorkflowStore.mockImplementation((selector) => {
       return selector(
         createDefaultState({ groups: { "group-1": createMockGroup({ name: "Overview Group" }) } })

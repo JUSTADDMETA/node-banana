@@ -1,6 +1,6 @@
 import type { ReactFlowState } from "@xyflow/react";
 
-export const OVERVIEW_ZOOM_THRESHOLD = 0.4;
+export const OVERVIEW_ZOOM_THRESHOLD = 0.15;
 
 export function isOverviewZoom(zoom: number): boolean {
   return zoom < OVERVIEW_ZOOM_THRESHOLD;

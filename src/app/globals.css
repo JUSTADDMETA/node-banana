@@ -58,11 +58,7 @@ body {
 
 /* Large-workflow performance mode: images and nodes remain visible while
    expensive connection and control layers are skipped during navigation. */
-.canvas-panning .react-flow__edges,
-.canvas-wheel-panning .react-flow__edges,
 .canvas-overview .react-flow__edges,
-.canvas-panning .react-flow__edge,
-.canvas-wheel-panning .react-flow__edge,
 .canvas-overview .react-flow__edge {
   display: none !important;
 }

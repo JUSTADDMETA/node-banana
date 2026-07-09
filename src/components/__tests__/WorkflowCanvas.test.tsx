@@ -187,7 +187,7 @@ describe("WorkflowCanvas", () => {
     });
 
     it("marks the canvas as overview mode below the edge visibility threshold", () => {
-      mockViewport.zoom = 0.2;
+      mockViewport.zoom = 0.1;
       render(
         <TestWrapper>
           <WorkflowCanvas />
@@ -198,7 +198,7 @@ describe("WorkflowCanvas", () => {
     });
 
     it("removes edges from React Flow while in overview mode", () => {
-      mockViewport.zoom = 0.3;
+      mockViewport.zoom = 0.1;
       mockUseWorkflowStore.mockImplementation((selector) =>
         selector(
           createDefaultState({
@@ -216,6 +216,22 @@ describe("WorkflowCanvas", () => {
       );
 
       expect(mockReactFlowProps.current?.edges).toEqual([]);
+    });
+
+    it("keeps edges rendered above the fifteen-percent threshold", () => {
+      const edge = { id: "router-edge", source: "source", target: "router" };
+      mockViewport.zoom = 0.2;
+      mockUseWorkflowStore.mockImplementation((selector) =>
+        selector(createDefaultState({ edges: [edge] }))
+      );
+
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      expect(mockReactFlowProps.current?.edges).toEqual([edge]);
     });
 
     it("should render Background component", () => {
