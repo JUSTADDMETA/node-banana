@@ -145,8 +145,8 @@ export const MIN_SLICE_GAP = 0.02;
 
 /**
  * Validates interior grid-line offsets from untrusted data. Returns the offsets
- * only when they are the right length (count-1), each strictly inside (0,1),
- * and strictly ascending; otherwise null (caller falls back to uniform).
+ * only when they are the right length (count-1), each boundary leaves the
+ * minimum slice gap, and all values are strictly inside (0,1).
  */
 export function sanitizeGridOffsets(raw: unknown, count: number): number[] | null {
   if (!Array.isArray(raw) || raw.length !== count - 1) return null;
@@ -154,8 +154,10 @@ export function sanitizeGridOffsets(raw: unknown, count: number): number[] | nul
   for (let i = 0; i < nums.length; i++) {
     const v = nums[i];
     if (!Number.isFinite(v) || v <= 0 || v >= 1) return null;
-    if (i > 0 && v <= nums[i - 1]) return null;
+    const previousBoundary = i > 0 ? nums[i - 1] : 0;
+    if (v - previousBoundary < MIN_SLICE_GAP) return null;
   }
+  if (nums.length > 0 && 1 - nums[nums.length - 1] < MIN_SLICE_GAP) return null;
   return nums;
 }
 

@@ -59,13 +59,13 @@ import {
   type TemplateHandleKind,
 } from "./templateCatalog";
 import {
-  GEMINI_IMAGE_MODELS,
   SplitGridTemplateNode,
   TemplateEditableEdge,
   TemplateEditorContext,
   type TemplateNodeData,
   type TemplateRFNode,
 } from "./TemplateNodes";
+import { GEMINI_IMAGE_MODELS } from "@/types";
 
 const nodeTypes: NodeTypes = {
   splitGridTemplateNode: SplitGridTemplateNode,
