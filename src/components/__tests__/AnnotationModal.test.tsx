@@ -434,9 +434,17 @@ describe("AnnotationModal", () => {
     it("should call redo when Ctrl+Shift+Z is pressed", () => {
       render(<AnnotationModal />);
 
-      fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+      fireEvent.keyDown(window, { key: "Z", ctrlKey: true, shiftKey: true });
 
       expect(mockRedo).toHaveBeenCalled();
+    });
+
+    it("should call undo when the Z key is uppercase", () => {
+      render(<AnnotationModal />);
+
+      fireEvent.keyDown(window, { key: "Z", ctrlKey: true });
+
+      expect(mockUndo).toHaveBeenCalled();
     });
 
     it("should call undo when Cmd+Z is pressed (Mac)", () => {
@@ -450,7 +458,7 @@ describe("AnnotationModal", () => {
     it("should call redo when Cmd+Shift+Z is pressed (Mac)", () => {
       render(<AnnotationModal />);
 
-      fireEvent.keyDown(window, { key: "z", metaKey: true, shiftKey: true });
+      fireEvent.keyDown(window, { key: "Z", metaKey: true, shiftKey: true });
 
       expect(mockRedo).toHaveBeenCalled();
     });

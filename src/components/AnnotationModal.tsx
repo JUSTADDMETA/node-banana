@@ -130,7 +130,7 @@ export function AnnotationModal() {
         }
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         e.stopImmediatePropagation();
         if (e.shiftKey) {
