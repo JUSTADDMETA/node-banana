@@ -6,7 +6,7 @@ import { BaseNode } from "./BaseNode";
 import { ModelParameters } from "./ModelParameters";
 import { useWorkflowStore, saveNanoBananaDefaults, useProviderApiKeys } from "@/store/workflowStore";
 import { deduplicatedFetch } from "@/utils/deduplicatedFetch";
-import { NanoBananaNodeData, AspectRatio, Resolution, ModelType, MODEL_DISPLAY_NAMES, ProviderType, SelectedModel, ModelInputDef } from "@/types";
+import { NanoBananaNodeData, AspectRatio, Resolution, MODEL_DISPLAY_NAMES, ProviderType, SelectedModel, ModelInputDef, GEMINI_IMAGE_MODELS, ModelType } from "@/types";
 import { ProviderModel, ModelCapability } from "@/lib/providers/types";
 import { ModelSearchDialog } from "@/components/modals/ModelSearchDialog";
 import { getImageDimensions } from "@/utils/nodeDimensions";
@@ -47,13 +47,6 @@ const EXTENDED_ASPECT_RATIOS: AspectRatio[] = ["1:1", "1:4", "1:8", "2:3", "3:2"
 // Resolutions per model (nano-banana-pro: 1K-4K, nano-banana-2: 512-4K)
 const RESOLUTIONS_PRO: Resolution[] = ["1K", "2K", "4K"];
 const RESOLUTIONS_NB2: Resolution[] = ["512", "1K", "2K", "4K"];
-
-// Hardcoded Gemini image models (always available)
-const GEMINI_IMAGE_MODELS: { value: ModelType; label: string }[] = [
-  { value: "nano-banana", label: "Nano Banana" },
-  { value: "nano-banana-2", label: "Nano Banana 2" },
-  { value: "nano-banana-pro", label: "Nano Banana Pro" },
-];
 
 // Image generation capabilities
 const IMAGE_CAPABILITIES: ModelCapability[] = ["text-to-image", "image-to-image"];

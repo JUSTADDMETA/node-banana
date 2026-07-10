@@ -250,6 +250,50 @@ describe("getConnectedInputsPure", () => {
     expect(result.dynamicInputs).toEqual({ image_url: "data:image/png;base64,a" });
   });
 
+  it("should populate dynamicInputs through a router passthrough (regression: router bypassed dynamicInputs → 422)", () => {
+    const nodes = [
+      makeNode("img", "imageInput", { image: "data:image/png;base64,a" }),
+      makeNode("r", "router"),
+      makeNode("gen", "nanoBanana", {
+        inputSchema: [{ name: "image_url", type: "image" }],
+      }),
+    ];
+    const edges = [
+      makeEdge("img", "r", "image"),   // source → router
+      makeEdge("r", "gen", "image-0"), // router → generate (named schema slot)
+    ];
+    const result = getConnectedInputsPure("gen", nodes, edges);
+    // Before the fix, dynamicInputs was empty for routed inputs (router returned early) → 422
+    expect(result.dynamicInputs).toEqual({ image_url: "data:image/png;base64,a" });
+    // images[] still populated too (nanoBanana path unaffected)
+    expect(result.images).toEqual(["data:image/png;base64,a"]);
+  });
+
+  it("should populate dynamicInputs through an enabled switch passthrough", () => {
+    const nodes = [
+      makeNode("img", "imageInput", { image: "data:image/png;base64,a" }),
+      makeNode("sw", "switch", {
+        inputType: "image",
+        switches: [{ id: "sw-1", name: "Output 1", enabled: true }],
+      }),
+      makeNode("gen", "nanoBanana", {
+        inputSchema: [{ name: "image_url", type: "image" }],
+      }),
+    ];
+    const edges = [
+      makeEdge("img", "sw", "image"),
+      {
+        ...makeEdge("sw", "gen", "image-0"),
+        sourceHandle: "sw-1",
+      },
+    ];
+
+    const result = getConnectedInputsPure("gen", nodes, edges);
+
+    expect(result.dynamicInputs).toEqual({ image_url: "data:image/png;base64,a" });
+    expect(result.images).toEqual(["data:image/png;base64,a"]);
+  });
+
   it("should map a connected video into dynamicInputs and videos via schema", () => {
     const nodes = [
       makeNode("vid", "videoInput", { video: "data:video/mp4;base64,v" }),

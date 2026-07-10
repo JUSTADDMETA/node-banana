@@ -1313,6 +1313,12 @@ function getGeminiImageSchema(modelId: string): ExtractedSchema | null {
       ],
       inputs: commonInputs,
     },
+    "nano-banana-2-lite": {
+      parameters: [
+        { name: "aspectRatio", type: "string", description: "Output aspect ratio", enum: baseAspectRatios, default: "1:1" },
+      ],
+      inputs: commonInputs,
+    },
   };
 
   return schemas[modelId] ?? null;

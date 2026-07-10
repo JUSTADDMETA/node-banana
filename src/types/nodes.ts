@@ -477,13 +477,104 @@ export interface ConditionalSwitchNodeData extends BaseNodeData {
 }
 
 /**
+ * A node within a split-grid cell template. Positions are in main-canvas
+ * coordinate space, relative to the template's bounding box.
+ */
+export interface SplitGridTemplateNode {
+  id: string;
+  type: NodeType;
+  position: { x: number; y: number };
+  /** Node dimensions; falls back to defaultNodeDimensions when absent */
+  size?: { width: number; height: number };
+  /** Partial node data overrides applied on top of createDefaultNodeData(type) */
+  data?: Record<string, unknown>;
+}
+
+export interface SplitGridTemplateEdge {
+  id: string;
+  source: string;
+  sourceHandle: string;
+  target: string;
+  targetHandle: string;
+}
+
+/**
+ * One terminal wired into the template's fixed downstream-router port. Each
+ * connection designates a template node whose output feeds the single shared
+ * Router materialized to the right of the whole cell grid.
+ */
+export interface SplitGridTemplateRouterConnection {
+  /** Template node id whose output feeds the router */
+  source: string;
+  /** That node's output handle id ("image" | "text" | …) */
+  sourceHandle: string;
+  /** Resolved Router input type id (equals the source handle's type) */
+  targetHandle: string;
+}
+
+/**
+ * Per-cell node template for a split-grid node. Always contains a base
+ * image node (`baseNodeId`) that receives the split cell image.
+ */
+export interface SplitGridTemplate {
+  baseNodeId: string;
+  nodes: SplitGridTemplateNode[];
+  edges: SplitGridTemplateEdge[];
+  /**
+   * Optional shared downstream router: terminal outputs wired into the fixed
+   * router port. Absent/empty ⇒ no router is materialized. The router is
+   * created once (not per cell) to the right of the whole grid; every cell's
+   * copy of each listed terminal connects into it.
+   */
+  router?: SplitGridTemplateRouterConnection[];
+}
+
+/**
+ * One materialized cell: the real canvas nodes instantiated from the template.
+ */
+export interface SplitGridCell {
+  /** Real node id of the imageInput that receives this cell's split image */
+  baseImageNodeId: string;
+  /** All real node ids instantiated for this cell (includes the base) */
+  nodeIds: string[];
+  /** Group created around this cell's nodes */
+  groupId?: string;
+}
+
+/**
  * Split Grid node - splits image into grid cells for parallel processing
  */
 export interface SplitGridNodeData extends BaseNodeData {
   sourceImage: string | null;
   sourceImageRef?: string; // External image reference for storage optimization
-  targetCount: number; // 4, 6, 8, 9, or 10
+  gridRows: number;
+  gridCols: number;
+  /**
+   * Interior column boundary positions, normalized to (0,1), strictly
+   * ascending, length gridCols-1. Absent/invalid → uniform slicing. Set by
+   * dragging the preview's vertical grid lines.
+   */
+  colOffsets?: number[];
+  /** Interior row boundary positions; see colOffsets. Length gridRows-1. */
+  rowOffsets?: number[];
+  /** Per-cell node template; undefined on legacy saves (treated as image-only default) */
+  template?: SplitGridTemplate;
+  /** Materialized cells; undefined on legacy saves (falls back to childNodeIds) */
+  cells?: SplitGridCell[];
+  /** Snapshot key of rows/cols/template at last materialization, for staleness detection */
+  materializedKey?: string | null;
+  /**
+   * Real node id of the shared downstream Router materialized from the
+   * template's router port; null/undefined when no terminal is wired to the
+   * port. Persisted so grid-resize rematerializations reuse (reposition +
+   * re-wire) the same Router node, preserving the user's onward wiring.
+   */
+  routerNodeId?: string | null;
+  /** @deprecated Legacy pre-template field, kept for backward compatibility */
+  targetCount: number;
+  /** @deprecated Legacy pre-template field, kept for backward compatibility */
   defaultPrompt: string;
+  /** @deprecated Legacy pre-template field, kept for backward compatibility */
   generateSettings: {
     aspectRatio: AspectRatio;
     resolution: Resolution;
@@ -491,13 +582,13 @@ export interface SplitGridNodeData extends BaseNodeData {
     useGoogleSearch: boolean;
     useImageSearch: boolean;
   };
+  /** @deprecated Legacy pre-template cell tracking; new workflows use `cells` */
   childNodeIds: Array<{
     imageInput: string;
     prompt: string;
     nanoBanana: string;
   }>;
-  gridRows: number;
-  gridCols: number;
+  /** @deprecated Legacy configuration gate; template-based nodes are always usable */
   isConfigured: boolean;
   status: NodeStatus;
   error: string | null;

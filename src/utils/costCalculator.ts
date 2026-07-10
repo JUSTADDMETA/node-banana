@@ -1,4 +1,4 @@
-import { ModelType, Resolution, MODEL_DISPLAY_NAMES, NanoBananaNodeData, GenerateVideoNodeData, Generate3DNodeData, SplitGridNodeData, WorkflowNode, ProviderType } from "@/types";
+import { ModelType, Resolution, MODEL_DISPLAY_NAMES, NanoBananaNodeData, GenerateVideoNodeData, Generate3DNodeData, WorkflowNode, ProviderType } from "@/types";
 
 // Pricing in USD per image (Gemini API)
 export const PRICING = {
@@ -20,12 +20,18 @@ export const PRICING = {
     "2K": 0.101,
     "4K": 0.151,
   },
+  "nano-banana-2-lite": {
+    "512": 0.034,
+    "1K": 0.034,
+    "2K": 0.034, // nano-banana-2-lite only supports 1K
+    "4K": 0.034,
+  },
 } as const;
 
 export function calculateGenerationCost(model: ModelType, resolution: Resolution): number {
-  // nano-banana only supports 1K resolution (flat pricing)
-  if (model === "nano-banana") {
-    return PRICING["nano-banana"]["1K"];
+  // nano-banana and nano-banana-2-lite only support 1K resolution (flat pricing)
+  if (model === "nano-banana" || model === "nano-banana-2-lite") {
+    return PRICING[model]["1K"];
   }
   return PRICING[model][resolution];
 }
@@ -165,6 +171,10 @@ export function calculatePredictedCost(
         const res = resolution || "1K";
         return { unitCost: PRICING["nano-banana-2"][res], unit: "image" };
       }
+      if (modelId === "nano-banana-2-lite" || modelId === "gemini-3.1-flash-lite-image") {
+        // 1K-only flat pricing, like nano-banana — resolution is ignored
+        return { unitCost: PRICING["nano-banana-2-lite"]["1K"], unit: "image" };
+      }
     }
 
     // No pricing available (e.g., Replicate)
@@ -219,23 +229,9 @@ export function calculatePredictedCost(
       }
     }
 
-    // SplitGrid nodes create child nanoBanana nodes - count those from settings
-    // Note: child nodes are in the nodes array, but we count from splitGrid settings
-    // to show what WILL be generated when the grid runs
-    if (node.type === "splitGrid") {
-      const data = node.data as SplitGridNodeData;
-      if (data.isConfigured && data.targetCount > 0) {
-        const model = data.generateSettings.model;
-        const resolution = model === "nano-banana" ? "1K" : data.generateSettings.resolution;
-        const modelName = MODEL_DISPLAY_NAMES[model] || model;
-
-        const pricing = getPricing("gemini", model, resolution);
-        const unitCost = pricing?.unitCost ?? null;
-        const unit = pricing?.unit ?? "image";
-
-        addToBreakdown("gemini", model, modelName, unit, unitCost, data.targetCount);
-      }
-    }
+    // SplitGrid cell nodes are real nodes on the canvas (materialized from the
+    // cell template), so any generate nodes they contain are already counted
+    // above — no separate splitGrid estimate needed.
   });
 
   const breakdownArray = Array.from(breakdown.values());

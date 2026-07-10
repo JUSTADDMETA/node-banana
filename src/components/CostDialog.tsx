@@ -260,7 +260,7 @@ export function CostDialog({ predictedCost, incurredCost, onClose }: CostDialogP
 
           {/* Pricing Note */}
           <div className="text-xs text-neutral-600">
-            <p>Gemini pricing: $0.039-$0.24/image. External providers not tracked.</p>
+            <p>Gemini pricing: $0.034-$0.24/image. External providers not tracked.</p>
           </div>
         </div>
       </div>

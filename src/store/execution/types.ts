@@ -48,6 +48,8 @@ export interface NodeExecutionContext {
   trackSaveGeneration: (key: string, promise: Promise<void>) => void;
   appendOutputGalleryImage: (targetId: string, image: string) => void;
   appendOutputGalleryVideo: (targetId: string, video: string) => void;
+  /** Rebuilds a splitGrid node's cells from its template when stale; returns true if rebuilt */
+  materializeSplitGridCells: (nodeId: string) => boolean;
   get: () => unknown;
 }
 

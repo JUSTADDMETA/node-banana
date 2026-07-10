@@ -15,6 +15,7 @@ import {
   NodeType,
   NanoBananaNodeData,
   OutputGalleryNodeData,
+  SplitGridNodeData,
   WorkflowNodeData,
   ImageHistoryItem,
   NodeGroup,
@@ -65,6 +66,16 @@ import {
   revokeBlobUrl,
 } from "./utils/executionUtils";
 import { getConnectedInputsPure, validateWorkflowPure, type ConnectedInputs } from "./utils/connectedInputs";
+import {
+  buildCellInstances,
+  clampGridDimension,
+  computeMaterializedKey,
+  getRouterConnections,
+  getSplitGridCells,
+  getSplitGridTemplate,
+  needsMaterialization,
+} from "./utils/splitGridTemplate";
+import type { SplitGridTemplate } from "@/types";
 import { evaluateRule } from "./utils/ruleEvaluation";
 import { computeDimmedNodes } from "./utils/dimmingUtils";
 import {
@@ -196,6 +207,28 @@ function buildConnectionEdgeData(
   return baseData;
 }
 
+/**
+ * Null out any split-grid node's routerNodeId that points at a node being
+ * removed, so a manually-deleted shared router leaves no dangling reference
+ * (a stale id would otherwise block the reuse check on the next materialize).
+ */
+function healSplitGridRouterRefs(
+  nodes: WorkflowNode[],
+  removedIds: Set<string>
+): WorkflowNode[] {
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.type !== "splitGrid") return node;
+    const routerNodeId = (node.data as SplitGridNodeData).routerNodeId;
+    if (routerNodeId && removedIds.has(routerNodeId)) {
+      changed = true;
+      return { ...node, data: { ...node.data, routerNodeId: null } as WorkflowNodeData };
+    }
+    return node;
+  });
+  return changed ? next : nodes;
+}
+
 // Workflow file format
 export interface WorkflowFile {
   version: 1;
@@ -258,6 +291,20 @@ interface WorkflowStore {
   toggleGroupLock: (groupId: string) => void;
   moveGroupNodes: (groupId: string, delta: { x: number; y: number }) => void;
   setNodeGroupId: (nodeId: string, groupId: string | undefined) => void;
+
+  // Split grid operations
+  /**
+   * Instantiates a split-grid node's cell template onto the canvas: one set of
+   * nodes + one group per grid cell, wired together and reference-linked to the
+   * split node. No-ops when the existing cells already match the current
+   * rows/cols/template configuration, and (unless `force`) when the node still
+   * tracks legacy childNodeIds cells. Pass `template` to save-and-apply a new
+   * template atomically (single undo entry). Returns true when cells were (re)built.
+   */
+  materializeSplitGridCells: (
+    nodeId: string,
+    options?: { force?: boolean; template?: SplitGridTemplate }
+  ) => boolean;
 
   // UI State
   openModalCount: number;
@@ -485,6 +532,33 @@ function clearStaleInputImages(
       updateNodeData(targetId, { inputImages: [] });
     }
   }
+}
+
+/**
+ * Removes groups whose entire remaining membership was deleted in this change,
+ * so deleting a group's nodes doesn't leave an empty group frame behind.
+ * Groups that were already empty before the deletion are left alone (those are
+ * only removed explicitly via deleteGroup). Returns the same reference when
+ * nothing needs pruning.
+ */
+function pruneEmptiedGroups(
+  groups: Record<string, NodeGroup>,
+  previousNodes: WorkflowNode[],
+  removedNodeIds: Set<string>,
+  remainingNodes: WorkflowNode[]
+): Record<string, NodeGroup> {
+  const emptied = new Set<string>();
+  for (const node of previousNodes) {
+    if (node.groupId && removedNodeIds.has(node.id)) emptied.add(node.groupId);
+  }
+  if (emptied.size === 0) return groups;
+  for (const node of remainingNodes) {
+    if (node.groupId) emptied.delete(node.groupId);
+  }
+  if (emptied.size === 0) return groups;
+  const pruned = { ...groups };
+  for (const groupId of emptied) delete pruned[groupId];
+  return pruned;
 }
 
 /** Capture current undoable state as a deep-cloned snapshot */
@@ -781,13 +855,23 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
   removeNode: (nodeId: string) => {
     pushUndoCheckpoint(get, set);
-    set((state) => ({
-      nodes: state.nodes.filter((node) => node.id !== nodeId),
-      edges: state.edges.filter(
-        (edge) => edge.source !== nodeId && edge.target !== nodeId
-      ),
-      hasUnsavedChanges: true,
-    }));
+    set((state) => {
+      const remainingNodes = state.nodes.filter((node) => node.id !== nodeId);
+      const groups = pruneEmptiedGroups(
+        state.groups,
+        state.nodes,
+        new Set([nodeId]),
+        remainingNodes
+      );
+      return {
+        nodes: healSplitGridRouterRefs(remainingNodes, new Set([nodeId])),
+        edges: state.edges.filter(
+          (edge) => edge.source !== nodeId && edge.target !== nodeId
+        ),
+        ...(groups !== state.groups ? { groups } : {}),
+        hasUnsavedChanges: true,
+      };
+    });
     get().incrementManualChangeCount();
   },
 
@@ -823,10 +907,23 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       setTimeout(() => { deleteCheckpointActive = false; }, 0);
     }
 
-    set((state) => ({
-      nodes: applyNodeChanges(changes, state.nodes),
-      ...(hasMeaningfulChange ? { hasUnsavedChanges: true } : {}),
-    }));
+    set((state) => {
+      let nextNodes = applyNodeChanges(changes, state.nodes);
+      let groups = state.groups;
+      if (hasRemoveChange) {
+        const removedIds = new Set(
+          changes.filter((c) => c.type === "remove").map((c) => c.id)
+        );
+        groups = pruneEmptiedGroups(state.groups, state.nodes, removedIds, nextNodes);
+        // A manually-deleted shared router must not leave a dangling routerNodeId
+        nextNodes = healSplitGridRouterRefs(nextNodes, removedIds);
+      }
+      return {
+        nodes: nextNodes,
+        ...(groups !== state.groups ? { groups } : {}),
+        ...(hasMeaningfulChange ? { hasUnsavedChanges: true } : {}),
+      };
+    });
 
     if (hasRemoveChange) {
       get().incrementManualChangeCount();
@@ -991,8 +1088,63 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     });
 
     // Create new nodes with updated IDs and offset positions
+    const pastedCellMemberIds = new Set<string>();
     const newNodes: WorkflowNode[] = clipboard.nodes.map((node) => {
       const defaults = defaultNodeDimensions[node.type as NodeType] || { width: 300, height: 280 };
+      let data = clonePreservingStrings(node.data) as WorkflowNodeData;
+
+      // A pasted splitGrid must not keep driving the original's cell nodes:
+      // remap tracked cell ids when the cells were copied along, otherwise
+      // detach so the copy materializes its own cells on next split. Either
+      // way the resolved template is preserved so a legacy prompt+generate
+      // layout doesn't degrade to image-only cells on rebuild.
+      if (node.type === "splitGrid") {
+        const splitData = data as SplitGridNodeData;
+        const template = getSplitGridTemplate(splitData);
+        const rows = clampGridDimension(splitData.gridRows);
+        const cols = clampGridDimension(splitData.gridCols);
+        const cells = getSplitGridCells(splitData);
+        const allCopied =
+          cells.length > 0 &&
+          cells.every((cell) => cell.nodeIds.every((id) => idMapping.has(id)));
+        // The pasted split must drive its OWN shared router, never the original's.
+        // Keep the copied cells only when the router was copied too (or the
+        // template wants none); otherwise detach so the paste rebuilds a fresh
+        // set + its own router on next split/apply.
+        const oldRouterId = splitData.routerNodeId;
+        const templateWantsRouter = getRouterConnections(template).length > 0;
+        const routerCopied = !!oldRouterId && idMapping.has(oldRouterId);
+        if (allCopied && (!templateWantsRouter || routerCopied)) {
+          const remappedCells = cells.map((cell) => ({
+            ...cell,
+            baseImageNodeId: idMapping.get(cell.baseImageNodeId)!,
+            nodeIds: cell.nodeIds.map((id) => idMapping.get(id)!),
+            groupId: undefined, // groups are not part of the clipboard
+          }));
+          for (const cell of remappedCells) {
+            for (const memberId of cell.nodeIds) pastedCellMemberIds.add(memberId);
+          }
+          data = {
+            ...splitData,
+            template,
+            cells: remappedCells,
+            childNodeIds: [],
+            routerNodeId: routerCopied ? idMapping.get(oldRouterId!)! : null,
+            materializedKey:
+              cells.length === rows * cols ? computeMaterializedKey(rows, cols, template) : null,
+          } as WorkflowNodeData;
+        } else {
+          data = {
+            ...splitData,
+            template,
+            cells: [],
+            childNodeIds: [],
+            routerNodeId: null,
+            materializedKey: null,
+          } as WorkflowNodeData;
+        }
+      }
+
       return {
         ...node,
         id: idMapping.get(node.id)!,
@@ -1007,9 +1159,15 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         width: undefined,
         height: undefined,
         measured: undefined,
-        data: clonePreservingStrings(node.data),
+        data,
       };
     });
+
+    // Pasted cell nodes must not stay members of the ORIGINAL cell groups
+    // (dragging/locking the original group would silently affect the copies)
+    const remappedNodes = pastedCellMemberIds.size > 0
+      ? newNodes.map((n) => (pastedCellMemberIds.has(n.id) ? { ...n, groupId: undefined } : n))
+      : newNodes;
 
     // Create new edges with updated source/target IDs
     const newEdges: WorkflowEdge[] = clipboard.edges.map((edge) => ({
@@ -1026,7 +1184,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     }));
 
     set({
-      nodes: [...updatedNodes, ...newNodes] as WorkflowNode[],
+      nodes: [...updatedNodes, ...remappedNodes] as WorkflowNode[],
       edges: [...edges, ...newEdges],
       hasUnsavedChanges: true,
     });
@@ -1205,6 +1363,174 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     }));
   },
 
+  materializeSplitGridCells: (nodeId: string, options?: { force?: boolean; template?: SplitGridTemplate }) => {
+    const state = get();
+    const splitNode = state.nodes.find((n) => n.id === nodeId && n.type === "splitGrid");
+    if (!splitNode) return false;
+    const data = splitNode.data as SplitGridNodeData;
+
+    const template = options?.template ?? getSplitGridTemplate(data);
+    const existingNodeIds = new Set(state.nodes.map((n) => n.id));
+    const existingRouterNodeIds = new Set(
+      state.nodes.filter((node) => node.type === "router").map((node) => node.id)
+    );
+    if (
+      !needsMaterialization(data, existingNodeIds, {
+        ignoreLegacy: options?.force,
+        template: options?.template,
+        existingRouterNodeIds,
+      })
+    ) {
+      return false;
+    }
+
+    const rows = clampGridDimension(data.gridRows);
+    const cols = clampGridDimension(data.gridCols);
+
+    // Shared downstream router lifecycle: reuse the persisted router across
+    // rebuilds (so the user's onward wiring survives), mint a fresh id only when
+    // the port newly gains wiring, and mark the old one for removal when the
+    // port is cleared. The router is never a cell member, so cell teardown below
+    // never touches it or its onward edges.
+    const routerConnections = getRouterConnections(template);
+    const activeRouterHandleTypes = new Set(
+      routerConnections.map((connection) => connection.targetHandle)
+    );
+    const hasRouter = routerConnections.length > 0;
+    const existingRouterId =
+      data.routerNodeId && existingRouterNodeIds.has(data.routerNodeId)
+        ? data.routerNodeId
+        : null;
+    const routerNodeId = hasRouter ? existingRouterId ?? `router-${++nodeIdCounter}` : null;
+    const removedRouterId = !hasRouter ? existingRouterId : null;
+
+    // Single checkpoint: one undo restores replaced cells and removes new ones
+    pushUndoCheckpoint(get, set);
+
+    // Previously materialized cells are system-created — replace them
+    const staleCells = getSplitGridCells(data);
+    const staleNodeIds = new Set(staleCells.flatMap((cell) => cell.nodeIds));
+    staleNodeIds.delete(nodeId);
+    const staleGroupIds = new Set(
+      staleCells.map((cell) => cell.groupId).filter((id): id is string => Boolean(id))
+    );
+
+    // Pick one color for all cells, mirroring createGroup's selection
+    const usedColors = new Set(
+      Object.values(state.groups)
+        .filter((group) => !staleGroupIds.has(group.id))
+        .map((group) => group.color)
+    );
+    let groupColor: GroupColor = "neutral";
+    for (const candidate of GROUP_COLOR_ORDER) {
+      if (!usedColors.has(candidate)) {
+        groupColor = candidate;
+        break;
+      }
+    }
+
+    const built = buildCellInstances({
+      splitNode,
+      template,
+      rows,
+      cols,
+      makeNodeId: (type) => `${type}-${++nodeIdCounter}`,
+      makeGroupId: () => `group-${++groupIdCounter}`,
+      groupColor,
+      makeEdgeData: (connection) =>
+        buildConnectionEdgeData(connection as Connection, state.nodes, state.edges),
+      routerNodeId,
+    });
+
+    const materializedKey = computeMaterializedKey(rows, cols, template);
+    const removedEdges = state.edges.filter(
+      (edge) =>
+        staleNodeIds.has(edge.source) ||
+        staleNodeIds.has(edge.target) ||
+        edge.source === removedRouterId ||
+        edge.target === removedRouterId ||
+        (existingRouterId !== null &&
+          edge.source === existingRouterId &&
+          !activeRouterHandleTypes.has(edge.sourceHandle ?? ""))
+    );
+    const removedEdgeIds = new Set(removedEdges.map((edge) => edge.id));
+
+    // A newly wired router needs a real node; a reused one is repositioned in
+    // place below so its grown height and compatible onward edges survive.
+    const newRouterNode: WorkflowNode | null =
+      routerNodeId && !existingRouterId && built.routerPosition
+        ? {
+            id: routerNodeId,
+            type: "router",
+            position: built.routerPosition,
+            data: createDefaultNodeData("router"),
+            style: {
+              width: defaultNodeDimensions.router.width,
+              height: defaultNodeDimensions.router.height,
+            },
+          }
+        : null;
+
+    set((current) => {
+      const remainingGroups = { ...current.groups };
+      for (const groupId of staleGroupIds) delete remainingGroups[groupId];
+      return {
+        nodes: [
+          ...current.nodes
+            .filter((n) => !staleNodeIds.has(n.id) && n.id !== removedRouterId)
+            .map((n) => {
+              // Reused shared router: keep the user's chosen spot unless the grid
+              // grew right up to it, then re-slot it just right of the grid and
+              // center it by its actual (possibly grown) height.
+              if (existingRouterId && n.id === existingRouterId && built.routerPosition) {
+                if (n.position.x >= built.routerPosition.x) return n;
+                const height =
+                  (n.style?.height as number | undefined) ??
+                  n.measured?.height ??
+                  defaultNodeDimensions.router.height;
+                const centerY = built.routerPosition.y + defaultNodeDimensions.router.height / 2;
+                return {
+                  ...n,
+                  position: { x: built.routerPosition.x, y: centerY - height / 2 },
+                };
+              }
+              // Surviving nodes (user nodes dragged into a cell group, pasted
+              // copies) must not keep a groupId pointing at a deleted group
+              const node =
+                n.groupId && staleGroupIds.has(n.groupId) ? { ...n, groupId: undefined } : n;
+              return node.id === nodeId
+                ? {
+                    ...node,
+                    data: {
+                      ...node.data,
+                      template,
+                      cells: built.cells,
+                      materializedKey,
+                      routerNodeId,
+                      targetCount: rows * cols,
+                      childNodeIds: [],
+                      isConfigured: true,
+                    } as WorkflowNodeData,
+                  }
+                : node;
+            }),
+          ...built.nodes,
+          ...(newRouterNode ? [newRouterNode] : []),
+        ] as WorkflowNode[],
+        edges: [
+          ...current.edges.filter((edge) => !removedEdgeIds.has(edge.id)),
+          ...built.edges,
+          ...built.routerEdges,
+        ],
+        groups: { ...remainingGroups, ...built.groups },
+        hasUnsavedChanges: true,
+      };
+    });
+
+    clearStaleInputImages(removedEdges, get);
+    return true;
+  },
+
   getNodeById: (id: string) => {
     return get().nodes.find((node) => node.id === id);
   },
@@ -1256,6 +1582,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         hasUnsavedChanges: true,
       }));
     },
+    materializeSplitGridCells: (nodeId: string) => get().materializeSplitGridCells(nodeId),
     get: get as () => unknown,
   }),
 
@@ -1270,12 +1597,19 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       if (paused) startFromNodeId = paused;
     }
 
-    const { nodes, edges, groups, isRunning, maxConcurrentCalls } = get();
-
-    if (isRunning) {
+    if (get().isRunning) {
       logger.warn('workflow.start', 'Workflow already running, ignoring execution request');
       return;
     }
+
+    // Rebuild stale split-grid cells BEFORE snapshotting the graph so freshly
+    // created cell nodes are part of this run's execution levels — cells
+    // materialized mid-run would never be scheduled.
+    for (const splitGridNode of get().nodes.filter((n) => n.type === "splitGrid")) {
+      get().materializeSplitGridCells(splitGridNode.id);
+    }
+
+    const { nodes, edges, groups, maxConcurrentCalls } = get();
 
     // Create AbortController for this execution run
     const abortController = new AbortController();
@@ -1777,6 +2111,12 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       return;
     }
 
+    // Rebuild stale split-grid cells before the run starts so the undo
+    // checkpoint captures a clean pre-run state (not a mid-run snapshot)
+    if (node.type === "splitGrid") {
+      get().materializeSplitGridCells(nodeId);
+    }
+
     // Create AbortController so stopWorkflow() can cancel regeneration
     const abortController = new AbortController();
     set({ isRunning: true, currentNodeIds: [nodeId], _abortController: abortController });
@@ -1898,9 +2238,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   },
 
   executeSelectedNodes: async (nodeIds: string[]) => {
-    const { nodes, edges, isRunning, maxConcurrentCalls } = get();
-
-    if (isRunning) {
+    if (get().isRunning) {
       logger.warn('node.execution', 'Cannot execute nodes, workflow already running');
       return;
     }
@@ -1909,6 +2247,16 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       logger.warn('node.execution', 'No nodes provided for execution');
       return;
     }
+
+    // Rebuild stale split-grid cells BEFORE snapshotting the graph so torn-down
+    // cell nodes drop out of the selection and fresh ones exist in the store
+    for (const id of nodeIds) {
+      if (get().nodes.find((n) => n.id === id)?.type === "splitGrid") {
+        get().materializeSplitGridCells(id);
+      }
+    }
+
+    const { nodes, edges, maxConcurrentCalls } = get();
 
     // Filter to valid nodes
     const selectedSet = new Set(nodeIds);

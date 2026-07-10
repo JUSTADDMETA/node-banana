@@ -613,7 +613,7 @@ describe("CostDialog", () => {
         />
       );
 
-      expect(screen.getByText(/Gemini pricing: \$0\.039-\$0\.24\/image/)).toBeInTheDocument();
+      expect(screen.getByText(/Gemini pricing: \$0\.034-\$0\.24\/image/)).toBeInTheDocument();
       expect(screen.getByText(/External providers not tracked/)).toBeInTheDocument();
     });
   });

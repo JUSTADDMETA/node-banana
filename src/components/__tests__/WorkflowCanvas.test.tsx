@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { WorkflowCanvas } from "@/components/WorkflowCanvas";
 import { ReactFlowProvider } from "@xyflow/react";
 
@@ -18,7 +18,12 @@ const mockCopySelectedNodes = vi.fn();
 const mockPasteNodes = vi.fn();
 const mockClearClipboard = vi.fn();
 const mockSetShowQuickstart = vi.fn();
+const mockSetHoveredNodeId = vi.fn();
 const mockUseWorkflowStore = vi.fn();
+const mockViewport = vi.hoisted(() => ({ zoom: 1 }));
+const mockReactFlowProps = vi.hoisted(() => ({
+  current: null as Record<string, unknown> | null,
+}));
 
 vi.mock("@/store/workflowStore", () => ({
   useWorkflowStore: (selector?: (state: unknown) => unknown) => {
@@ -37,9 +42,16 @@ const mockZoomOut = vi.fn();
 const mockSetViewport = vi.fn();
 
 vi.mock("@xyflow/react", async () => {
-  const actual = await vi.importActual("@xyflow/react");
+  const actual = await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
+  const React = await vi.importActual<typeof import("react")>("react");
   return {
     ...actual,
+    ReactFlow: (props: Record<string, unknown>) => {
+      mockReactFlowProps.current = props;
+      return React.createElement(actual.ReactFlow, props);
+    },
+    useStore: (selector: (state: { transform: [number, number, number]; nodeLookup: Map<string, unknown> }) => unknown) =>
+      selector({ transform: [0, 0, mockViewport.zoom], nodeLookup: new Map() }),
     useReactFlow: () => ({
       screenToFlowPosition: mockScreenToFlowPosition,
       getViewport: mockGetViewport,
@@ -127,6 +139,7 @@ const createDefaultState = (overrides = {}) => ({
   isModalOpen: false,
   showQuickstart: false,
   setShowQuickstart: mockSetShowQuickstart,
+  setHoveredNodeId: mockSetHoveredNodeId,
   copySelectedNodes: mockCopySelectedNodes,
   pasteNodes: mockPasteNodes,
   clearClipboard: mockClearClipboard,
@@ -155,6 +168,8 @@ function TestWrapper({ children }: { children: React.ReactNode }) {
 describe("WorkflowCanvas", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockViewport.zoom = 1;
+    mockReactFlowProps.current = null;
     // Default mock implementation
     mockUseWorkflowStore.mockImplementation((selector) => {
       return selector(createDefaultState());
@@ -171,6 +186,54 @@ describe("WorkflowCanvas", () => {
 
       // ReactFlow container should be present
       expect(document.querySelector(".react-flow")).toBeInTheDocument();
+    });
+
+    it("marks the canvas as overview mode below the edge visibility threshold", () => {
+      mockViewport.zoom = 0.1;
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      expect(document.querySelector(".bg-canvas-bg")).toHaveClass("canvas-overview");
+    });
+
+    it("removes edges from React Flow while in overview mode", () => {
+      mockViewport.zoom = 0.1;
+      mockUseWorkflowStore.mockImplementation((selector) =>
+        selector(
+          createDefaultState({
+            edges: [
+              { id: "router-edge", source: "source", target: "router" },
+            ],
+          })
+        )
+      );
+
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      expect(mockReactFlowProps.current?.edges).toEqual([]);
+    });
+
+    it("keeps edges rendered above the fifteen-percent threshold", () => {
+      const edge = { id: "router-edge", source: "source", target: "router" };
+      mockViewport.zoom = 0.2;
+      mockUseWorkflowStore.mockImplementation((selector) =>
+        selector(createDefaultState({ edges: [edge] }))
+      );
+
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      expect(mockReactFlowProps.current?.edges).toEqual([edge]);
     });
 
     it("should render Background component", () => {
@@ -203,7 +266,66 @@ describe("WorkflowCanvas", () => {
       );
 
       // MiniMap should be rendered
+      const minimap = document.querySelector(".react-flow__minimap");
+      expect(minimap).toBeInTheDocument();
+      expect(minimap).not.toHaveStyle({ width: "100%", height: "100%" });
+    });
+
+    it("allows the minimap to be hidden and restored", () => {
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Hide minimap" }));
+      expect(document.querySelector(".react-flow__minimap")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Show minimap" }));
       expect(document.querySelector(".react-flow__minimap")).toBeInTheDocument();
+    });
+
+    it("uses shared explicit geometry for the minimap and close toggle", () => {
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      const minimap = document.querySelector(".react-flow__minimap");
+      const closeButton = screen.getByRole("button", { name: "Hide minimap" });
+
+      expect(minimap).toHaveStyle({ width: "200px", height: "150px", margin: "15px" });
+      expect(minimap?.parentElement).toHaveClass("react-flow");
+      expect(closeButton).toHaveStyle({ right: "23px", bottom: "129px" });
+    });
+
+    it("keeps edges visible and scopes native pan state to this canvas", () => {
+      const edge = { id: "edge-1", source: "source", target: "target" };
+      mockViewport.zoom = 0.2;
+      mockUseWorkflowStore.mockImplementation((selector) =>
+        selector(createDefaultState({ edges: [edge] }))
+      );
+
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      const canvas = document.querySelector(".bg-canvas-bg") as HTMLElement;
+      act(() => {
+        (mockReactFlowProps.current?.onMoveStart as (() => void) | undefined)?.();
+      });
+
+      expect(mockReactFlowProps.current?.edges).toEqual([edge]);
+      expect(canvas).toHaveClass("canvas-native-navigation-active");
+      expect(document.documentElement).not.toHaveClass("canvas-native-navigation-active");
+
+      act(() => {
+        (mockReactFlowProps.current?.onMoveEnd as (() => void) | undefined)?.();
+      });
+      expect(canvas).not.toHaveClass("canvas-native-navigation-active");
     });
 
     it("should render EdgeToolbar component", () => {

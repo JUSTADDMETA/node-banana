@@ -14,6 +14,7 @@ import {
   GenerateAudioNodeData,
   LLMGenerateNodeData,
   SplitGridNodeData,
+  SplitGridTemplate,
   OutputNodeData,
   OutputGalleryNodeData,
   ImageCompareNodeData,
@@ -52,7 +53,7 @@ export const defaultNodeDimensions: Record<NodeType, { width: number; height: nu
   generate3d: { width: 300, height: 300 },
   generateAudio: { width: 300, height: 280 },
   llmGenerate: { width: 320, height: 360 },
-  splitGrid: { width: 300, height: 320 },
+  splitGrid: { width: 300, height: 400 },
   output: { width: 320, height: 320 },
   outputGallery: { width: 320, height: 360 },
   imageCompare: { width: 400, height: 360 },
@@ -87,6 +88,26 @@ export const GROUP_COLORS: Record<GroupColor, string> = {
 export const GROUP_COLOR_ORDER: GroupColor[] = [
   "neutral", "blue", "green", "purple", "orange", "red"
 ];
+
+/** Template-local id of the base image node present in every split-grid template */
+export const SPLIT_GRID_BASE_NODE_ID = "cell-image";
+
+/**
+ * The minimal split-grid cell template: just the base image node that
+ * receives the cell image. Lives here (not splitGridTemplate.ts) so the
+ * template utilities can depend on nodeDefaults without a cycle.
+ */
+export const createDefaultSplitGridTemplate = (): SplitGridTemplate => ({
+  baseNodeId: SPLIT_GRID_BASE_NODE_ID,
+  nodes: [
+    {
+      id: SPLIT_GRID_BASE_NODE_ID,
+      type: "imageInput",
+      position: { x: 0, y: 0 },
+    },
+  ],
+  edges: [],
+});
 
 /**
  * Creates default data for a node based on its type.
@@ -241,6 +262,12 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
     case "splitGrid":
       return {
         sourceImage: null,
+        gridRows: 2,
+        gridCols: 3,
+        template: createDefaultSplitGridTemplate(),
+        cells: [],
+        materializedKey: null,
+        routerNodeId: null,
         targetCount: 6,
         defaultPrompt: "",
         generateSettings: {
@@ -251,8 +278,6 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
           useImageSearch: false,
         },
         childNodeIds: [],
-        gridRows: 2,
-        gridCols: 3,
         isConfigured: false,
         status: "idle",
         error: null,
