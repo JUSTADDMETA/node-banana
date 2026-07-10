@@ -509,4 +509,58 @@ describe("AnnotationModal", () => {
       expect(canvasContainer).toBeInTheDocument();
     });
   });
+
+  describe("Keyboard handling", () => {
+    // Simulates React Flow's document-level key handler (deleteKeyCode etc.).
+    // While the modal is open, destructive keys must never reach it — otherwise
+    // Delete removes the selected NODE on the canvas behind the modal.
+    let canvasKeyHandler: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      canvasKeyHandler = vi.fn();
+      document.addEventListener("keydown", canvasKeyHandler);
+    });
+
+    afterEach(() => {
+      document.removeEventListener("keydown", canvasKeyHandler);
+    });
+
+    it("should delete the selected annotation on Delete without reaching the canvas", () => {
+      mockAnnotationStore = createMockAnnotationStore({ selectedShapeId: "shape-1" });
+      render(<AnnotationModal />);
+
+      fireEvent.keyDown(document.body, { key: "Delete" });
+
+      expect(mockDeleteAnnotation).toHaveBeenCalledWith("shape-1");
+      expect(canvasKeyHandler).not.toHaveBeenCalled();
+    });
+
+    it("should swallow Delete even with no annotation selected (regression: node behind modal was deleted)", () => {
+      mockAnnotationStore = createMockAnnotationStore({ selectedShapeId: null });
+      render(<AnnotationModal />);
+
+      fireEvent.keyDown(document.body, { key: "Delete" });
+
+      expect(mockDeleteAnnotation).not.toHaveBeenCalled();
+      expect(canvasKeyHandler).not.toHaveBeenCalled();
+    });
+
+    it("should close the modal on Escape without reaching the canvas", () => {
+      render(<AnnotationModal />);
+
+      fireEvent.keyDown(document.body, { key: "Escape" });
+
+      expect(mockCloseModal).toHaveBeenCalled();
+      expect(canvasKeyHandler).not.toHaveBeenCalled();
+    });
+
+    it("should let keys reach the canvas when the modal is closed", () => {
+      mockAnnotationStore = createMockAnnotationStore({ isModalOpen: false });
+      render(<AnnotationModal />);
+
+      fireEvent.keyDown(document.body, { key: "Delete" });
+
+      expect(canvasKeyHandler).toHaveBeenCalled();
+    });
+  });
 });
