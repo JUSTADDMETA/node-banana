@@ -170,7 +170,7 @@ export function useWheelPanZoom(
     if (!wrapper || !enabled) return;
     const panBatcher = createViewportPanBatcher({ getViewport, setViewport });
     const panActivity = createPanActivityTracker({
-      setActive: setCanvasWheelPanningClass,
+      setActive: (active) => setCanvasWheelPanningClass(active, wrapper),
     });
 
     const handleWheel = (event: WheelEvent) => {

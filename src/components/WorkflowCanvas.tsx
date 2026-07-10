@@ -152,6 +152,22 @@ const edgeTypes: EdgeTypes = {
 };
 
 const OVERVIEW_EDGES: Edge[] = [];
+const MINIMAP_GEOMETRY = {
+  width: 200,
+  height: 150,
+  margin: 15,
+  controlInset: 8,
+  controlSize: 28,
+} as const;
+
+const MINIMAP_CLOSE_POSITION = {
+  right: MINIMAP_GEOMETRY.margin + MINIMAP_GEOMETRY.controlInset,
+  bottom:
+    MINIMAP_GEOMETRY.margin +
+    MINIMAP_GEOMETRY.height -
+    MINIMAP_GEOMETRY.controlInset -
+    MINIMAP_GEOMETRY.controlSize,
+} as const;
 
 function getMiniMapNodeColor(node: Node): string {
   switch (node.type) {
@@ -371,9 +387,12 @@ export function WorkflowCanvas() {
   }, []);
 
   useEffect(() => {
+    const wrapper = reactFlowWrapper.current;
     return () => {
       document.documentElement.classList.remove("canvas-interacting");
-      setCanvasPanningClass(false);
+      if (wrapper) setCanvasPanningClass(false, wrapper);
+      isPanningRef.current = false;
+      isDraggingNodeRef.current = false;
     };
   }, []);
 
@@ -2148,8 +2167,8 @@ export function WorkflowCanvas() {
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         onConnectEnd={handleConnectEnd}
-        onMoveStart={() => { isPanningRef.current = true; setHoveredNodeId(null); document.documentElement.classList.add("canvas-interacting"); setCanvasPanningClass(true); }}
-        onMoveEnd={() => { isPanningRef.current = false; document.documentElement.classList.remove("canvas-interacting"); setCanvasPanningClass(false); }}
+        onMoveStart={() => { isPanningRef.current = true; setHoveredNodeId(null); document.documentElement.classList.add("canvas-interacting"); if (reactFlowWrapper.current) setCanvasPanningClass(true, reactFlowWrapper.current); }}
+        onMoveEnd={() => { isPanningRef.current = false; document.documentElement.classList.remove("canvas-interacting"); if (reactFlowWrapper.current) setCanvasPanningClass(false, reactFlowWrapper.current); }}
         onNodeDragStart={() => { isDraggingNodeRef.current = true; document.documentElement.classList.add("canvas-interacting"); }}
         onNodeDragStop={(event, node) => { isDraggingNodeRef.current = false; document.documentElement.classList.remove("canvas-interacting"); handleNodeDragStop(event, node); }}
         onSelectionChange={handleSelectionChange}
@@ -2227,6 +2246,11 @@ export function WorkflowCanvas() {
           <>
             <MiniMap
               className={`bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
+              style={{
+                width: MINIMAP_GEOMETRY.width,
+                height: MINIMAP_GEOMETRY.height,
+                margin: MINIMAP_GEOMETRY.margin,
+              }}
               maskColor="rgba(0, 0, 0, 0.6)"
               pannable
               zoomable
@@ -2236,8 +2260,10 @@ export function WorkflowCanvas() {
               type="button"
               aria-label="Hide minimap"
               title="Hide minimap"
+              disabled={tutorialActive && lockedFeatures}
               onClick={() => setIsMinimapVisible(false)}
-              className={`nodrag nopan nowheel absolute bottom-[130px] right-[23px] z-[6] flex h-7 w-7 items-center justify-center rounded-md border border-neutral-600/80 bg-neutral-950/85 text-neutral-400 shadow-sm backdrop-blur-sm transition-colors hover:border-neutral-500 hover:bg-neutral-800 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
+              style={MINIMAP_CLOSE_POSITION}
+              className="nodrag nopan nowheel absolute z-[6] flex h-7 w-7 items-center justify-center rounded-md border border-neutral-600/80 bg-neutral-950/85 text-neutral-400 shadow-sm backdrop-blur-sm transition-colors hover:border-neutral-500 hover:bg-neutral-800 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed"
             >
               <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none">
                 <path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
@@ -2249,8 +2275,10 @@ export function WorkflowCanvas() {
             type="button"
             aria-label="Show minimap"
             title="Show minimap"
+            disabled={tutorialActive && lockedFeatures}
             onClick={() => setIsMinimapVisible(true)}
-            className={`nodrag nopan nowheel absolute bottom-[15px] right-[15px] z-[5] flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-400 shadow-lg transition-colors hover:border-neutral-600 hover:bg-neutral-700 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
+            style={{ right: MINIMAP_GEOMETRY.margin, bottom: MINIMAP_GEOMETRY.margin }}
+            className={`nodrag nopan nowheel absolute z-[5] flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-400 shadow-lg transition-colors hover:border-neutral-600 hover:bg-neutral-700 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
           >
             <svg aria-hidden="true" viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none">
               <rect x="2.5" y="3.5" width="15" height="13" rx="2" stroke="currentColor" strokeWidth="1.5" />

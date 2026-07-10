@@ -209,6 +209,46 @@ describe("GroupControlsOverlay", () => {
     expect(container.querySelector(".group-resize-controls")).not.toBeInTheDocument();
   });
 
+  it("keeps overview titles passive", () => {
+    mockViewport.zoom = 0.1;
+    mockUseWorkflowStore.mockImplementation((selector) =>
+      selector(
+        createDefaultState({
+          groups: { "group-1": createMockGroup({ name: "Passive Group" }) },
+        })
+      )
+    );
+
+    render(<GroupControlsOverlay />);
+    const title = screen.getByText("Passive Group");
+
+    fireEvent.doubleClick(title);
+    fireEvent.mouseDown(title, { clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(window, { clientX: 30, clientY: 30 });
+
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(mockMoveGroupNodes).not.toHaveBeenCalled();
+  });
+
+  it("commits an active rename before entering overview mode", () => {
+    mockUseWorkflowStore.mockImplementation((selector) =>
+      selector(
+        createDefaultState({
+          groups: { "group-1": createMockGroup({ name: "Original Name" }) },
+        })
+      )
+    );
+
+    const { rerender } = render(<GroupControlsOverlay />);
+    fireEvent.doubleClick(screen.getByText("Original Name"));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Renamed Group" } });
+
+    mockViewport.zoom = 0.1;
+    rerender(<GroupControlsOverlay />);
+
+    expect(mockUpdateGroup).toHaveBeenCalledWith("group-1", { name: "Renamed Group" });
+  });
+
   describe("Group Controls Rendering", () => {
     it("should render controls inside ViewportPortal", () => {
       mockUseWorkflowStore.mockImplementation((selector) => {

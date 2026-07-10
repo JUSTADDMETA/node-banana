@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { WorkflowCanvas } from "@/components/WorkflowCanvas";
 import { ReactFlowProvider } from "@xyflow/react";
 
@@ -18,6 +18,7 @@ const mockCopySelectedNodes = vi.fn();
 const mockPasteNodes = vi.fn();
 const mockClearClipboard = vi.fn();
 const mockSetShowQuickstart = vi.fn();
+const mockSetHoveredNodeId = vi.fn();
 const mockUseWorkflowStore = vi.fn();
 const mockViewport = vi.hoisted(() => ({ zoom: 1 }));
 const mockReactFlowProps = vi.hoisted(() => ({
@@ -138,6 +139,7 @@ const createDefaultState = (overrides = {}) => ({
   isModalOpen: false,
   showQuickstart: false,
   setShowQuickstart: mockSetShowQuickstart,
+  setHoveredNodeId: mockSetHoveredNodeId,
   copySelectedNodes: mockCopySelectedNodes,
   pasteNodes: mockPasteNodes,
   clearClipboard: mockClearClipboard,
@@ -281,6 +283,49 @@ describe("WorkflowCanvas", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Show minimap" }));
       expect(document.querySelector(".react-flow__minimap")).toBeInTheDocument();
+    });
+
+    it("uses shared explicit geometry for the minimap and close toggle", () => {
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      const minimap = document.querySelector(".react-flow__minimap");
+      const closeButton = screen.getByRole("button", { name: "Hide minimap" });
+
+      expect(minimap).toHaveStyle({ width: "200px", height: "150px", margin: "15px" });
+      expect(minimap?.parentElement).toHaveClass("react-flow");
+      expect(closeButton).toHaveStyle({ right: "23px", bottom: "129px" });
+    });
+
+    it("keeps edges visible and scopes native pan state to this canvas", () => {
+      const edge = { id: "edge-1", source: "source", target: "target" };
+      mockViewport.zoom = 0.2;
+      mockUseWorkflowStore.mockImplementation((selector) =>
+        selector(createDefaultState({ edges: [edge] }))
+      );
+
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      const canvas = document.querySelector(".bg-canvas-bg") as HTMLElement;
+      act(() => {
+        (mockReactFlowProps.current?.onMoveStart as (() => void) | undefined)?.();
+      });
+
+      expect(mockReactFlowProps.current?.edges).toEqual([edge]);
+      expect(canvas).toHaveClass("canvas-native-navigation-active");
+      expect(document.documentElement).not.toHaveClass("canvas-native-navigation-active");
+
+      act(() => {
+        (mockReactFlowProps.current?.onMoveEnd as (() => void) | undefined)?.();
+      });
+      expect(canvas).not.toHaveClass("canvas-native-navigation-active");
     });
 
     it("should render EdgeToolbar component", () => {

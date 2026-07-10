@@ -98,14 +98,6 @@ const GroupControls = memo(function GroupControls({
   }, [showMenu]);
 
   useEffect(() => {
-    if (!showInteractiveControls) {
-      setShowMenu(false);
-      setShowColorPicker(false);
-      setIsEditing(false);
-    }
-  }, [showInteractiveControls]);
-
-  useEffect(() => {
     if (group?.name && !isEditing) {
       setEditName(group.name);
     }
@@ -142,6 +134,13 @@ const GroupControls = memo(function GroupControls({
     }
     setIsEditing(false);
   }, [editName, group?.name, groupId, updateGroup]);
+
+  useEffect(() => {
+    if (showInteractiveControls) return;
+    if (isEditing) handleNameSubmit();
+    setShowMenu(false);
+    setShowColorPicker(false);
+  }, [showInteractiveControls, isEditing, handleNameSubmit]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -322,14 +321,18 @@ const GroupControls = memo(function GroupControls({
         {/* Inner scaled element: bottom-anchored so it grows upward, scale keeps bottom-left fixed */}
         <div
           ref={menuRef}
-          className="absolute left-0 pointer-events-auto cursor-grab active:cursor-grabbing select-none"
+          className={`absolute left-0 select-none ${
+            showInteractiveControls
+              ? "pointer-events-auto cursor-grab active:cursor-grabbing"
+              : "pointer-events-none"
+          }`}
           style={{
             bottom: 0,
             transform: `scale(${1 / zoom})`,
             transformOrigin: "bottom left",
             whiteSpace: "nowrap",
           }}
-          onMouseDown={handleHeaderMouseDown}
+          onMouseDown={showInteractiveControls ? handleHeaderMouseDown : undefined}
         >
           <div
             className="flex items-center gap-0.5 mb-1"
@@ -359,14 +362,14 @@ const GroupControls = memo(function GroupControls({
                 <span
                   className="text-xs font-medium text-white truncate"
                   style={{ maxWidth: 200 }}
-                  onDoubleClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+                  onDoubleClick={showInteractiveControls ? (e) => { e.stopPropagation(); setIsEditing(true); } : undefined}
                 >
                   {group.name}
                 </span>
               )}
             </div>
 
-            {/* Three-dot menu toggle - always visible */}
+            {/* Three-dot menu toggle — omitted in overview mode */}
             {showInteractiveControls && <div className="relative group-interactive-controls">
               <button
                 onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}

@@ -56,13 +56,13 @@ body {
   pointer-events: none;
 }
 
-/* Large-workflow performance mode: images and nodes remain visible while
-   expensive connection and control layers are skipped during navigation. */
+/* Hide edges below 15% zoom while keeping nodes and images visible. */
 .canvas-overview .react-flow__edges,
 .canvas-overview .react-flow__edge {
   display: none !important;
 }
 
+/* During panning, hide editing controls and disable costly visual effects. */
 .canvas-native-navigation-active .group-interactive-controls,
 .canvas-wheel-navigation-active .group-interactive-controls,
 .canvas-native-navigation-active .group-resize-controls,

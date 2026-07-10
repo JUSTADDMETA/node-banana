@@ -14,14 +14,14 @@ export function selectCanvasOverview(
 
 export function setCanvasPanningClass(
   isPanning: boolean,
-  root: HTMLElement = document.documentElement
+  root: HTMLElement
 ): void {
   root.classList.toggle("canvas-native-navigation-active", isPanning);
 }
 
 export function setCanvasWheelPanningClass(
   isPanning: boolean,
-  root: HTMLElement = document.documentElement
+  root: HTMLElement
 ): void {
   root.classList.toggle("canvas-wheel-navigation-active", isPanning);
 }
