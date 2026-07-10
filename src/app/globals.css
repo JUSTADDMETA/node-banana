@@ -51,8 +51,35 @@ body {
 /* During active panning or node dragging, disable pointer events on all node
    content to eliminate expensive browser hit-testing against the DOM tree.
    The class is toggled on <html> via direct DOM access (no React re-render). */
-.canvas-interacting .react-flow__node > * {
+.canvas-interacting .react-flow__node > *,
+.canvas-wheel-navigation-active .react-flow__node > * {
   pointer-events: none;
+}
+
+/* Hide edges below 15% zoom while keeping nodes and images visible. */
+.canvas-overview .react-flow__edges,
+.canvas-overview .react-flow__edge {
+  display: none !important;
+}
+
+/* During panning, hide editing controls and disable costly visual effects. */
+.canvas-native-navigation-active .group-interactive-controls,
+.canvas-wheel-navigation-active .group-interactive-controls,
+.canvas-native-navigation-active .group-resize-controls,
+.canvas-wheel-navigation-active .group-resize-controls,
+.canvas-native-navigation-active .react-flow__resize-control,
+.canvas-wheel-navigation-active .react-flow__resize-control {
+  visibility: hidden;
+}
+
+.canvas-native-navigation-active .react-flow__node > * {
+  box-shadow: none !important;
+  transition: none !important;
+}
+
+.canvas-wheel-navigation-active .react-flow__node > * {
+  box-shadow: none !important;
+  transition: none !important;
 }
 
 /* Remove default React Flow styling for output nodes to match custom nodes */

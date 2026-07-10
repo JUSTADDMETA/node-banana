@@ -15,6 +15,7 @@ import {
   Node,
   OnSelectionChangeParams,
   ViewportPortal,
+  useStore,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -82,6 +83,7 @@ import { LLMFallbackPopover } from "./nodes/LLMFallbackPopover";
 import { browseRegistry } from "@/utils/browseRegistry";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
 import { useWheelPanZoom } from "@/hooks/useWheelPanZoom";
+import { selectCanvasOverview, setCanvasPanningClass } from "@/utils/canvasPerformance";
 import { SplitGridTemplateModal } from "./splitgrid/SplitGridTemplateModal";
 import { createPortal } from "react-dom";
 import { useAnnotationStore } from "@/store/annotationStore";
@@ -148,6 +150,57 @@ const edgeTypes: EdgeTypes = {
   editable: EditableEdge,
   reference: ReferenceEdge,
 };
+
+const OVERVIEW_EDGES: Edge[] = [];
+const MINIMAP_GEOMETRY = {
+  width: 200,
+  height: 150,
+  margin: 15,
+  controlInset: 8,
+  controlSize: 28,
+} as const;
+
+const MINIMAP_CLOSE_POSITION = {
+  right: MINIMAP_GEOMETRY.margin + MINIMAP_GEOMETRY.controlInset,
+  bottom:
+    MINIMAP_GEOMETRY.margin +
+    MINIMAP_GEOMETRY.height -
+    MINIMAP_GEOMETRY.controlInset -
+    MINIMAP_GEOMETRY.controlSize,
+} as const;
+
+function getMiniMapNodeColor(node: Node): string {
+  switch (node.type) {
+    case "imageInput": return "#3b82f6";
+    case "audioInput": return "#a78bfa";
+    case "videoInput": return "#c084fc";
+    case "annotation": return "#8b5cf6";
+    case "prompt": return "#f97316";
+    case "array": return "#a3e635";
+    case "promptConstructor": return "#f472b6";
+    case "nanoBanana": return "#22c55e";
+    case "generateVideo": return "#9333ea";
+    case "generate3d": return "#fb923c";
+    case "generateAudio": return "#d946ef";
+    case "llmGenerate": return "#06b6d4";
+    case "splitGrid": return "#f59e0b";
+    case "output": return "#ef4444";
+    case "outputGallery": return "#ec4899";
+    case "imageCompare": return "#14b8a6";
+    case "videoStitch": return "#f97316";
+    case "easeCurve": return "#bef264";
+    case "videoTrim": return "#60a5fa";
+    case "videoFrameGrab": return "#38bdf8";
+    case "removeBackground": return "#2dd4bf";
+    case "imageResize": return "#0d9488";
+    case "gifEncoder": return "#f472b6";
+    case "router": return "#6b7280";
+    case "switch": return "#8b5cf6";
+    case "conditionalSwitch": return "#06b6d4";
+    case "glbViewer": return "#0ea5e9";
+    default: return "#94a3b8";
+  }
+}
 
 // Connection validation rules
 // - Image handles (green) can only connect to image handles
@@ -289,6 +342,7 @@ export function WorkflowCanvas() {
   const setHoveredNodeId = useWorkflowStore((state) => state.setHoveredNodeId);
   const openAnnotationModal = useAnnotationStore((state) => state.openModal);
   const { screenToFlowPosition, getViewport, setCenter } = useReactFlow();
+  const isCanvasOverview = useStore(selectCanvasOverview);
   const { show: showToast } = useToast();
   const [isDragOver, setIsDragOver] = useState(false);
   const [dropType, setDropType] = useState<"image" | "audio" | "workflow" | "node" | null>(null);
@@ -299,6 +353,7 @@ export function WorkflowCanvas() {
   >(null);
   const [isSplitting, setIsSplitting] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isMinimapVisible, setIsMinimapVisible] = useState(true);
   const [isBuildingWorkflow, setIsBuildingWorkflow] = useState(false);
   const [showNewProjectSetup, setShowNewProjectSetup] = useState(false);
   const [expandingNode, setExpandingNode] = useState<{ id: string; type: string } | null>(null);
@@ -329,6 +384,16 @@ export function WorkflowCanvas() {
     setLockedFeatures(currentState.lockedFeatures);
 
     return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const wrapper = reactFlowWrapper.current;
+    return () => {
+      document.documentElement.classList.remove("canvas-interacting");
+      if (wrapper) setCanvasPanningClass(false, wrapper);
+      isPanningRef.current = false;
+      isDraggingNodeRef.current = false;
+    };
   }, []);
 
   // Detect if canvas is empty for showing quickstart
@@ -2029,7 +2094,9 @@ export function WorkflowCanvas() {
   return (
     <div
       ref={reactFlowWrapper}
-      className={`flex-1 bg-canvas-bg relative ${isDragOver ? "ring-2 ring-inset ring-blue-500" : ""}`}
+      className={`flex-1 bg-canvas-bg relative ${
+        isCanvasOverview ? "canvas-overview" : ""
+      } ${isDragOver ? "ring-2 ring-inset ring-blue-500" : ""}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -2095,13 +2162,13 @@ export function WorkflowCanvas() {
 
       <ReactFlow
         nodes={allNodes}
-        edges={edges}
+        edges={isCanvasOverview ? OVERVIEW_EDGES : edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         onConnectEnd={handleConnectEnd}
-        onMoveStart={() => { isPanningRef.current = true; setHoveredNodeId(null); document.documentElement.classList.add("canvas-interacting"); }}
-        onMoveEnd={() => { isPanningRef.current = false; document.documentElement.classList.remove("canvas-interacting"); }}
+        onMoveStart={() => { isPanningRef.current = true; setHoveredNodeId(null); document.documentElement.classList.add("canvas-interacting"); if (reactFlowWrapper.current) setCanvasPanningClass(true, reactFlowWrapper.current); }}
+        onMoveEnd={() => { isPanningRef.current = false; document.documentElement.classList.remove("canvas-interacting"); if (reactFlowWrapper.current) setCanvasPanningClass(false, reactFlowWrapper.current); }}
         onNodeDragStart={() => { isDraggingNodeRef.current = true; document.documentElement.classList.add("canvas-interacting"); }}
         onNodeDragStop={(event, node) => { isDraggingNodeRef.current = false; document.documentElement.classList.remove("canvas-interacting"); handleNodeDragStop(event, node); }}
         onSelectionChange={handleSelectionChange}
@@ -2175,72 +2242,50 @@ export function WorkflowCanvas() {
           className={tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}
         />
         <Controls className={`bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg [&>button]:bg-neutral-800 [&>button]:border-neutral-700 [&>button]:fill-neutral-300 [&>button:hover]:bg-neutral-700 [&>button:hover]:fill-neutral-100 ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`} />
-        <MiniMap
-          className={`bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
-          maskColor="rgba(0, 0, 0, 0.6)"
-          pannable
-          zoomable
-          nodeColor={(node) => {
-            switch (node.type) {
-              case "imageInput":
-                return "#3b82f6";
-              case "audioInput":
-                return "#a78bfa";
-              case "videoInput":
-                return "#c084fc"; // purple-400 (video input, distinct from generateVideo's #9333ea)
-              case "annotation":
-                return "#8b5cf6";
-              case "prompt":
-                return "#f97316";
-              case "array":
-                return "#a3e635";
-              case "promptConstructor":
-                return "#f472b6";
-              case "nanoBanana":
-                return "#22c55e";
-              case "generateVideo":
-                return "#9333ea";
-              case "generate3d":
-                return "#fb923c";
-              case "generateAudio":
-                return "#d946ef"; // fuchsia-500 (audio/TTS)
-              case "llmGenerate":
-                return "#06b6d4";
-              case "splitGrid":
-                return "#f59e0b";
-              case "output":
-                return "#ef4444";
-              case "outputGallery":
-                return "#ec4899";
-              case "imageCompare":
-                return "#14b8a6";
-              case "videoStitch":
-                return "#f97316";
-              case "easeCurve":
-                return "#bef264"; // lime-300 (easy-peasy-ease)
-              case "videoTrim":
-                return "#60a5fa"; // blue-400 (trim/cut)
-              case "videoFrameGrab":
-                return "#38bdf8"; // sky-400 (image from video)
-              case "removeBackground":
-                return "#2dd4bf"; // teal-400 (background removal)
-              case "imageResize":
-                return "#0d9488"; // teal-600 (image utility)
-              case "gifEncoder":
-                return "#f472b6"; // pink-400 (animated output)
-              case "router":
-                return "#6b7280"; // neutral-500 (gray/slate utility theme)
-              case "switch":
-                return "#8b5cf6"; // violet-500 (distinct from Router)
-              case "conditionalSwitch":
-                return "#06b6d4"; // cyan-500 (distinct from Router gray and Switch violet)
-              case "glbViewer":
-                return "#0ea5e9"; // sky-500 (3D viewport)
-              default:
-                return "#94a3b8";
-            }
-          }}
-        />
+        {isMinimapVisible ? (
+          <>
+            <MiniMap
+              className={`bg-neutral-800 border border-neutral-700 rounded-lg shadow-lg ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
+              style={{
+                width: MINIMAP_GEOMETRY.width,
+                height: MINIMAP_GEOMETRY.height,
+                margin: MINIMAP_GEOMETRY.margin,
+              }}
+              maskColor="rgba(0, 0, 0, 0.6)"
+              pannable
+              zoomable
+              nodeColor={getMiniMapNodeColor}
+            />
+            <button
+              type="button"
+              aria-label="Hide minimap"
+              title="Hide minimap"
+              disabled={tutorialActive && lockedFeatures}
+              onClick={() => setIsMinimapVisible(false)}
+              style={MINIMAP_CLOSE_POSITION}
+              className="nodrag nopan nowheel absolute z-[6] flex h-7 w-7 items-center justify-center rounded-md border border-neutral-600/80 bg-neutral-950/85 text-neutral-400 shadow-sm backdrop-blur-sm transition-colors hover:border-neutral-500 hover:bg-neutral-800 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed"
+            >
+              <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none">
+                <path d="M6 6l8 8M14 6l-8 8" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+              </svg>
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            aria-label="Show minimap"
+            title="Show minimap"
+            disabled={tutorialActive && lockedFeatures}
+            onClick={() => setIsMinimapVisible(true)}
+            style={{ right: MINIMAP_GEOMETRY.margin, bottom: MINIMAP_GEOMETRY.margin }}
+            className={`nodrag nopan nowheel absolute z-[5] flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-700 bg-neutral-800 text-neutral-400 shadow-lg transition-colors hover:border-neutral-600 hover:bg-neutral-700 hover:text-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed ${tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}`}
+          >
+            <svg aria-hidden="true" viewBox="0 0 20 20" className="h-[18px] w-[18px]" fill="none">
+              <rect x="2.5" y="3.5" width="15" height="13" rx="2" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M5.5 7h2v2h-2zM9 7h2v2H9zM12.5 7h2v2h-2zM5.5 10.5h2v2h-2zM9 10.5h5.5v2H9z" fill="currentColor" />
+            </svg>
+          </button>
+        )}
         <ViewportPortal>
           {allNodes.map((node) => {
             // Groups don't get floating headers

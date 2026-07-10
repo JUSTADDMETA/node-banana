@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from "react";
 import { useReactFlow } from "@xyflow/react";
 import type { CanvasNavigationSettings } from "@/types/canvas";
+import { setCanvasWheelPanningClass } from "@/utils/canvasPerformance";
 
 /**
  * Wheel-based pan/zoom for a React Flow canvas, honoring the user's
@@ -17,6 +18,102 @@ import type { CanvasNavigationSettings } from "@/types/canvas";
 
 const isMacOS =
   typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+
+interface ViewportState {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+interface ViewportPanBatcherOptions {
+  getViewport: () => ViewportState;
+  setViewport: (viewport: ViewportState) => void;
+  requestFrame?: (callback: FrameRequestCallback) => number;
+  cancelFrame?: (handle: number) => void;
+}
+
+interface PanActivityTrackerOptions {
+  setActive: (active: boolean) => void;
+  endDelayMs?: number;
+  scheduleEnd?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  cancelEnd?: (handle: ReturnType<typeof setTimeout>) => void;
+}
+
+export function createPanActivityTracker({
+  setActive,
+  endDelayMs = 120,
+  scheduleEnd = setTimeout,
+  cancelEnd = clearTimeout,
+}: PanActivityTrackerOptions): { signal: () => void; dispose: () => void } {
+  let active = false;
+  let endTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const deactivate = () => {
+    endTimer = null;
+    if (!active) return;
+    active = false;
+    setActive(false);
+  };
+
+  return {
+    signal() {
+      if (!active) {
+        active = true;
+        setActive(true);
+      }
+      if (endTimer !== null) cancelEnd(endTimer);
+      endTimer = scheduleEnd(deactivate, endDelayMs);
+    },
+    dispose() {
+      if (endTimer !== null) cancelEnd(endTimer);
+      endTimer = null;
+      if (active) {
+        active = false;
+        setActive(false);
+      }
+    },
+  };
+}
+
+export function createViewportPanBatcher({
+  getViewport,
+  setViewport,
+  requestFrame = requestAnimationFrame,
+  cancelFrame = cancelAnimationFrame,
+}: ViewportPanBatcherOptions): {
+  queue: (deltaX: number, deltaY: number) => void;
+  dispose: () => void;
+} {
+  let frameId: number | null = null;
+  let pendingDeltaX = 0;
+  let pendingDeltaY = 0;
+
+  const flush = () => {
+    frameId = null;
+    const viewport = getViewport();
+    setViewport({
+      x: viewport.x - pendingDeltaX,
+      y: viewport.y - pendingDeltaY,
+      zoom: viewport.zoom,
+    });
+    pendingDeltaX = 0;
+    pendingDeltaY = 0;
+  };
+
+  return {
+    queue(deltaX, deltaY) {
+      pendingDeltaX += deltaX;
+      pendingDeltaY += deltaY;
+      if (frameId === null) frameId = requestFrame(flush);
+    },
+    dispose() {
+      if (frameId !== null) cancelFrame(frameId);
+      frameId = null;
+      pendingDeltaX = 0;
+      pendingDeltaY = 0;
+    },
+  };
+}
 
 // Detect if a wheel event is from a mouse (vs trackpad).
 function isMouseWheel(event: WheelEvent): boolean {
@@ -71,6 +168,10 @@ export function useWheelPanZoom(
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper || !enabled) return;
+    const panBatcher = createViewportPanBatcher({ getViewport, setViewport });
+    const panActivity = createPanActivityTracker({
+      setActive: (active) => setCanvasWheelPanningClass(active, wrapper),
+    });
 
     const handleWheel = (event: WheelEvent) => {
       // Let inner scroll areas (nowheel/textarea) keep their own scrolling.
@@ -105,12 +206,8 @@ export function useWheelPanZoom(
         } else {
           // Trackpad pan (also blocks horizontal swipe navigation).
           event.preventDefault();
-          const viewport = getViewport();
-          setViewport({
-            x: viewport.x - event.deltaX,
-            y: viewport.y - event.deltaY,
-            zoom: viewport.zoom,
-          });
+          panActivity.signal();
+          panBatcher.queue(event.deltaX, event.deltaY);
         }
         return;
       }
@@ -124,6 +221,10 @@ export function useWheelPanZoom(
     };
 
     wrapper.addEventListener("wheel", handleWheel, { passive: false });
-    return () => wrapper.removeEventListener("wheel", handleWheel);
+    return () => {
+      wrapper.removeEventListener("wheel", handleWheel);
+      panBatcher.dispose();
+      panActivity.dispose();
+    };
   }, [wrapperRef, enabled, settings, getViewport, setViewport, zoomIn, zoomOut]);
 }

@@ -1,14 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { GroupBackgroundsPortal, GroupControlsOverlay, GroupsOverlay } from "@/components/GroupsOverlay";
+import {
+  GroupBackgroundsPortal,
+  GroupControlsOverlay,
+  GroupsOverlay,
+  selectViewportZoom,
+} from "@/components/GroupsOverlay";
 import { Group } from "@/types";
+
+const mockViewport = vi.hoisted(() => ({ zoom: 1 }));
 
 // Mock ReactFlow hooks and components
 vi.mock("@xyflow/react", () => ({
   useReactFlow: () => ({
     getViewport: () => ({ zoom: 1, x: 0, y: 0 }),
   }),
-  useViewport: () => ({ zoom: 1, x: 0, y: 0 }),
+  useStore: (selector: (state: { transform: [number, number, number] }) => unknown) =>
+    selector({ transform: [0, 0, mockViewport.zoom] }),
   ViewportPortal: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="viewport-portal">{children}</div>
   ),
@@ -62,6 +70,7 @@ const createDefaultState = (overrides: { groups?: Record<string, Group> } = {}) 
 describe("GroupBackgroundsPortal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockViewport.zoom = 1;
     mockUseWorkflowStore.mockImplementation((selector) => {
       return selector(createDefaultState());
     });
@@ -164,6 +173,7 @@ describe("GroupBackgroundsPortal", () => {
 describe("GroupControlsOverlay", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockViewport.zoom = 1;
     mockUseWorkflowStore.mockImplementation((selector) => {
       return selector(createDefaultState());
     });
@@ -178,6 +188,65 @@ describe("GroupControlsOverlay", () => {
       const { container } = render(<GroupControlsOverlay />);
       expect(container.firstChild).toBeNull();
     });
+  });
+
+  it("selects only zoom from viewport state", () => {
+    expect(selectViewportZoom({ transform: [125, -80, 0.4] } as never)).toBe(0.4);
+  });
+
+  it("keeps group titles but omits interactive controls at overview zoom", () => {
+    mockViewport.zoom = 0.1;
+    mockUseWorkflowStore.mockImplementation((selector) => {
+      return selector(
+        createDefaultState({ groups: { "group-1": createMockGroup({ name: "Overview Group" }) } })
+      );
+    });
+
+    const { container } = render(<GroupControlsOverlay />);
+
+    expect(screen.getByText("Overview Group")).toBeInTheDocument();
+    expect(screen.queryByTitle("Group options")).not.toBeInTheDocument();
+    expect(container.querySelector(".group-resize-controls")).not.toBeInTheDocument();
+  });
+
+  it("keeps overview titles passive", () => {
+    mockViewport.zoom = 0.1;
+    mockUseWorkflowStore.mockImplementation((selector) =>
+      selector(
+        createDefaultState({
+          groups: { "group-1": createMockGroup({ name: "Passive Group" }) },
+        })
+      )
+    );
+
+    render(<GroupControlsOverlay />);
+    const title = screen.getByText("Passive Group");
+
+    fireEvent.doubleClick(title);
+    fireEvent.mouseDown(title, { clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(window, { clientX: 30, clientY: 30 });
+
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(mockMoveGroupNodes).not.toHaveBeenCalled();
+  });
+
+  it("commits an active rename before entering overview mode", () => {
+    mockUseWorkflowStore.mockImplementation((selector) =>
+      selector(
+        createDefaultState({
+          groups: { "group-1": createMockGroup({ name: "Original Name" }) },
+        })
+      )
+    );
+
+    const { rerender } = render(<GroupControlsOverlay />);
+    fireEvent.doubleClick(screen.getByText("Original Name"));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Renamed Group" } });
+
+    mockViewport.zoom = 0.1;
+    rerender(<GroupControlsOverlay />);
+
+    expect(mockUpdateGroup).toHaveBeenCalledWith("group-1", { name: "Renamed Group" });
   });
 
   describe("Group Controls Rendering", () => {
