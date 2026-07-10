@@ -35,3 +35,10 @@ export const MODEL_DISPLAY_NAMES: Record<ModelType, string> = {
   "nano-banana-2": "Nano Banana 2",
   "nano-banana-2-lite": "Nano Banana 2 Lite",
 };
+
+export const GEMINI_IMAGE_MODELS: ReadonlyArray<{ value: ModelType; label: string }> = [
+  { value: "nano-banana", label: MODEL_DISPLAY_NAMES["nano-banana"] },
+  { value: "nano-banana-2", label: MODEL_DISPLAY_NAMES["nano-banana-2"] },
+  { value: "nano-banana-2-lite", label: MODEL_DISPLAY_NAMES["nano-banana-2-lite"] },
+  { value: "nano-banana-pro", label: MODEL_DISPLAY_NAMES["nano-banana-pro"] },
+];

@@ -74,15 +74,17 @@ describe("createPanActivityTracker", () => {
 
   it("clears performance mode when disposed", () => {
     const setActive = vi.fn();
+    const cancelEnd = vi.fn();
     const tracker = createPanActivityTracker({
       setActive,
       scheduleEnd: () => 11 as ReturnType<typeof setTimeout>,
-      cancelEnd: vi.fn(),
+      cancelEnd,
     });
 
     tracker.signal();
     tracker.dispose();
 
+    expect(cancelEnd).toHaveBeenCalledWith(11);
     expect(setActive).toHaveBeenLastCalledWith(false);
   });
 });

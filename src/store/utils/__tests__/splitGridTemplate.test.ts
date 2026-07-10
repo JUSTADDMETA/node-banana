@@ -787,6 +787,12 @@ describe("splitGridTemplate utilities", () => {
         expect(sanitizeGridOffsets([0.5, 0.5], 3)).toBeNull(); // equal, not strict
       });
 
+      it("rejects boundaries that create slices smaller than the minimum gap", () => {
+        expect(sanitizeGridOffsets([0.01, 0.5], 3)).toBeNull();
+        expect(sanitizeGridOffsets([0.4, 0.41], 3)).toBeNull();
+        expect(sanitizeGridOffsets([0.5, 0.99], 3)).toBeNull();
+      });
+
       it("rejects non-array or non-finite input", () => {
         expect(sanitizeGridOffsets(undefined, 3)).toBeNull();
         expect(sanitizeGridOffsets("nope", 3)).toBeNull();

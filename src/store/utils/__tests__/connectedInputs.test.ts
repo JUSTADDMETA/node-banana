@@ -269,6 +269,31 @@ describe("getConnectedInputsPure", () => {
     expect(result.images).toEqual(["data:image/png;base64,a"]);
   });
 
+  it("should populate dynamicInputs through an enabled switch passthrough", () => {
+    const nodes = [
+      makeNode("img", "imageInput", { image: "data:image/png;base64,a" }),
+      makeNode("sw", "switch", {
+        inputType: "image",
+        switches: [{ id: "sw-1", name: "Output 1", enabled: true }],
+      }),
+      makeNode("gen", "nanoBanana", {
+        inputSchema: [{ name: "image_url", type: "image" }],
+      }),
+    ];
+    const edges = [
+      makeEdge("img", "sw", "image"),
+      {
+        ...makeEdge("sw", "gen", "image-0"),
+        sourceHandle: "sw-1",
+      },
+    ];
+
+    const result = getConnectedInputsPure("gen", nodes, edges);
+
+    expect(result.dynamicInputs).toEqual({ image_url: "data:image/png;base64,a" });
+    expect(result.images).toEqual(["data:image/png;base64,a"]);
+  });
+
   it("should map a connected video into dynamicInputs and videos via schema", () => {
     const nodes = [
       makeNode("vid", "videoInput", { video: "data:video/mp4;base64,v" }),

@@ -30,6 +30,7 @@ import type {
   Resolution,
   SelectedModel,
 } from "@/types";
+import { GEMINI_IMAGE_MODELS } from "@/types";
 import type { ProviderModel } from "@/lib/providers/types";
 import { ModelSearchDialog } from "../modals/ModelSearchDialog";
 import { ModelParameters } from "../nodes/ModelParameters";
@@ -91,13 +92,6 @@ export function TemplateEditableEdge({
   );
 }
 
-// Mirrors GenerateImageNode's gemini constants
-export const GEMINI_IMAGE_MODELS: { value: ModelType; label: string }[] = [
-  { value: "nano-banana", label: "Nano Banana" },
-  { value: "nano-banana-2", label: "Nano Banana 2" },
-  { value: "nano-banana-2-lite", label: "Nano Banana 2 Lite" },
-  { value: "nano-banana-pro", label: "Nano Banana Pro" },
-];
 const BASE_ASPECT_RATIOS: AspectRatio[] = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
 const EXTENDED_ASPECT_RATIOS: AspectRatio[] = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 const RESOLUTIONS_PRO: Resolution[] = ["1K", "2K", "4K"];
