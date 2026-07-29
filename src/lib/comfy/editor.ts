@@ -1,0 +1,824 @@
+/**
+ * ComfyUI editor-format (save-format) support.
+ *
+ * The editor format is what ComfyUI's normal Save produces, and the only
+ * format that carries **App Mode** (linear mode) configuration — the author's
+ * curated list of inputs and outputs. It is not executable: widget values are
+ * stored positionally (`widgets_values`), without names. Converting to the
+ * executable API format therefore needs a node catalog (`/object_info` from a
+ * reachable engine) to map positions onto named inputs.
+ *
+ * Subgraphs (a.k.a. Blueprints) are expanded inline, with inner node ids
+ * namespaced as `instance:inner` — matching ComfyUI's own API export.
+ */
+
+import type {
+  ComfyBlueprintSummary,
+  ComfyGraph,
+  ComfyGraphNode,
+  ComfyObjectInfo,
+} from "./types";
+
+/* ── editor file shapes ────────────────────────────────────────── */
+
+interface EditorNodeInput {
+  name: string;
+  type?: string;
+  link?: number | null;
+  widget?: { name?: string };
+}
+
+interface EditorNode {
+  id: number | string;
+  type: string;
+  title?: string;
+  /** 0 = normal, 2 = muted, 4 = bypassed. */
+  mode?: number;
+  inputs?: EditorNodeInput[];
+  outputs?: Array<{ name?: string; type?: string }>;
+  widgets_values?: unknown[] | Record<string, unknown>;
+}
+
+type EditorLinkTuple = [number, number | string, number, number | string, number, ...unknown[]];
+interface EditorLinkObject {
+  id: number;
+  origin_id: number | string;
+  origin_slot: number;
+  target_id: number | string;
+  target_slot: number;
+}
+type EditorLink = EditorLinkTuple | EditorLinkObject;
+
+/** A subgraph definition — an inner graph with declared boundary slots. */
+export interface SubgraphDef {
+  id: string;
+  name?: string;
+  nodes: EditorNode[];
+  links?: EditorLink[];
+  /** Boundary inputs, in slot order; `linkIds` are the inner links they feed. */
+  inputs?: Array<{ name?: string; type?: string; linkIds?: number[] | null }>;
+  /** Boundary outputs, in slot order; `linkIds` are the inner links feeding them. */
+  outputs?: Array<{ name?: string; type?: string; linkIds?: number[] | null }>;
+}
+
+export interface EditorWorkflowFile {
+  nodes: EditorNode[];
+  links?: EditorLink[];
+  definitions?: { subgraphs?: SubgraphDef[] };
+  extra?: {
+    linearMode?: boolean;
+    linearData?: {
+      inputs?: Array<[string | number, string, ...unknown[]]>;
+      outputs?: Array<string | number | { id?: string | number; nodeId?: string | number }>;
+    };
+    /** Newer exports may nest the same data under `appMode`. */
+    appMode?: {
+      inputs?: Array<[string | number, string, ...unknown[]]>;
+      outputs?: Array<string | number | { id?: string | number; nodeId?: string | number }>;
+    };
+  };
+}
+
+/** Whether a parsed JSON blob is an editor save rather than an API graph. */
+export function isEditorFormat(raw: unknown): raw is EditorWorkflowFile {
+  return raw !== null && typeof raw === "object" && Array.isArray((raw as { nodes?: unknown }).nodes);
+}
+
+/* ── widget-value mapping ──────────────────────────────────────── */
+
+/** Nodes that exist only for the editor canvas — never part of execution. */
+const COSMETIC_TYPES = new Set(["Note", "MarkdownNote", "Reroute"]);
+
+const SEED_CONTROL_VALUES = new Set(["fixed", "increment", "decrement", "randomize"]);
+
+/** A widget spec is `[type, options?]`; read the options object safely. */
+function specOptions(spec: unknown[]): Record<string, unknown> {
+  return (spec[1] && typeof spec[1] === "object" ? spec[1] : {}) as Record<string, unknown>;
+}
+
+/**
+ * The engine's default for a widget — used to fill a *required* widget the
+ * editor save omitted. The frontend always sends a value, so the engine
+ * expects one; leaving it out fails validation.
+ */
+function widgetDefault(spec: unknown[]): unknown {
+  const type = spec[0];
+  const opts = specOptions(spec);
+  if ("default" in opts) return opts.default;
+  if (Array.isArray(type)) return type[0];
+  if (type === "COMBO") {
+    const options = Array.isArray(opts.options) ? opts.options : [];
+    return options[0];
+  }
+  if (type === "INT" || type === "FLOAT") return 0;
+  if (type === "STRING") return "";
+  if (type === "BOOLEAN") return false;
+  return undefined;
+}
+
+interface SpecInputGroups {
+  required?: Record<string, unknown>;
+  optional?: Record<string, unknown>;
+}
+
+/** Input specs of a node (or dynamic-combo option), in declaration order. */
+function specEntries(input: SpecInputGroups | undefined): Array<{ name: string; spec: unknown[] }> {
+  const all = { ...(input?.required ?? {}), ...(input?.optional ?? {}) };
+  return Object.entries(all)
+    .filter((entry): entry is [string, unknown[]] => Array.isArray(entry[1]))
+    .map(([name, spec]) => ({ name, spec }));
+}
+
+/**
+ * Map positional `widgets_values` onto named inputs by walking the node spec
+ * in declaration order — mirroring the frontend's widget instantiation.
+ *
+ * V3 dynamic schemas: a `COMFY_DYNAMICCOMBO_*` input is a widget whose value is
+ * the selected option key; the option's nested inputs follow immediately after
+ * it and serialize under dotted names (`model.aspect_ratio`).
+ * `COMFY_AUTOGROW_*` / `COMFY_MATCHTYPE_*` groups create input sockets only —
+ * they consume no widget values.
+ */
+function assignWidgetValues(
+  inputs: Record<string, unknown>,
+  entries: Array<{ name: string; spec: unknown[] }>,
+  values: unknown[],
+  state: { i: number },
+  connectionNames: Set<string>,
+  prefix = ""
+): void {
+  for (const { name, spec } of entries) {
+    const type = spec[0];
+    const opts = specOptions(spec);
+
+    if (typeof type === "string" && type.startsWith("COMFY_DYNAMICCOMBO_")) {
+      if (state.i >= values.length) return;
+      const selected = values[state.i];
+      state.i += 1;
+      inputs[`${prefix}${name}`] = selected;
+      const options = Array.isArray(opts.options) ? opts.options : [];
+      const option = options.find(
+        (o): o is { key: unknown; inputs?: SpecInputGroups } =>
+          o !== null && typeof o === "object" && (o as { key?: unknown }).key === selected
+      );
+      if (option?.inputs) {
+        assignWidgetValues(
+          inputs,
+          specEntries(option.inputs),
+          values,
+          state,
+          connectionNames,
+          `${prefix}${name}.`
+        );
+      }
+      continue;
+    }
+
+    if (
+      typeof type === "string" &&
+      (type.startsWith("COMFY_AUTOGROW_") || type.startsWith("COMFY_MATCHTYPE_"))
+    ) {
+      continue;
+    }
+
+    // A connection consumes no widgets_values slot. It's a connection if the
+    // node lists it as a real input slot, or the spec forces it. Everything
+    // else is a widget — including custom widgets like curve editors.
+    const fullName = `${prefix}${name}`;
+    if (connectionNames.has(fullName) || opts.forceInput === true) continue;
+    if (state.i >= values.length) return;
+
+    // Arrays as widget values would read as links — wrap like the frontend.
+    inputs[fullName] = Array.isArray(values[state.i])
+      ? { __value__: values[state.i] }
+      : values[state.i];
+    state.i += 1;
+
+    // Seed widgets serialize a companion control value ("randomize", …).
+    const seedLike = Boolean(opts.control_after_generate) || name === "seed" || name === "noise_seed";
+    if (
+      seedLike &&
+      typeof values[state.i] === "string" &&
+      SEED_CONTROL_VALUES.has(values[state.i] as string)
+    ) {
+      state.i += 1;
+    }
+    // Upload widgets serialize a trailing pseudo-value.
+    if (opts.image_upload === true && values[state.i] === "image") state.i += 1;
+  }
+}
+
+/**
+ * `CustomCombo` (the author-defined dropdown) carries dynamic `option1..optionN`
+ * widgets the engine's static schema only partially declares, so the generic
+ * spec-driven mapping drops options past the first few. Map them all directly
+ * from the positional values (`[choice, index, option1, option2, …]`) so every
+ * choice stays selectable — and so the dropdown surfaces even when no reachable
+ * engine knows `CustomCombo`.
+ */
+function assignCustomComboValues(inputs: Record<string, unknown>, values: unknown[]): void {
+  if (values.length > 0) inputs.choice = values[0];
+  if (values.length > 1) inputs.index = values[1];
+  let n = 1;
+  for (let k = 2; k < values.length; k += 1) {
+    const v = values[k];
+    if (typeof v === "string" && v.trim() === "") continue;
+    inputs[`option${n}`] = v;
+    n += 1;
+  }
+}
+
+/* ── link resolution across subgraph boundaries ────────────────── */
+
+interface NormalizedLink {
+  origin: string;
+  originSlot: number;
+}
+
+function normalizeLinks(links: EditorLink[] | undefined): Map<number, NormalizedLink> {
+  const map = new Map<number, NormalizedLink>();
+  for (const link of links ?? []) {
+    if (Array.isArray(link)) {
+      map.set(link[0], { origin: String(link[1]), originSlot: link[2] });
+    } else if (link && typeof link === "object") {
+      map.set(link.id, { origin: String(link.origin_id), originSlot: link.origin_slot });
+    }
+  }
+  return map;
+}
+
+/**
+ * One graph level: the root workflow, or a subgraph instance's inner graph.
+ * Inner nodes get namespaced ids (`instance:inner`).
+ */
+interface Scope {
+  prefix: string;
+  nodes: Map<string, EditorNode>;
+  links: Map<number, NormalizedLink>;
+  /** Inner link id → boundary input slot it originates from. */
+  boundaryOwner: Map<number, number>;
+  /** Boundary input name → promoted widget value on the instance. */
+  boundaryWidgetValue: Map<string, unknown>;
+  instance: EditorNode | null;
+  def: SubgraphDef | null;
+  parent: Scope | null;
+  /** Child scopes keyed by the instance node id within this scope. */
+  children: Map<string, Scope>;
+}
+
+type Resolved = { kind: "link"; key: string; slot: number } | { kind: "value"; value: unknown };
+
+function buildScope(
+  nodes: EditorNode[],
+  links: EditorLink[] | undefined,
+  defs: Map<string, SubgraphDef>,
+  prefix: string,
+  parent: Scope | null,
+  instance: EditorNode | null,
+  def: SubgraphDef | null,
+  depth: number
+): Scope {
+  if (depth > 10) {
+    throw new Error("Subgraphs nest too deeply (or recursively) to convert");
+  }
+  const scope: Scope = {
+    prefix,
+    nodes: new Map(nodes.map((n) => [String(n.id), n])),
+    links: normalizeLinks(links),
+    boundaryOwner: new Map(),
+    boundaryWidgetValue: new Map(),
+    instance,
+    def,
+    parent,
+    children: new Map(),
+  };
+  for (const [slot, input] of (def?.inputs ?? []).entries()) {
+    for (const linkId of input.linkIds ?? []) scope.boundaryOwner.set(linkId, slot);
+  }
+  // Promoted widgets: instance inputs marked as widgets carry their values
+  // positionally in the instance's widgets_values. Keyed by NAME — an instance
+  // materializes only the boundary inputs the author touched.
+  if (instance && Array.isArray(instance.widgets_values)) {
+    let i = 0;
+    for (const input of instance.inputs ?? []) {
+      if (!input.widget) continue;
+      if (i >= instance.widgets_values.length) break;
+      scope.boundaryWidgetValue.set(input.name, instance.widgets_values[i]);
+      i += 1;
+    }
+  }
+  for (const node of nodes) {
+    const childDef = defs.get(String(node.type));
+    if (childDef) {
+      scope.children.set(
+        String(node.id),
+        buildScope(
+          childDef.nodes,
+          childDef.links,
+          defs,
+          `${prefix}${node.id}:`,
+          scope,
+          node,
+          childDef,
+          depth + 1
+        )
+      );
+    }
+  }
+  return scope;
+}
+
+function resolveLinkId(scope: Scope, linkId: number, depth: number): Resolved | null {
+  if (depth > 100) return null;
+  // Links originating at a boundary input resolve in the parent scope.
+  const boundarySlot = scope.boundaryOwner.get(linkId);
+  if (boundarySlot !== undefined) {
+    // Match the instance's input BY NAME — instances materialize only the
+    // boundary inputs the author touched, so indexes don't line up.
+    const boundaryName = scope.def?.inputs?.[boundarySlot]?.name;
+    const outer = boundaryName
+      ? (scope.instance?.inputs ?? []).find((i) => i.name === boundaryName)
+      : scope.instance?.inputs?.[boundarySlot];
+    if (outer?.link != null && scope.parent) {
+      return resolveLinkId(scope.parent, outer.link, depth + 1);
+    }
+    const value = boundaryName ? scope.boundaryWidgetValue.get(boundaryName) : undefined;
+    if (value !== undefined && value !== null) return { kind: "value", value };
+    return null; // unconnected optional input — inner defaults apply
+  }
+  const link = scope.links.get(linkId);
+  if (!link) return null;
+  return resolveOrigin(scope, link.origin, link.originSlot, depth);
+}
+
+function resolveOrigin(
+  scope: Scope,
+  originId: string,
+  slot: number,
+  depth: number
+): Resolved | null {
+  if (depth > 100) return null;
+  // Source is a subgraph instance: follow its boundary output inward.
+  const child = scope.children.get(originId);
+  if (child) {
+    const innerLinkId = child.def?.outputs?.[slot]?.linkIds?.[0];
+    if (innerLinkId == null) return null;
+    return resolveLinkId(child, innerLinkId, depth + 1);
+  }
+  const node = scope.nodes.get(originId);
+  if (!node) return null;
+  if (node.type === "Reroute") {
+    const upstream = node.inputs?.[0]?.link;
+    return upstream == null ? null : resolveLinkId(scope, upstream, depth + 1);
+  }
+  if (node.mode === 4) {
+    // Bypassed: route through, mirroring the frontend's slot matching —
+    // wildcard prefers the same slot, then same-slot type match, then the
+    // first input of the exact type.
+    const outType = node.outputs?.[slot]?.type;
+    const inputs = node.inputs ?? [];
+    const compatible = (a?: string, b?: string) => !a || !b || a === b || a === "*" || b === "*";
+    let match: EditorNodeInput | undefined;
+    if (outType === "*" || outType === "" || outType === undefined) {
+      match = inputs[slot] ?? inputs[0];
+    } else if (inputs[slot] && compatible(inputs[slot].type, outType)) {
+      match = inputs[slot];
+    } else {
+      match =
+        inputs.find((i) => i.type === outType) ?? inputs.find((i) => compatible(i.type, outType));
+    }
+    return match?.link != null ? resolveLinkId(scope, match.link, depth + 1) : null;
+  }
+  if (node.mode === 2) return null; // muted — produces nothing
+  return { kind: "link", key: `${scope.prefix}${originId}`, slot };
+}
+
+/* ── conversion ────────────────────────────────────────────────── */
+
+export class ComfyConversionError extends Error {
+  /** Node type the converter could not interpret, when that was the cause. */
+  readonly unknownNodeType?: string;
+  constructor(message: string, unknownNodeType?: string) {
+    super(message);
+    this.name = "ComfyConversionError";
+    if (unknownNodeType) this.unknownNodeType = unknownNodeType;
+  }
+}
+
+/**
+ * Convert an editor-format workflow into an executable API graph, expanding
+ * subgraphs.
+ *
+ * @throws {ComfyConversionError} when a node's widget layout cannot be
+ * interpreted because no reachable engine declares its schema.
+ */
+export function convertEditorGraph(
+  file: EditorWorkflowFile,
+  objectInfo: ComfyObjectInfo
+): ComfyGraph {
+  const defs = new Map<string, SubgraphDef>();
+  for (const def of file.definitions?.subgraphs ?? []) defs.set(String(def.id), def);
+
+  const root = buildScope(file.nodes, file.links, defs, "", null, null, null, 0);
+  const graph: ComfyGraph = {};
+
+  function emitScope(scope: Scope): void {
+    for (const node of scope.nodes.values()) {
+      const id = String(node.id);
+      if (node.mode === 2 || node.mode === 4) continue; // muted / bypassed
+      const child = scope.children.get(id);
+      if (child) {
+        emitScope(child);
+        continue;
+      }
+      if (COSMETIC_TYPES.has(node.type)) continue;
+
+      const api: ComfyGraphNode = {
+        class_type: node.type,
+        inputs: {},
+        ...(node.title ? { _meta: { title: node.title } } : {}),
+      };
+
+      // The node's own input slots are connections — only widgets consume a
+      // widgets_values slot. A widget converted to an input carries a `widget`
+      // flag and still has a value, so it is excluded from the connection set.
+      const connectionNames = new Set(
+        (node.inputs ?? []).filter((inp) => !inp.widget).map((inp) => inp.name)
+      );
+
+      const values = node.widgets_values;
+      if (node.type === "CustomCombo" && Array.isArray(values)) {
+        assignCustomComboValues(api.inputs, values);
+      } else if (values && !Array.isArray(values) && typeof values === "object") {
+        // Some packs (VHS) serialize widgets as a named object already. Keep
+        // object values too (custom widgets) — only arrays must be wrapped so
+        // they are not mistaken for a `[node, slot]` link.
+        for (const [key, value] of Object.entries(values)) {
+          if (value === null) continue;
+          api.inputs[key] = Array.isArray(value) ? { __value__: value } : value;
+        }
+      } else if (Array.isArray(values) && values.length > 0) {
+        if (!objectInfo[node.type]) {
+          throw new ComfyConversionError(
+            `No reachable ComfyUI knows the node "${node.type}", so this workflow cannot be interpreted. Install its node pack on the engine you selected, or import an API-format export instead.`,
+            node.type
+          );
+        }
+        assignWidgetValues(
+          api.inputs,
+          specEntries(objectInfo[node.type]?.input),
+          values,
+          { i: 0 },
+          connectionNames
+        );
+      }
+
+      // Connections override widget placeholders.
+      for (const input of node.inputs ?? []) {
+        if (input.link == null) continue;
+        const resolved = resolveLinkId(scope, input.link, 0);
+        if (resolved?.kind === "link") api.inputs[input.name] = [resolved.key, resolved.slot];
+        else if (resolved?.kind === "value") api.inputs[input.name] = resolved.value;
+      }
+
+      // Required widgets the editor save omitted get the engine's default —
+      // the frontend always sends one, so the engine expects one.
+      for (const [name, spec] of Object.entries(objectInfo[node.type]?.input?.required ?? {})) {
+        if (!Array.isArray(spec) || name in api.inputs || connectionNames.has(name)) continue;
+        const opts = specOptions(spec);
+        if (opts.forceInput === true) continue;
+        const fallback = widgetDefault(spec);
+        if (fallback !== undefined) api.inputs[name] = fallback;
+      }
+
+      graph[`${scope.prefix}${id}`] = api;
+    }
+  }
+  emitScope(root);
+
+  // Final prune (mirrors the frontend): drop link inputs that reference nodes
+  // excluded from the prompt (muted / bypassed / virtual).
+  for (const node of Object.values(graph)) {
+    for (const [key, value] of Object.entries(node.inputs)) {
+      if (Array.isArray(value) && typeof value[0] === "string" && !graph[value[0]]) {
+        delete node.inputs[key];
+      }
+    }
+  }
+
+  if (Object.keys(graph).length === 0) {
+    throw new ComfyConversionError("No executable nodes found in this workflow");
+  }
+  return graph;
+}
+
+/**
+ * Node types referenced by an editor save whose widget layout must be looked
+ * up in a catalog. Used to decide whether a conversion can succeed before
+ * attempting it, and to report exactly what an engine is missing.
+ */
+export function editorNodeTypes(file: EditorWorkflowFile): string[] {
+  const types = new Set<string>();
+  const defs = new Set((file.definitions?.subgraphs ?? []).map((d) => String(d.id)));
+  const walk = (nodes: EditorNode[]): void => {
+    for (const node of nodes) {
+      if (node.mode === 2 || node.mode === 4) continue;
+      const type = String(node.type);
+      if (defs.has(type) || COSMETIC_TYPES.has(type)) continue;
+      types.add(type);
+    }
+  };
+  walk(file.nodes);
+  for (const def of file.definitions?.subgraphs ?? []) walk(def.nodes);
+  return [...types].sort();
+}
+
+/* ── App Mode ──────────────────────────────────────────────────── */
+
+export interface AppModeData {
+  /**
+   * Author-exposed inputs, in display order. `nodeId` is already namespaced the
+   * way {@link convertEditorGraph} emits it (`instance:inner` for a widget
+   * inside a subgraph), so it indexes straight into the converted API graph.
+   */
+  inputs: Array<{ nodeId: string; widget: string }>;
+  /** Author-exposed output node ids, in order. */
+  outputNodeIds: string[];
+}
+
+/** Normalise an App Mode output entry, which may be an id or an object. */
+function outputEntryId(entry: unknown): string | null {
+  if (typeof entry === "string" || typeof entry === "number") return String(entry);
+  if (entry && typeof entry === "object") {
+    const obj = entry as { id?: unknown; nodeId?: unknown };
+    if (obj.id !== undefined) return String(obj.id);
+    if (obj.nodeId !== undefined) return String(obj.nodeId);
+  }
+  return null;
+}
+
+/**
+ * Resolve element `[0]` of a `linearData.inputs` tuple to a node id.
+ *
+ * The frontend has migrated this field twice, and all three encodings are
+ * still found in the wild:
+ *
+ * - a bare node id (`"3"`) — the original form;
+ * - a legacy `"<nodeId>:<subNodeId>"` pair;
+ * - a `WidgetId`: `"<graphId>:<nodeId>:<widgetName>"`, whose node-id and name
+ *   segments are `encodeURIComponent`-escaped.
+ *
+ * Returns the node id plus, for the `WidgetId` form, the widget name it
+ * carries — which is authoritative over element `[1]` when they disagree.
+ */
+export function parseAppModeInputId(
+  raw: unknown
+): { nodeId: string; widget?: string } | null {
+  if (typeof raw === "number") return { nodeId: String(raw) };
+  if (typeof raw !== "string" || raw === "") return null;
+  if (!raw.includes(":")) return { nodeId: raw };
+
+  const segments = raw.split(":");
+  const decode = (s: string): string => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
+  if (segments.length >= 3) {
+    // graphId : nodeId : widgetName — the graph id is the subgraph the node
+    // lives in, which is exactly the prefix the converter namespaces with.
+    return { nodeId: decode(segments[1]!), widget: decode(segments[2]!) };
+  }
+  // A legacy pair addresses a node inside a subgraph instance; the converter
+  // emits those as `instance:inner`, so the pair maps across unchanged.
+  return { nodeId: segments.map(decode).join(":") };
+}
+
+/**
+ * Read App Mode (linear mode) configuration from an editor export.
+ *
+ * App Mode is treated as on unless *explicitly* disabled: the frontend's only
+ * writer sets `extra.linearData` and never `extra.linearMode`, so requiring
+ * `linearMode === true` would silently discard a modern author's curated
+ * surface.
+ *
+ * Entries are matched against the ids the conversion actually produced, so a
+ * reference to a deleted (or muted, or bypassed) node is dropped rather than
+ * becoming a dead handle. Pass `knownNodeIds` from the converted graph; without
+ * it only root-level nodes can be validated.
+ */
+export function extractAppMode(
+  file: EditorWorkflowFile,
+  knownNodeIds?: Iterable<string>
+): AppModeData | null {
+  const data = file.extra?.linearData ?? file.extra?.appMode;
+  if (file.extra?.linearMode === false || !data) return null;
+
+  const ids = knownNodeIds ? new Set(knownNodeIds) : new Set(file.nodes.map((n) => String(n.id)));
+  const inputs: AppModeData["inputs"] = [];
+  for (const entry of data.inputs ?? []) {
+    if (!Array.isArray(entry) || entry.length < 2) continue;
+    const parsed = parseAppModeInputId(entry[0]);
+    if (!parsed) continue;
+    const widget = String(entry[1] ?? parsed.widget ?? "");
+    if (!widget) continue;
+    // A namespaced id may appear either exactly as emitted, or (for the
+    // WidgetId form) as the bare inner id — accept whichever the graph holds.
+    const nodeId = ids.has(parsed.nodeId)
+      ? parsed.nodeId
+      : [...ids].find((id) => id.endsWith(`:${parsed.nodeId}`));
+    if (!nodeId) continue;
+    if (inputs.some((i) => i.nodeId === nodeId && i.widget === widget)) continue;
+    inputs.push({ nodeId, widget });
+  }
+
+  const outputNodeIds: string[] = [];
+  for (const entry of data.outputs ?? []) {
+    const id = outputEntryId(entry);
+    if (id === null) continue;
+    const nodeId = ids.has(id) ? id : [...ids].find((known) => known.endsWith(`:${id}`));
+    if (nodeId && !outputNodeIds.includes(nodeId)) outputNodeIds.push(nodeId);
+  }
+
+  if (inputs.length === 0 && outputNodeIds.length === 0) return null;
+  return { inputs, outputNodeIds };
+}
+
+/* ── blueprints ────────────────────────────────────────────────── */
+
+/**
+ * A ComfyUI **Blueprint** is a saved subgraph, serialized as an ordinary
+ * editor-format workflow: `definitions.subgraphs[0]` holds the reusable graph,
+ * and the root `nodes` array holds a single *instance* node whose `type` is
+ * that subgraph's id.
+ *
+ * Its exposed surface comes from two places, and both are needed:
+ *
+ * - **Connectable slots** — `definitions.subgraphs[i].inputs/outputs`, mirrored
+ *   onto the instance node's `inputs`/`outputs`.
+ * - **Promoted widgets** — `instance.properties.proxyWidgets`, an array of
+ *   `[innerNodeId, widgetName]` tuples. These are the blueprint's tunable
+ *   parameters, and there are usually more of them than there are slots.
+ */
+interface BlueprintInstanceNode extends EditorNode {
+  properties?: { proxyWidgets?: Array<[string | number, string]> };
+}
+
+/** The root node that instantiates a given subgraph definition, if present. */
+function blueprintInstance(
+  file: EditorWorkflowFile,
+  subgraphId: string
+): BlueprintInstanceNode | null {
+  return (
+    (file.nodes as BlueprintInstanceNode[]).find((n) => String(n.type) === subgraphId) ?? null
+  );
+}
+
+/** Display label for a boundary slot: the author's rename, else its name. */
+function slotLabel(
+  slot: { name?: string; label?: string } | undefined,
+  fallback: string
+): string {
+  const withLabel = slot as { label?: string } | undefined;
+  return withLabel?.label?.trim() || slot?.name?.trim() || fallback;
+}
+
+/**
+ * Summarise the subgraph definitions carried by a workflow file.
+ *
+ * A subgraph declares boundary input and output slots, which is most of the
+ * contract an app node needs — so each one can be offered as a ready-made node
+ * without the user hand-picking anything.
+ */
+export function extractBlueprints(file: EditorWorkflowFile): ComfyBlueprintSummary[] {
+  // Blueprint authors describe their subgraph in `extra`, alongside search
+  // aliases — the only metadata the format carries beyond the name.
+  const rawDescription = (file.extra as { BlueprintDescription?: unknown } | undefined)
+    ?.BlueprintDescription;
+  const description = typeof rawDescription === "string" ? rawDescription.trim() : undefined;
+
+  return (file.definitions?.subgraphs ?? []).map((def, index) => {
+    const instance = blueprintInstance(file, String(def.id));
+    return {
+      id: String(def.id),
+      name: def.name?.trim() || instance?.title?.trim() || `Blueprint ${index + 1}`,
+      ...(description ? { description } : {}),
+      inputNames: (def.inputs ?? []).map((slot, n) => slotLabel(slot, `input_${n}`)),
+      outputNames: (def.outputs ?? []).map((slot, n) => slotLabel(slot, `output_${n}`)),
+      nodeCount: def.nodes.length,
+      source: "workflow" as const,
+    };
+  });
+}
+
+/** Sink node class + input name that persists a value of a given slot type. */
+const SINK_FOR_SLOT_TYPE: Record<string, { classType: string; inputName: string }> = {
+  IMAGE: { classType: "SaveImage", inputName: "images" },
+  VIDEO: { classType: "SaveVideo", inputName: "video" },
+  AUDIO: { classType: "SaveAudio", inputName: "audio" },
+  STRING: { classType: "PreviewAny", inputName: "source" },
+};
+
+/**
+ * Lift one blueprint into a standalone editor workflow ready for conversion.
+ *
+ * The instance node is kept intact — the converter already knows how to expand
+ * a subgraph instance and namespace its inner ids as `instance:inner` — and a
+ * sink node is appended for every boundary output. Without those sinks a
+ * blueprint would run and persist nothing, because its results leave through
+ * slots rather than through a `SaveImage`.
+ *
+ * Boundary outputs whose type has no sink (LATENT, MODEL, …) are skipped and
+ * reported, since there is nothing a node could display for them.
+ */
+export function blueprintToWorkflowFile(
+  file: EditorWorkflowFile,
+  blueprintId: string
+): { workflow: EditorWorkflowFile; instanceNodeId: string; skippedOutputs: string[] } {
+  const def = (file.definitions?.subgraphs ?? []).find((d) => String(d.id) === blueprintId);
+  if (!def) throw new ComfyConversionError(`Blueprint ${blueprintId} is not in this workflow`);
+
+  const instance = blueprintInstance(file, blueprintId);
+  if (!instance) {
+    throw new ComfyConversionError(
+      `Blueprint "${def.name ?? blueprintId}" has no instance node to run`
+    );
+  }
+
+  const nodes: EditorNode[] = [instance];
+  const links: EditorLinkTuple[] = [];
+  const skippedOutputs: string[] = [];
+
+  // Ids for the appended sinks must not collide with anything already present,
+  // including inner nodes that will surface after expansion.
+  let nextNodeId = 1_000_000;
+  let nextLinkId = 900_000;
+
+  (def.outputs ?? []).forEach((slot, index) => {
+    const type = (slot.type ?? "").toUpperCase();
+    const sink = SINK_FOR_SLOT_TYPE[type];
+    const label = slotLabel(slot, `output_${index}`);
+    if (!sink) {
+      skippedOutputs.push(`${label} (${slot.type ?? "unknown"})`);
+      return;
+    }
+    const sinkId = nextNodeId++;
+    const linkId = nextLinkId++;
+    links.push([linkId, instance.id, index, sinkId, 0, type]);
+    nodes.push({
+      id: sinkId,
+      type: sink.classType,
+      title: label,
+      inputs: [{ name: sink.inputName, type, link: linkId }],
+      outputs: [],
+      widgets_values: sink.classType === "PreviewAny" ? [] : ["node-banana"],
+    });
+  });
+
+  return {
+    workflow: {
+      nodes,
+      // The instance's own inputs are unconnected, so the only links are the
+      // ones wiring its outputs to the sinks added above.
+      links,
+      // Keep every definition so a blueprint that nests another still resolves.
+      definitions: file.definitions,
+      extra: {},
+    },
+    instanceNodeId: String(instance.id),
+    skippedOutputs,
+  };
+}
+
+/**
+ * The App-Mode-equivalent surface of a blueprint.
+ *
+ * Blueprints carry no `linearData`, but `proxyWidgets` is the same idea: the
+ * author naming exactly which inner widgets should be adjustable. Ids are
+ * rewritten to the namespaced form the converter emits, so the result drops
+ * straight into the normal inspection path.
+ */
+export function blueprintAppMode(
+  file: EditorWorkflowFile,
+  blueprintId: string,
+  instanceNodeId: string
+): AppModeData | null {
+  const instance = blueprintInstance(file, blueprintId);
+  const proxied = instance?.properties?.proxyWidgets;
+  if (!proxied?.length) return null;
+
+  const inputs: AppModeData["inputs"] = [];
+  for (const entry of proxied) {
+    if (!Array.isArray(entry) || entry.length < 2) continue;
+    const widget = String(entry[1]);
+    // `control_after_generate` is proxied alongside a seed but is a frontend
+    // affordance, not an input the engine reads.
+    if (widget === "control_after_generate") continue;
+    const nodeId = `${instanceNodeId}:${String(entry[0])}`;
+    if (inputs.some((i) => i.nodeId === nodeId && i.widget === widget)) continue;
+    inputs.push({ nodeId, widget });
+  }
+  return inputs.length > 0 ? { inputs, outputNodeIds: [] } : null;
+}

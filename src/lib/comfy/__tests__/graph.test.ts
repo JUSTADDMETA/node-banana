@@ -1,0 +1,284 @@
+import { describe, it, expect } from "vitest";
+
+import {
+  comboOptions,
+  graphClassTypes,
+  isExposableWidget,
+  isPromptWidget,
+  isSeedKey,
+  leafKey,
+  loaderInputType,
+  mediaTypeForFilename,
+  outputTypeFor,
+  parseApiGraph,
+  patchGraph,
+  pruneToOutputs,
+  widgetConstraints,
+} from "../graph";
+import type { ComfyGraph, ComfyObjectInfo } from "../types";
+
+const simpleGraph = (): ComfyGraph => ({
+  "1": { class_type: "LoadImage", inputs: { image: "placeholder.png" } },
+  "2": { class_type: "CLIPTextEncode", inputs: { text: "a cat", clip: ["5", 0] } },
+  "3": {
+    class_type: "KSampler",
+    inputs: { seed: 42, steps: 20, cfg: 8, positive: ["2", 0], latent_image: ["1", 0] },
+  },
+  "4": { class_type: "SaveImage", inputs: { images: ["3", 0], filename_prefix: "ComfyUI" } },
+  "5": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "sd.safetensors" } },
+});
+
+describe("parseApiGraph", () => {
+  it("accepts a bare API graph", () => {
+    expect(Object.keys(parseApiGraph(simpleGraph()))).toHaveLength(5);
+  });
+
+  it("unwraps a {prompt: …} envelope", () => {
+    const graph = parseApiGraph({ prompt: simpleGraph() });
+    expect(graph["4"]?.class_type).toBe("SaveImage");
+  });
+
+  it("drops non-node keys rather than failing", () => {
+    const graph = parseApiGraph({ ...simpleGraph(), extra_data: { foo: 1 }, client_id: "abc" });
+    expect(Object.keys(graph).sort()).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
+  it("rejects a blob with no nodes", () => {
+    expect(() => parseApiGraph({ nothing: "here" })).toThrow(/No executable nodes/);
+    expect(() => parseApiGraph([1, 2, 3])).toThrow(/workflow JSON object/);
+    expect(() => parseApiGraph(null)).toThrow(/workflow JSON object/);
+  });
+});
+
+describe("widget classification", () => {
+  it("reads the leaf of a dotted dynamic-combo key", () => {
+    expect(leafKey("model.aspect_ratio")).toBe("aspect_ratio");
+    expect(leafKey("steps")).toBe("steps");
+  });
+
+  it("recognises every seed spelling ComfyUI uses", () => {
+    expect(isSeedKey("seed")).toBe(true);
+    expect(isSeedKey("noise_seed")).toBe(true);
+    expect(isSeedKey("output_mode.texture_seed")).toBe(true);
+    expect(isSeedKey("steps")).toBe(false);
+  });
+
+  it("treats encoder strings and prompt-shaped keys as connectable text", () => {
+    const encode = { class_type: "CLIPTextEncode", inputs: {} };
+    expect(isPromptWidget(encode, "text")).toBe(true);
+    expect(isPromptWidget({ class_type: "KSampler", inputs: {} }, "prompt")).toBe(true);
+    expect(isPromptWidget({ class_type: "KSampler", inputs: {} }, "steps")).toBe(false);
+  });
+
+  it("hides plumbing widgets and link inputs", () => {
+    const node = { class_type: "LoadImage", inputs: {} };
+    expect(isExposableWidget(node, "image", "cat.png")).toBe(false);
+    expect(isExposableWidget(node, "filename_prefix", "ComfyUI")).toBe(false);
+    expect(isExposableWidget(node, "steps", ["2", 0])).toBe(false);
+    expect(isExposableWidget(node, "steps", 20)).toBe(true);
+  });
+
+  it("folds a CustomCombo's option list into its choice widget", () => {
+    const node = {
+      class_type: "CustomCombo",
+      inputs: { choice: "b", index: 1, option1: "a", option2: "b", option3: "  " },
+    };
+    expect(comboOptions(node, "choice")).toEqual(["a", "b"]);
+    expect(isExposableWidget(node, "index", 1)).toBe(false);
+    expect(isExposableWidget(node, "option1", "a")).toBe(false);
+  });
+});
+
+describe("object_info driven metadata", () => {
+  const objectInfo: ComfyObjectInfo = {
+    KSampler: {
+      input: {
+        required: {
+          steps: ["INT", { default: 20, min: 1, max: 10000, tooltip: "How many steps." }],
+          sampler_name: [["euler", "dpmpp_2m"], { tooltip: "Sampler." }],
+          text: ["STRING", { multiline: true }],
+          mode: ["COMBO", { options: ["fast", "slow"] }],
+        },
+      },
+    },
+  };
+  const node = { class_type: "KSampler", inputs: { steps: 20 } };
+
+  it("reads a legacy combo, where the option array IS the type", () => {
+    expect(comboOptions(node, "sampler_name", objectInfo)).toEqual(["euler", "dpmpp_2m"]);
+  });
+
+  it("reads a V3 combo, whose options sit in the config object", () => {
+    expect(comboOptions(node, "mode", objectInfo)).toEqual(["fast", "slow"]);
+  });
+
+  it("returns null for a free-form widget", () => {
+    expect(comboOptions(node, "steps", objectInfo)).toBeNull();
+  });
+
+  it("surfaces bounds, tooltips and multiline", () => {
+    expect(widgetConstraints(objectInfo, node, "steps")).toEqual({
+      minimum: 1,
+      maximum: 10000,
+      description: "How many steps.",
+    });
+    expect(widgetConstraints(objectInfo, node, "text").multiline).toBe(true);
+  });
+
+  it("descends into the selected option of a dynamic combo", () => {
+    const dynamic: ComfyObjectInfo = {
+      Partner: {
+        input: {
+          required: {
+            model: [
+              "COMFY_DYNAMICCOMBO_V3",
+              {
+                options: [
+                  { key: "flux", inputs: { required: { resolution: [["1K", "2K"]] } } },
+                  { key: "sdxl", inputs: { required: { resolution: [["512", "768"]] } } },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    };
+    const partner = { class_type: "Partner", inputs: { model: "sdxl" } };
+    expect(comboOptions(partner, "model.resolution", dynamic)).toEqual(["512", "768"]);
+  });
+});
+
+describe("input/output classification", () => {
+  it("maps loader classes to the media they ingest", () => {
+    expect(loaderInputType("LoadImage")).toBe("image");
+    expect(loaderInputType("LoadAudio")).toBe("audio");
+    expect(loaderInputType("VHS_LoadVideo")).toBe("video");
+    expect(loaderInputType("KSampler")).toBeNull();
+  });
+
+  it("maps sink classes to the handle they produce", () => {
+    expect(outputTypeFor("SaveImage")).toBe("image");
+    expect(outputTypeFor("VHS_VideoCombine")).toBe("video");
+    expect(outputTypeFor("PreviewAny")).toBe("text");
+    expect(outputTypeFor("SaveGLB")).toBe("3d");
+    expect(outputTypeFor("KSampler")).toBeNull();
+  });
+
+  it("falls back to the file extension for produced media", () => {
+    expect(mediaTypeForFilename("out.png")).toBe("image");
+    expect(mediaTypeForFilename("clip.mp4")).toBe("video");
+    expect(mediaTypeForFilename("voice.flac")).toBe("audio");
+    expect(mediaTypeForFilename("mesh.glb")).toBe("3d");
+  });
+});
+
+describe("patchGraph", () => {
+  it("binds media, assignments and outputs without touching the original", () => {
+    const graph = simpleGraph();
+    const patched = patchGraph(graph, {
+      media: [{ nodeId: "1", inputKey: "image", value: "uploaded.png" }],
+      assignments: [{ nodeId: "2", inputKey: "text", value: "a dog" }],
+      outputNodeIds: ["4"],
+    });
+    expect(patched["1"]?.inputs.image).toBe("uploaded.png");
+    expect(patched["2"]?.inputs.text).toBe("a dog");
+    // The source graph is the app's stored contract — it must survive a run.
+    expect(graph["1"]?.inputs.image).toBe("placeholder.png");
+  });
+
+  it("coerces a form value to the type the widget already holds", () => {
+    const patched = patchGraph(simpleGraph(), {
+      media: [],
+      assignments: [
+        { nodeId: "3", inputKey: "steps", value: "35" },
+        { nodeId: "3", inputKey: "cfg", value: "not a number" },
+      ],
+      outputNodeIds: [],
+    });
+    expect(patched["3"]?.inputs.steps).toBe(35);
+    // An unparseable value must not turn a numeric widget into a string the
+    // engine will reject — keep what was there.
+    expect(patched["3"]?.inputs.cfg).toBe(8);
+  });
+
+  it("randomises seeds but leaves ones the user pinned", () => {
+    const graph = simpleGraph();
+    graph["6"] = { class_type: "Sampler2", inputs: { noise_seed: 1, steps: 5 } };
+    const patched = patchGraph(graph, {
+      media: [],
+      assignments: [],
+      outputNodeIds: [],
+      seed: 12345,
+      pinnedSeeds: [{ nodeId: "3", inputKey: "seed" }],
+    });
+    expect(patched["3"]?.inputs.seed).toBe(42);
+    expect(patched["6"]?.inputs.noise_seed).toBe(12345);
+    expect(patched["6"]?.inputs.steps).toBe(5);
+  });
+
+  it("rewrites a preview sink so its output is actually persisted", () => {
+    const graph: ComfyGraph = {
+      "1": { class_type: "PreviewImage", inputs: { images: ["2", 0] } },
+    };
+    const patched = patchGraph(graph, { media: [], assignments: [], outputNodeIds: ["1"] });
+    expect(patched["1"]?.class_type).toBe("SaveImage");
+    expect(patched["1"]?.inputs.images).toEqual(["2", 0]);
+    expect(patched["1"]?.inputs.filename_prefix).toBe("node-banana");
+  });
+
+  it("re-derives a CustomCombo's index from the chosen label", () => {
+    const graph: ComfyGraph = {
+      "1": {
+        class_type: "CustomCombo",
+        inputs: { choice: "a", index: 0, option1: "a", option2: "b", option3: "c" },
+      },
+    };
+    const patched = patchGraph(graph, {
+      media: [],
+      assignments: [{ nodeId: "1", inputKey: "choice", value: "c" }],
+      outputNodeIds: [],
+    });
+    // The engine executes on `index`; a headless run has no frontend to keep
+    // the two in sync, so picking "c" must move the index too.
+    expect(patched["1"]?.inputs.index).toBe(2);
+  });
+
+  it("reports a binding that points at a missing node", () => {
+    expect(() =>
+      patchGraph(simpleGraph(), {
+        media: [{ nodeId: "99", inputKey: "image", value: "x.png" }],
+        assignments: [],
+        outputNodeIds: [],
+      })
+    ).toThrow(/missing from the workflow/);
+  });
+});
+
+describe("pruneToOutputs", () => {
+  it("keeps only what a bound output depends on", () => {
+    const graph = simpleGraph();
+    graph["10"] = { class_type: "SaveImage", inputs: { images: ["11", 0] } };
+    graph["11"] = { class_type: "UpscaleImage", inputs: { image: ["3", 0] } };
+
+    const pruned = pruneToOutputs(graph, ["4"]);
+    expect(Object.keys(pruned).sort()).toEqual(["1", "2", "3", "4", "5"]);
+    expect(pruned["10"]).toBeUndefined();
+  });
+
+  it("returns the whole graph when nothing valid is kept", () => {
+    const graph = simpleGraph();
+    expect(Object.keys(pruneToOutputs(graph, ["nope"]))).toHaveLength(5);
+  });
+});
+
+describe("graphClassTypes", () => {
+  it("lists distinct class types for a compatibility check", () => {
+    expect(graphClassTypes(simpleGraph())).toEqual([
+      "CLIPTextEncode",
+      "CheckpointLoaderSimple",
+      "KSampler",
+      "LoadImage",
+      "SaveImage",
+    ]);
+  });
+});
