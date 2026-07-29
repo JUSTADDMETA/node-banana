@@ -248,6 +248,19 @@ const getComfyOutputHandleType = (
   return output.type as "image" | "text" | "video" | "audio" | "3d";
 };
 
+/** Whether a Comfy app node actually renders the given target handle. */
+const comfyDeclaresInput = (node: Node, handleId: string | null | undefined): boolean => {
+  if (!handleId) return false;
+  const schema = (node.data as { inputSchema?: Array<{ type: string }> }).inputSchema ?? [];
+  // Handles are `${type}-${indexWithinType}`, assigned in schema order.
+  const counters: Record<string, number> = {};
+  return schema.some((input) => {
+    const index = counters[input.type] ?? 0;
+    counters[input.type] = index + 1;
+    return `${input.type}-${index}` === handleId;
+  });
+};
+
 // Define which handles each node type has
 const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[] } => {
   switch (nodeType) {
@@ -648,6 +661,14 @@ export function WorkflowCanvas() {
         getComfyOutputHandleType(sourceNode, connection.sourceHandle) ??
         getHandleType(connection.sourceHandle);
       const targetType = getHandleType(connection.targetHandle);
+
+      // Both ends of a Comfy app edge must name a handle its attached workflow
+      // actually declares. Untyped ids fall through the checks below to
+      // "allow", which would commit an edge React Flow can never draw.
+      if (targetNode?.type === "comfyApp" && !comfyDeclaresInput(targetNode, connection.targetHandle)) {
+        return false;
+      }
+      if (sourceNode?.type === "comfyApp" && !sourceType) return false;
       if (targetNode?.type === "switch" && connection.targetHandle === "generic-input") return true;
 
       // Switch output: the type is determined by inputType stored in node data
@@ -1032,6 +1053,13 @@ export function WorkflowCanvas() {
             return "default";
           }
         }
+
+        // A Comfy app node's handles come entirely from its attached workflow.
+        // The static list below is a superset for connection *validation*, not a
+        // set of real handles, so using it here would create an edge bound to a
+        // handle the node never renders — invisible, unselectable, and still
+        // counted as a dependency by the topological sort.
+        if (node.type === "comfyApp") return null;
 
         // Fall back to static handles
         const staticHandles = getNodeHandles(node.type || "");
