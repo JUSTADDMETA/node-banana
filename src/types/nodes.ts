@@ -686,6 +686,9 @@ export interface ComfyAppNodeData extends BaseNodeData {
   runStatus?: string | null;
   parametersExpanded?: boolean;
   _settingsPanelHeight?: number;
+  /** Set when the node is created from the connection menu, so it opens the
+   *  import dialog immediately — it has no handles until a workflow is chosen. */
+  _autoOpenImport?: boolean;
   status: NodeStatus;
   error: string | null;
 }

@@ -954,6 +954,10 @@ export function WorkflowCanvas() {
               // All handles are occupied
               return null;
             }
+            // The node's schema declares no input of this type. Falling through
+            // to the output branch below would hand back an OUTPUT handle as
+            // the connection target, so stop here instead.
+            return null;
           }
           // A Comfy app's outputs are declared by the attached workflow, and
           // their handle ids are ComfyUI node ids — the generic names below
@@ -1323,6 +1327,13 @@ export function WorkflowCanvas() {
       // Tutorial tracking
       if (tutorialActive && nodeType === "nanoBanana") {
         useFTUXStore.getState().setNanoBananaAddedFromMenu(true);
+      }
+
+      // A fresh Comfy app node has no handles until a workflow is attached, so
+      // the dropped connection has nothing to land on. Open the import dialog
+      // straight away rather than leaving an empty node and a lost wire.
+      if (nodeType === "comfyApp") {
+        updateNodeData(newNodeId, { _autoOpenImport: true });
       }
 
       // If creating an annotation node from an image source, populate it with the source image

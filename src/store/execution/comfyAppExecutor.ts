@@ -11,7 +11,7 @@
  */
 
 import type { ComfyAppNodeData } from "@/types";
-import type { ComfyResolvedOutput } from "@/lib/comfy/types";
+import type { ComfyAppInput, ComfyResolvedOutput } from "@/lib/comfy/types";
 import { buildComfyHeaders, comfyConfigError, getComfySettings } from "@/lib/comfy/settings";
 import type { NodeExecutionContext } from "./types";
 
@@ -104,22 +104,37 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
   }
 
   // `dynamicInputs` is keyed by the schema names derived from `app.inputs`, so
-  // it maps a connected handle straight onto the graph binding it feeds. The
-  // typed arrays are the fallback for edges made before the schema existed.
+  // it maps a connected handle straight onto the graph binding it feeds.
   const connected = getConnectedInputs(node.id);
   const inputs: Record<string, string> = {};
   for (const input of app.inputs) {
     const dynamic = connected.dynamicInputs[input.name];
     const value = Array.isArray(dynamic) ? dynamic[0] : dynamic;
-    if (typeof value === "string" && value !== "") {
-      inputs[input.name] = value;
-      continue;
-    }
-    // Fall back to the first unclaimed value of the right type.
-    if (input.type === "text" && connected.text) inputs[input.name] = connected.text;
-    else if (input.type === "image" && connected.images[0]) inputs[input.name] = connected.images[0];
-    else if (input.type === "video" && connected.videos[0]) inputs[input.name] = connected.videos[0];
-    else if (input.type === "audio" && connected.audio[0]) inputs[input.name] = connected.audio[0];
+    if (typeof value === "string" && value !== "") inputs[input.name] = value;
+  }
+
+  // Legacy fallback for an edge made before this node had a schema (its
+  // targetHandle is the bare "image"/"text", which maps to no schema name).
+  //
+  // Only applied when the app has exactly ONE input of that type. With two —
+  // a positive and a negative prompt, say — the untyped value cannot say which
+  // it was meant for, and guessing would quietly feed the positive prompt into
+  // the negative one. Leaving it unset runs the author's saved value instead,
+  // which is wrong in an obvious way rather than an invisible one.
+  const soleInputOfType = (type: ComfyAppInput["type"]): ComfyAppInput | null => {
+    const matches = app.inputs.filter((i) => i.type === type);
+    return matches.length === 1 && matches[0] ? matches[0] : null;
+  };
+  const fallbacks: Array<[ComfyAppInput["type"], string | undefined]> = [
+    ["text", connected.text ?? undefined],
+    ["image", connected.images[0]],
+    ["video", connected.videos[0]],
+    ["audio", connected.audio[0]],
+  ];
+  for (const [type, value] of fallbacks) {
+    if (!value) continue;
+    const target = soleInputOfType(type);
+    if (target && !inputs[target.name]) inputs[target.name] = value;
   }
 
   const missing = app.inputs

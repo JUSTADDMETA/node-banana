@@ -42,6 +42,14 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   const showLabels = useShowHandleLabels(selected);
   const [importOpen, setImportOpen] = useState(false);
 
+  // Created from the connection menu, which had nowhere to attach its wire —
+  // go straight to choosing a workflow so the node becomes usable.
+  useEffect(() => {
+    if (!nodeData._autoOpenImport) return;
+    setImportOpen(true);
+    updateNodeData(id, { _autoOpenImport: false });
+  }, [nodeData._autoOpenImport, id, updateNodeData]);
+
   const edges = useWorkflowStore((state) => state.edges);
   const removeEdge = useWorkflowStore((state) => state.removeEdge);
 

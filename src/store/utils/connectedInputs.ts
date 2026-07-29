@@ -139,16 +139,11 @@ export function getSourceOutput(
       const value = comfyData.outputs?.[output.id] ?? null;
       return { type: output.type === "3d" ? "3d" : output.type, value };
     }
-    // No handle match (an edge made before the app was attached, or a handle
-    // the workflow no longer has): fall back to the first output produced.
-    const first = comfyData.app?.outputs[0];
-    if (first) {
-      return {
-        type: first.type === "3d" ? "3d" : first.type,
-        value: comfyData.outputs?.[first.id] ?? null,
-      };
-    }
-    return { type: "image", value: comfyData.outputImage };
+    // No handle match — an edge made before the app was attached, or one left
+    // over from a workflow that has since been replaced. Substituting a
+    // different output here would silently feed the wrong image downstream, so
+    // the edge carries nothing until it is reconnected.
+    return { type: "image", value: null };
   }
   return { type: "image", value: null };
 }
