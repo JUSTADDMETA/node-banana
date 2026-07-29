@@ -151,7 +151,8 @@ export interface ImageHistoryItem {
   timestamp: number; // For display & sorting
   prompt: string; // The prompt used
   aspectRatio: AspectRatio;
-  model: ModelType;
+  /** A Gemini model, or a free-form producer name (e.g. a ComfyUI app). */
+  model: ModelType | string;
 }
 
 /**

@@ -75,7 +75,16 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> {
-  const { node, getConnectedInputs, updateNodeData, getFreshNode, signal } = ctx;
+  const {
+    node,
+    getConnectedInputs,
+    updateNodeData,
+    getFreshNode,
+    signal,
+    addToGlobalHistory,
+    generationsPath,
+    trackSaveGeneration,
+  } = ctx;
 
   const freshNode = getFreshNode(node.id);
   const nodeData = (freshNode?.data ?? node.data) as ComfyAppNodeData;
@@ -198,13 +207,48 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
       }
 
       const outputs = update.outputs ?? [];
+      const resolved = outputsToNodeData(app.outputs, outputs);
       updateNodeData(node.id, {
-        ...outputsToNodeData(app.outputs, outputs),
+        ...resolved,
         status: "complete",
         error: null,
         runStatus: null,
         jobId: null,
       });
+
+      // A Comfy app's image is a generation like any other: it belongs in the
+      // global history and in the project's generations folder, so it can be
+      // browsed and reloaded alongside everything else.
+      if (resolved.outputImage) {
+        const timestamp = Date.now();
+        const imageId = `${timestamp}`;
+        addToGlobalHistory({
+          image: resolved.outputImage,
+          timestamp,
+          prompt: describeRun(app.name, inputs, nodeData.paramValues ?? {}),
+          aspectRatio: "1:1",
+          model: app.name,
+        });
+        if (generationsPath) {
+          trackSaveGeneration(
+            imageId,
+            fetch("/api/save-generation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                directoryPath: generationsPath,
+                image: resolved.outputImage,
+                prompt: describeRun(app.name, inputs, nodeData.paramValues ?? {}),
+                imageId,
+              }),
+            })
+              .then(() => undefined)
+              .catch((err) => {
+                console.error("Failed to save ComfyUI generation:", err);
+              })
+          );
+        }
+      }
       return;
     }
   } catch (error) {
@@ -230,6 +274,30 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
     });
     throw new Error(message);
   }
+}
+
+/**
+ * A one-line description of what produced an image, for the history entry.
+ *
+ * A Comfy app has no single "prompt" — it may have several text inputs, or
+ * none at all — so the app name plus whatever text went in is the closest
+ * honest summary.
+ */
+function describeRun(
+  appName: string,
+  inputs: Record<string, string>,
+  params: Record<string, unknown>
+): string {
+  const text = Object.values(inputs)
+    .filter((value) => !value.startsWith("data:"))
+    .join(" · ")
+    .slice(0, 400);
+  if (text) return `${appName}: ${text}`;
+  const settings = Object.entries(params)
+    .map(([key, value]) => `${key.split(":").pop()}=${String(value)}`)
+    .join(", ")
+    .slice(0, 200);
+  return settings ? `${appName} (${settings})` : appName;
 }
 
 /**
