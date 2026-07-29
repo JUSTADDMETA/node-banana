@@ -9,6 +9,8 @@ import { loadNodeDefaults, saveNodeDefaults, getLastProjectBaseDir, setLastProje
 import { clearFetchCache } from "@/utils/deduplicatedFetch";
 import { ProviderModel } from "@/lib/providers/types";
 import { ModelSearchDialog } from "@/components/modals/ModelSearchDialog";
+import { ComfySettingsTab, useComfySettingsDraft } from "@/components/settings/ComfySettingsTab";
+import { saveComfySettings } from "@/lib/comfy/settings";
 import { useInlineParameters } from "@/hooks/useInlineParameters";
 
 // LLM provider and model options (mirrored from LLMGenerateNode)
@@ -146,7 +148,7 @@ export function ProjectSetupModal({
   const { inlineParametersEnabled, setInlineParameters } = useInlineParameters();
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<"project" | "providers" | "nodeDefaults" | "canvas">("project");
+  const [activeTab, setActiveTab] = useState<"project" | "providers" | "comfy" | "nodeDefaults" | "canvas">("project");
 
   // Project tab state
   const [name, setName] = useState("");
@@ -185,6 +187,9 @@ export function ProjectSetupModal({
 
   // Canvas tab state
   const [localCanvasSettings, setLocalCanvasSettings] = useState<CanvasNavigationSettings>(canvasNavigationSettings);
+
+  // ComfyUI tab state
+  const [localComfySettings, setLocalComfySettings] = useComfySettingsDraft(isOpen);
 
   // Pre-fill when opening in settings mode
   useEffect(() => {
@@ -349,11 +354,18 @@ export function ProjectSetupModal({
     onClose();
   };
 
+  const handleSaveComfy = () => {
+    saveComfySettings(localComfySettings);
+    onClose();
+  };
+
   const handleSave = () => {
     if (activeTab === "project") {
       handleSaveProject();
     } else if (activeTab === "providers") {
       handleSaveProviders();
+    } else if (activeTab === "comfy") {
+      handleSaveComfy();
     } else if (activeTab === "canvas") {
       handleSaveCanvas();
     } else {
@@ -420,6 +432,12 @@ export function ProjectSetupModal({
             className={`px-3 py-1.5 text-sm rounded-md transition-all duration-150 ${activeTab === "providers" ? "bg-neutral-700 text-neutral-100 font-medium" : "text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800/50"}`}
           >
             Providers
+          </button>
+          <button
+            onClick={() => setActiveTab("comfy")}
+            className={`px-3 py-1.5 text-sm rounded-md transition-all duration-150 ${activeTab === "comfy" ? "bg-neutral-700 text-neutral-100 font-medium" : "text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800/50"}`}
+          >
+            ComfyUI
           </button>
           <button
             onClick={() => setActiveTab("nodeDefaults")}
@@ -1113,6 +1131,11 @@ export function ProjectSetupModal({
               These defaults are applied when creating nodes via keyboard shortcuts (Shift+G, Shift+L, etc).
             </p>
           </div>
+        )}
+
+        {/* ComfyUI Tab Content */}
+        {activeTab === "comfy" && (
+          <ComfySettingsTab settings={localComfySettings} onChange={setLocalComfySettings} />
         )}
 
         {/* Canvas Tab Content */}
