@@ -43,16 +43,64 @@ interface ComfyFailure {
   missingNodes?: string[];
 }
 
-/** Read an error message out of a response, however the route framed it. */
-async function readError(response: Response, fallback: string): Promise<string> {
+/**
+ * A failure the route itself reported — as opposed to a gateway or proxy error
+ * on the way to it.
+ *
+ * The distinction decides whether a poll is terminal: a `{success: false}` body
+ * means the engine has spoken and the run is over, while a bare 502 from
+ * something in between is a blip a long render should survive.
+ */
+class ComfyRouteError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ComfyRouteError";
+  }
+}
+
+/** Read an error out of a response, distinguishing route errors from gateway ones. */
+async function readError(response: Response, fallback: string): Promise<Error> {
   const text = await response.text();
   try {
     const body = JSON.parse(text) as ComfyFailure;
-    if (body?.error) return body.error;
+    if (body?.error) return new ComfyRouteError(body.error);
   } catch {
-    /* fall through */
+    /* not a route-shaped response — treat as transient below */
   }
-  return text ? `${fallback}: ${text.slice(0, 200)}` : fallback;
+  const detail = text ? `${fallback}: ${text.slice(0, 200)}` : fallback;
+  // 4xx is a request problem and will not fix itself; 5xx without a route body
+  // is something in front of the route, which might.
+  return response.status < 500 ? new ComfyRouteError(detail) : new Error(detail);
+}
+
+/**
+ * Whether a failure is this run being cancelled.
+ *
+ * An abort can surface as a `DOMException`, as a plain `Error` named
+ * AbortError, or — when the abort lands between two awaits — as an unrelated
+ * network error with the signal already tripped. All three mean "stopped".
+ */
+function isAbort(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  return error instanceof Error && error.name === "AbortError";
+}
+
+/** Best-effort stop for an engine job. Never throws. */
+async function cancelJob(
+  headers: Record<string, string>,
+  jobId: string | null,
+  app: unknown
+): Promise<void> {
+  if (!jobId) return;
+  try {
+    await fetch("/api/comfy/poll", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jobId, app, cancel: true }),
+    });
+  } catch {
+    // A cancel must never fail the cancel.
+  }
 }
 
 /** Sleep that rejects promptly when the run is cancelled. */
@@ -171,7 +219,7 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
     });
 
     if (!submitRes.ok) {
-      throw new Error(await readError(submitRes, "ComfyUI rejected the workflow"));
+      throw await readError(submitRes, "ComfyUI rejected the workflow");
     }
     const accepted = (await submitRes.json()) as ComfyRunAccepted;
     jobId = accepted.jobId;
@@ -183,6 +231,9 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
 
     for (;;) {
       if (Date.now() > deadline) {
+        // Stop the engine too. An abandoned job keeps a GPU busy — and on
+        // Comfy Cloud, keeps billing — long after the node gave up on it.
+        await cancelJob(headers, jobId, app);
         throw new Error(
           `Timed out after ${Math.round(settings.jobTimeoutMs / 60_000)} min waiting for ComfyUI. Raise the job timeout in Settings → ComfyUI for long renders.`
         );
@@ -198,21 +249,17 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
           body: JSON.stringify({ jobId, app }),
           ...(signal ? { signal } : {}),
         });
-        if (!pollRes.ok) {
-          // A 5xx from the engine is terminal; a transient network hiccup is
-          // not. Anything the route framed as an error is terminal.
-          throw new Error(await readError(pollRes, "ComfyUI run failed"));
-        }
+        if (!pollRes.ok) throw await readError(pollRes, "ComfyUI run failed");
         update = (await pollRes.json()) as ComfyPollUpdate;
         consecutiveErrors = 0;
       } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") throw error;
-        // The route already turned engine failures into non-OK responses with
-        // a message, so reaching here means the *request* failed — retry a few
-        // times before giving up on an otherwise healthy render.
-        if (error instanceof TypeError && (consecutiveErrors += 1) < MAX_CONSECUTIVE_ERRORS) {
-          continue;
-        }
+        if (isAbort(error, signal)) throw error;
+        // A failure the route reported is the engine's verdict — terminal.
+        // Anything else (a dropped connection, a gateway hiccup) is worth
+        // retrying: the render itself is very likely still going.
+        if (error instanceof ComfyRouteError) throw error;
+        consecutiveErrors += 1;
+        if (consecutiveErrors < MAX_CONSECUTIVE_ERRORS) continue;
         throw error;
       }
 
@@ -267,18 +314,14 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
       return;
     }
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      // Stop the engine too — an abandoned job keeps a GPU (and, on Cloud, a
-      // bill) running.
-      if (jobId) {
-        void fetch("/api/comfy/poll", {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ jobId, app, cancel: true }),
-        }).catch(() => null);
-      }
+    if (isAbort(error, signal)) {
+      await cancelJob(headers, jobId, app);
       updateNodeData(node.id, { status: "idle", runStatus: null, jobId: null });
-      throw error;
+      // Normalize so executeWorkflow sees the cancellation it expects, whatever
+      // shape the underlying failure arrived in.
+      throw error instanceof DOMException
+        ? error
+        : new DOMException("The operation was aborted.", "AbortError");
     }
     const message = error instanceof Error ? error.message : "ComfyUI run failed";
     updateNodeData(node.id, {

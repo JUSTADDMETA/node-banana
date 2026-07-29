@@ -74,7 +74,10 @@ export async function getObjectInfo(
   }
   const entry: CatalogEntry = {
     at: Date.now(),
-    catalog: engine.objectInfo(options.signal),
+    // Deliberately NOT passing the caller's signal: this promise is shared with
+    // every concurrent request for the same engine, so one client disconnecting
+    // would abort the catalog fetch out from under the others.
+    catalog: engine.objectInfo(),
   };
   catalogCache.set(key, entry);
   // A failed probe must not be cached, or a transient outage poisons imports

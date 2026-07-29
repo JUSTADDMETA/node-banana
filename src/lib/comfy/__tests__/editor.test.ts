@@ -318,6 +318,24 @@ describe("extractAppMode", () => {
     expect(result?.outputNodeIds).toEqual(["50:8"]);
   });
 
+  it("drops an ambiguous namespaced match rather than binding the wrong node", () => {
+    const file: EditorWorkflowFile = {
+      nodes: [{ id: 50, type: "sub-uuid" }],
+      links: [],
+      extra: { linearData: { inputs: [["g:5:seed", "seed"]], outputs: ["8"] } },
+    };
+    // Bare id "5" suffix-matches both "140:5" and "77:5" — binding it to either
+    // would silently apply the author's selection to the wrong node, so it is
+    // dropped. The unambiguous output still resolves.
+    const ambiguous = extractAppMode(file, ["140:5", "77:5", "140:8"]);
+    expect(ambiguous?.inputs).toEqual([]);
+    expect(ambiguous?.outputNodeIds).toEqual(["140:8"]);
+    // With only one candidate it resolves.
+    expect(extractAppMode(file, ["140:5", "140:8"])?.inputs).toEqual([
+      { nodeId: "140:5", widget: "seed" },
+    ]);
+  });
+
   it("de-duplicates repeated selections", () => {
     const result = extractAppMode(
       base({ linearData: { inputs: [["3", "seed"], ["3", "seed"]], outputs: ["9", "9"] } })
@@ -433,6 +451,22 @@ describe("blueprints", () => {
     ]);
     // `control_after_generate` is a frontend affordance, not an engine input.
     expect(appMode?.inputs.some((i) => i.widget === "control_after_generate")).toBe(false);
+  });
+
+  it("reports a boundary input it cannot supply instead of building a broken app", () => {
+    const file = blueprintFile();
+    file.definitions!.subgraphs![0]!.inputs = [
+      { name: "image", type: "IMAGE", linkIds: [] },
+      { name: "model", type: "MODEL", linkIds: [] },
+    ];
+    file.nodes[0]!.inputs = [
+      { name: "image", type: "IMAGE", link: null },
+      { name: "model", type: "MODEL", link: null },
+    ];
+    const { unsupportedInputs } = blueprintToWorkflowFile(file, "3b5ed000");
+    // A MODEL slot has no loader and is not a widget, so the inner node would
+    // be missing a required input the engine rejects.
+    expect(unsupportedInputs).toEqual(["model (MODEL)"]);
   });
 
   it("reports a blueprint id that is not in the file", () => {

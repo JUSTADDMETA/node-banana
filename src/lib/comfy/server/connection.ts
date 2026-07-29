@@ -95,7 +95,9 @@ export function connectionFromRequest(request: Request): ComfyConnection {
   return {
     mode,
     baseUrl: validateEngineUrl(rawBaseUrl),
-    apiKey: headers.get(COMFY_HEADERS.apiKey) || (mode === "cloud" ? null : null),
+    // The browser holds the user's key; the env var is the fallback for a
+    // headless deployment where no browser supplies one.
+    apiKey: headers.get(COMFY_HEADERS.apiKey) || process.env.COMFY_API_KEY?.trim() || null,
     useSdk: headers.get(COMFY_HEADERS.apiV2) === "1",
     jobTimeoutMs: Number.isFinite(timeout)
       ? Math.min(MAX_JOB_TIMEOUT_MS, Math.max(MIN_JOB_TIMEOUT_MS, timeout))

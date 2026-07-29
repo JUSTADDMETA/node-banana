@@ -318,11 +318,39 @@ export function loaderInputType(classType: string): ComfyInputType | null {
   return null;
 }
 
-/** The widget key a loader node reads its uploaded filename from. */
-export function loaderWidgetKey(classType: string): string {
-  if (AUDIO_LOADER_CLASS_TYPES.has(classType)) return "audio";
-  if (VIDEO_LOADER_CLASS_TYPES.has(classType)) return "video";
-  return "image";
+/** Widget names loader nodes conventionally read their uploaded file from. */
+const LOADER_WIDGET_CANDIDATES: Record<ComfyInputType, string[]> = {
+  image: ["image"],
+  audio: ["audio", "audioUI", "file"],
+  video: ["video", "file"],
+  text: [],
+};
+
+/**
+ * The widget a loader node reads its uploaded filename from.
+ *
+ * Node packs disagree — core `LoadVideo` uses `file` while `VHS_LoadVideo`
+ * uses `video` — so the node's own inputs are the authority: the widget whose
+ * value is a string is the filename slot. The conventional names are only the
+ * tie-breaker, and the fallback is used when the graph carries no such widget
+ * (the widget is there, just empty).
+ */
+export function loaderWidgetKey(classType: string, node?: ComfyGraphNode): string {
+  const type = loaderInputType(classType) ?? "image";
+  const candidates = LOADER_WIDGET_CANDIDATES[type];
+
+  if (node) {
+    // A conventional name the node actually declares wins.
+    for (const candidate of candidates) {
+      if (candidate in node.inputs) return candidate;
+    }
+    // Otherwise the sole string widget is the filename slot.
+    const strings = Object.entries(node.inputs).filter(
+      ([key, value]) => typeof value === "string" && !WIDGET_SKIP_KEYS.has(key.toLowerCase())
+    );
+    if (strings.length === 1 && strings[0]) return strings[0][0];
+  }
+  return candidates[0] ?? "image";
 }
 
 /** The handle type a sink node produces, or null when it isn't a sink. */

@@ -351,9 +351,12 @@ export class LegacyComfyEngine implements ComfyEngine {
   }
 
   async cancel(jobId: string, signal?: AbortSignal): Promise<void> {
-    // Best-effort and order-dependent: a *queued* job is deleted from the
-    // queue, an *executing* one has to be interrupted. Try both; a cancel must
-    // never fail the cancel.
+    // Best-effort, and never throws — a cancel must not fail the cancel.
+    //
+    // `/api/interrupt` has no job id: it kills whatever is executing. So it is
+    // only used once this job is confirmed to be the running one, or the user
+    // would stop someone else's render on a shared engine (or their own, in
+    // another ComfyUI tab).
     try {
       await resilientFetch(`${this.base}/api/jobs/${jobId}/cancel`, {
         method: "POST",
@@ -364,17 +367,36 @@ export class LegacyComfyEngine implements ComfyEngine {
     } catch {
       /* ignore */
     }
+
+    let running = false;
     try {
-      await resilientFetch(`${this.base}/api/queue`, {
-        method: "POST",
-        headers: this.headers({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ delete: [jobId] }),
+      const res = await resilientFetch(`${this.base}/api/queue`, {
+        headers: this.headers(),
         timeoutMs: 8_000,
         signal,
       });
+      if (res.ok) {
+        const queue = (await res.json()) as {
+          queue_running?: Array<[number, string]>;
+          queue_pending?: Array<[number, string]>;
+        };
+        running = (queue.queue_running ?? []).some(([, id]) => id === jobId);
+        // A job still queued is simply deleted — nothing has started yet.
+        if ((queue.queue_pending ?? []).some(([, id]) => id === jobId)) {
+          await resilientFetch(`${this.base}/api/queue`, {
+            method: "POST",
+            headers: this.headers({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ delete: [jobId] }),
+            timeoutMs: 8_000,
+            signal,
+          }).catch(() => null);
+        }
+      }
     } catch {
       /* ignore */
     }
+
+    if (!running) return;
     try {
       await resilientFetch(`${this.base}/api/interrupt`, {
         method: "POST",

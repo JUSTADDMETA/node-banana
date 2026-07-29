@@ -8,6 +8,7 @@ import {
   isSeedKey,
   leafKey,
   loaderInputType,
+  loaderWidgetKey,
   mediaTypeForFilename,
   outputTypeFor,
   parseApiGraph,
@@ -145,6 +146,39 @@ describe("object_info driven metadata", () => {
     };
     const partner = { class_type: "Partner", inputs: { model: "sdxl" } };
     expect(comboOptions(partner, "model.resolution", dynamic)).toEqual(["512", "768"]);
+  });
+});
+
+describe("loaderWidgetKey", () => {
+  it("uses the conventional widget the node declares", () => {
+    expect(loaderWidgetKey("LoadImage", { class_type: "LoadImage", inputs: { image: "a.png" } })).toBe(
+      "image"
+    );
+    expect(
+      loaderWidgetKey("VHS_LoadVideo", { class_type: "VHS_LoadVideo", inputs: { video: "a.mp4" } })
+    ).toBe("video");
+  });
+
+  it("finds the filename widget when the pack names it something else", () => {
+    // Core LoadVideo calls it `file`, VHS calls it `video` — the node itself
+    // is the authority, not the class name.
+    expect(
+      loaderWidgetKey("LoadVideo", { class_type: "LoadVideo", inputs: { file: "a.mp4", fps: 24 } })
+    ).toBe("file");
+  });
+
+  it("falls back to the conventional name when the graph has no such widget", () => {
+    expect(loaderWidgetKey("LoadImage")).toBe("image");
+    expect(loaderWidgetKey("LoadAudio")).toBe("audio");
+  });
+
+  it("does not guess when several string widgets could be the filename", () => {
+    expect(
+      loaderWidgetKey("LoadVideo", {
+        class_type: "LoadVideo",
+        inputs: { path: "a.mp4", format: "mp4" },
+      })
+    ).toBe("video");
   });
 });
 

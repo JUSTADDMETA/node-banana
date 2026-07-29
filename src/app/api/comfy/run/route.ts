@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
       media.push({
         name: input.name,
         bytes: decoded.bytes,
-        filename: uploadFilename(input.name, decoded.contentType),
+        filename: uploadFilename(input.name, decoded.contentType, decoded.bytes),
         contentType: decoded.contentType,
       });
     }

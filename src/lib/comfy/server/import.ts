@@ -114,16 +114,28 @@ export async function prepareWorkflow(
   // Report *everything* missing up front. Converting node-by-node would fail on
   // the first unknown type and hide the rest, so the user would install one
   // pack, retry, and hit the next one.
-  const missing = editorNodeTypes(file).filter((type) => !objectInfo[type]);
+  let missing = editorNodeTypes(file).filter((type) => !objectInfo[type]);
+  if (missing.length > 0) {
+    // The catalog is cached for minutes, so a user who installs the missing
+    // node pack and retries would keep hitting the same stale answer. Re-read
+    // once before reporting a failure they cannot clear.
+    objectInfo = await getObjectInfo(engine, { force: true, signal: options.signal }).catch(
+      () => objectInfo
+    );
+    missing = editorNodeTypes(file).filter((type) => !objectInfo[type]);
+  }
 
   if (options.blueprintId) {
-    const { workflow, instanceNodeId, skippedOutputs } = blueprintToWorkflowFile(
-      file,
-      options.blueprintId
-    );
+    const { workflow, instanceNodeId, skippedOutputs, unsupportedInputs } =
+      blueprintToWorkflowFile(file, options.blueprintId);
     const graph = convert(workflow, objectInfo, missing, engine.label);
     for (const skipped of skippedOutputs) {
       warnings.push(`Output "${skipped}" has no displayable type and was left unbound.`);
+    }
+    if (unsupportedInputs.length > 0) {
+      warnings.push(
+        `This Blueprint expects ${unsupportedInputs.join(", ")} to be wired inside ComfyUI. Node Banana cannot supply those, so it will not run as-is.`
+      );
     }
     return {
       graph,

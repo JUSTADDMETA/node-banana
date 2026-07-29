@@ -624,6 +624,23 @@ export function extractAppMode(
   if (file.extra?.linearMode === false || !data) return null;
 
   const ids = knownNodeIds ? new Set(knownNodeIds) : new Set(file.nodes.map((n) => String(n.id)));
+
+  /**
+   * Resolve an id against the ids conversion produced.
+   *
+   * An exact match always wins. A `WidgetId` carries only the inner id of a
+   * node inside a subgraph, which the converter emitted as `instance:inner`,
+   * so a suffix match is the fallback — but only when it is UNAMBIGUOUS.
+   * Node id "5" would otherwise match "140:5" and "77:5" alike, and binding
+   * the author's selection to the wrong node is worse than dropping it.
+   */
+  const resolveId = (candidate: string): string | undefined => {
+    if (ids.has(candidate)) return candidate;
+    const suffix = `:${candidate}`;
+    const matches = [...ids].filter((id) => id.endsWith(suffix));
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+
   const inputs: AppModeData["inputs"] = [];
   for (const entry of data.inputs ?? []) {
     if (!Array.isArray(entry) || entry.length < 2) continue;
@@ -631,11 +648,7 @@ export function extractAppMode(
     if (!parsed) continue;
     const widget = String(entry[1] ?? parsed.widget ?? "");
     if (!widget) continue;
-    // A namespaced id may appear either exactly as emitted, or (for the
-    // WidgetId form) as the bare inner id — accept whichever the graph holds.
-    const nodeId = ids.has(parsed.nodeId)
-      ? parsed.nodeId
-      : [...ids].find((id) => id.endsWith(`:${parsed.nodeId}`));
+    const nodeId = resolveId(parsed.nodeId);
     if (!nodeId) continue;
     if (inputs.some((i) => i.nodeId === nodeId && i.widget === widget)) continue;
     inputs.push({ nodeId, widget });
@@ -645,7 +658,7 @@ export function extractAppMode(
   for (const entry of data.outputs ?? []) {
     const id = outputEntryId(entry);
     if (id === null) continue;
-    const nodeId = ids.has(id) ? id : [...ids].find((known) => known.endsWith(`:${id}`));
+    const nodeId = resolveId(id);
     if (nodeId && !outputNodeIds.includes(nodeId)) outputNodeIds.push(nodeId);
   }
 
@@ -758,6 +771,8 @@ export function blueprintToWorkflowFile(
   workflow: EditorWorkflowFile;
   instanceNodeId: string;
   skippedOutputs: string[];
+  /** Boundary inputs with no loader — the graph cannot supply them. */
+  unsupportedInputs: string[];
 } {
   const def = (file.definitions?.subgraphs ?? []).find((d) => String(d.id) === blueprintId);
   if (!def) throw new ComfyConversionError(`Blueprint ${blueprintId} is not in this workflow`);
@@ -779,6 +794,7 @@ export function blueprintToWorkflowFile(
   const nodes: EditorNode[] = [instance];
   const links: EditorLinkTuple[] = [];
   const skippedOutputs: string[] = [];
+  const unsupportedInputs: string[] = [];
 
   // Ids for the materialised boundary nodes must not collide with anything
   // already present, including inner nodes that surface after expansion.
@@ -788,7 +804,17 @@ export function blueprintToWorkflowFile(
   (def.inputs ?? []).forEach((slot, index) => {
     const type = (slot.type ?? "").toUpperCase();
     const loader = LOADER_FOR_SLOT_TYPE[type];
-    if (!loader) return; // not a media slot — proxied widgets cover the rest
+    if (!loader) {
+      // A widget-backed slot is covered by proxyWidgets; a *link* slot (MODEL,
+      // CONDITIONING, …) is not, and leaves the inner node missing a required
+      // input the engine will reject. Report it rather than produce an app
+      // that fails the moment it runs.
+      const socket = (instance.inputs ?? []).find((i) => i.name === slot.name);
+      if (socket && !socket.widget) {
+        unsupportedInputs.push(`${slotLabel(slot, `input_${index}`)} (${slot.type ?? "unknown"})`);
+      }
+      return;
+    }
     // Slots are matched to the instance's sockets by name: an instance
     // materialises only the boundary inputs the author actually wired, so
     // positions do not line up.
@@ -843,6 +869,7 @@ export function blueprintToWorkflowFile(
     },
     instanceNodeId: String(instance.id),
     skippedOutputs,
+    unsupportedInputs,
   };
 }
 

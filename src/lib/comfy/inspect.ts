@@ -161,15 +161,19 @@ export function inputFromCandidate(
 export function inputFromLoader(
   candidate: ComfyNodeCandidate,
   type: ComfyInputType,
-  taken: Set<string>
+  taken: Set<string>,
+  node?: ComfyGraphNode
 ): ComfyAppInput {
+  // Resolved once: node packs name the filename widget differently, so it is
+  // read off the node itself rather than assumed from the class.
+  const inputKey = loaderWidgetKey(candidate.classType, node);
   return {
-    id: bindingId(candidate.nodeId, loaderWidgetKey(candidate.classType)),
+    id: bindingId(candidate.nodeId, inputKey),
     name: uniqueSlug(candidate.label, taken),
     label: candidate.label,
     type,
     nodeId: candidate.nodeId,
-    inputKey: loaderWidgetKey(candidate.classType),
+    inputKey,
     required: true,
   };
 }
@@ -266,12 +270,13 @@ export function inspectWorkflow(
       if (!node) continue;
       const loaderType = loaderInputType(node.class_type);
       // A loader's upload widget declares a media input, not a text param.
-      if (loaderType && leafKey(entry.widget) === loaderWidgetKey(node.class_type)) {
+      if (loaderType && leafKey(entry.widget) === loaderWidgetKey(node.class_type, node)) {
         inputs.push(
           inputFromLoader(
             { nodeId: entry.nodeId, classType: node.class_type, label: nodeLabel(entry.nodeId, node) },
             loaderType,
-            taken
+            taken,
+            node
           )
         );
         continue;
@@ -299,7 +304,10 @@ export function inspectWorkflow(
       if (claimed.has(candidate.nodeId)) continue;
       const type = loaderInputType(candidate.classType);
       if (!type) continue;
-      inputs.push({ ...inputFromLoader(candidate, type, taken), required: false });
+      inputs.push({
+        ...inputFromLoader(candidate, type, taken, graph[candidate.nodeId]),
+        required: false,
+      });
     }
 
     outputs = appMode.outputNodeIds
@@ -315,11 +323,11 @@ export function inspectWorkflow(
       .filter((o): o is ComfyAppOutput => o !== null);
   } else {
     for (const candidate of imageInputCandidates) {
-      inputs.push(inputFromLoader(candidate, "image", taken));
+      inputs.push(inputFromLoader(candidate, "image", taken, graph[candidate.nodeId]));
     }
     for (const candidate of mediaInputCandidates) {
       const type = loaderInputType(candidate.classType);
-      if (type) inputs.push(inputFromLoader(candidate, type, taken));
+      if (type) inputs.push(inputFromLoader(candidate, type, taken, graph[candidate.nodeId]));
     }
     for (const candidate of widgetCandidates) {
       if (candidate.connectableAs) {

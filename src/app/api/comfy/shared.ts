@@ -5,6 +5,8 @@
  * can share logic without Next.js treating the extra exports as routes.
  */
 
+import { createHash } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import { ComfyConfigError } from "@/lib/comfy/server";
@@ -99,9 +101,18 @@ export function decodeDataUrl(value: string): DecodedMedia | null {
   }
 }
 
-/** A stable filename for an uploaded input, so engine-side dedup can work. */
-export function uploadFilename(name: string, contentType: string): string {
+/**
+ * A content-addressed filename for an uploaded input.
+ *
+ * The legacy upload uses `overwrite: true`, so two runs sharing a filename
+ * clobber each other on the engine — two Comfy nodes running concurrently with
+ * the same input name would render each other's image. Hashing the bytes makes
+ * the name unique per image *and* keeps re-running with an unchanged input
+ * from re-uploading it.
+ */
+export function uploadFilename(name: string, contentType: string, bytes: Uint8Array): string {
   const ext = contentType.split("/")[1]?.split("+")[0] ?? "bin";
-  const slug = name.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 40) || "input";
-  return `node-banana-${slug}.${ext}`;
+  const slug = name.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 24) || "input";
+  const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 16);
+  return `node-banana-${slug}-${hash}.${ext}`;
 }
