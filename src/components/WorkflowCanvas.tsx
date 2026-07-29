@@ -919,6 +919,13 @@ export function WorkflowCanvas() {
         fromHandleType = "text";
       }
 
+      // Comfy app output handles are named after ComfyUI graph nodes ("9"), so
+      // no naming convention decodes them — read the type off the attached
+      // workflow's contract.
+      if (!fromHandleType && connectionState.fromNode.type === "comfyApp") {
+        fromHandleType = getComfyOutputHandleType(connectionState.fromNode, fromHandleId);
+      }
+
       // Helper to find a compatible handle on a node by type
       const findCompatibleHandle = (
         node: Node,
@@ -947,6 +954,13 @@ export function WorkflowCanvas() {
               // All handles are occupied
               return null;
             }
+          }
+          // A Comfy app's outputs are declared by the attached workflow, and
+          // their handle ids are ComfyUI node ids — the generic names below
+          // would produce an edge from a handle that does not exist.
+          if (node.type === "comfyApp") {
+            const app = (node.data as { app?: { outputs?: Array<{ id: string; type: string }> } }).app;
+            return app?.outputs?.find((o) => o.type === handleType)?.id ?? null;
           }
           // Output handle - check for video, 3d, or image type
           if (handleType === "video") return "video";

@@ -42,6 +42,9 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   const showLabels = useShowHandleLabels(selected);
   const [importOpen, setImportOpen] = useState(false);
 
+  const edges = useWorkflowStore((state) => state.edges);
+  const removeEdge = useWorkflowStore((state) => state.removeEdge);
+
   const app = nodeData.app;
 
   // Handles are derived from the app contract, and `inputSchema` is what maps a
@@ -70,6 +73,28 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
 
   const handleAttach = useCallback(
     (attached: ComfyAppDefinition) => {
+      // A different workflow means different handles. Any edge still pointing
+      // at one this contract does not declare would otherwise hang off the
+      // node with nowhere to attach, and would silently feed nothing.
+      const inputHandleIds = new Set(
+        (() => {
+          const counters: Record<string, number> = {};
+          return attached.inputs.map((input) => {
+            const index = counters[input.type] ?? 0;
+            counters[input.type] = index + 1;
+            return inputHandleId(input.type, index);
+          });
+        })()
+      );
+      const outputHandleIds = new Set(attached.outputs.map((o) => o.id));
+      for (const edge of edges) {
+        if (edge.target === id && edge.targetHandle && !inputHandleIds.has(edge.targetHandle)) {
+          removeEdge(edge.id);
+        } else if (edge.source === id && edge.sourceHandle && !outputHandleIds.has(edge.sourceHandle)) {
+          removeEdge(edge.id);
+        }
+      }
+
       updateNodeData(id, {
         app: attached,
         inputSchema: appToInputSchema(attached),
@@ -93,7 +118,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
       });
       setImportOpen(false);
     },
-    [id, updateNodeData]
+    [id, updateNodeData, edges, removeEdge]
   );
 
   const handleParamsChange = useCallback(
