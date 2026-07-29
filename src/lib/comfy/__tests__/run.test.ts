@@ -204,6 +204,15 @@ describe("resolveOutputs", () => {
     expect(resolved[0]?.value.startsWith("data:image/png;base64,")).toBe(true);
   });
 
+  it("never emits a data URL with no media type", () => {
+    // Comfy Cloud reports an empty content type for a workflow's own saved
+    // files. `data:;base64,…` is parsed as text: it will not render in an
+    // <img>, and decoding it back for a downstream node loses the format.
+    const resolved = resolveOutputs(app(), [{ ...media("9"), contentType: "" }]);
+    expect(resolved[0]?.value.startsWith("data:;")).toBe(false);
+    expect(resolved[0]?.value.startsWith("data:application/octet-stream;base64,")).toBe(true);
+  });
+
   it("falls back to type matching when the producing node differs", () => {
     // Some packs report a file under a different node than the bound sink.
     const resolved = resolveOutputs(app(), [media("77")]);

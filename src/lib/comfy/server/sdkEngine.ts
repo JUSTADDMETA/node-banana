@@ -21,6 +21,7 @@ import {
   WorkflowFormatUi,
 } from "@comfyorg/sdk";
 
+import { mediaTypeForFilename, mimeForFilename } from "../graph";
 import type { ComfyConnection, ComfyGraph, ComfyObjectInfo, ComfyOutputType } from "../types";
 import { engineAuthHeaders } from "./connection";
 import {
@@ -42,13 +43,20 @@ import { resilientFetch } from "./fetch";
 const TERMINAL = new Set(["succeeded", "canceled", "failed", "expired"]);
 const SUCCESS = "succeeded";
 
-/** Map the v2 output type onto a Node Banana handle type. */
-function handleTypeFor(type: string, contentType: string): ComfyOutputType {
+/**
+ * Map the v2 output type onto a Node Banana handle type.
+ *
+ * The content type is advisory: Comfy Cloud returns it empty for outputs a
+ * workflow saved itself, so the filename is the fallback signal — without it a
+ * `.glb` or `.mp4` would be classified as an image.
+ */
+function handleTypeFor(type: string, contentType: string, filename: string): ComfyOutputType {
   if (type === "video" || contentType.startsWith("video/")) return "video";
   if (type === "audio" || contentType.startsWith("audio/")) return "audio";
   if (type === "text") return "text";
   if (contentType.startsWith("model/")) return "3d";
-  return "image";
+  if (type === "image" || contentType.startsWith("image/")) return "image";
+  return mediaTypeForFilename(filename);
 }
 
 export class SdkComfyEngine implements ComfyEngine {
@@ -177,7 +185,7 @@ export class SdkComfyEngine implements ComfyEngine {
     const assets: ComfyOutputAsset[] = [];
     for (const output of job.outputs) {
       const bytes = await output.toBytes();
-      const type = handleTypeFor(output.type, output.contentType);
+      const type = handleTypeFor(output.type, output.contentType, output.name);
       if (type === "text") {
         assets.push({ nodeId: output.nodeId, type, text: new TextDecoder().decode(bytes) });
         continue;
@@ -186,7 +194,11 @@ export class SdkComfyEngine implements ComfyEngine {
         nodeId: output.nodeId,
         type,
         bytes,
-        contentType: output.contentType,
+        // An empty content type would become `data:;base64,…`, which is a
+        // *text* data URL — it fails to render, and re-uploading it into
+        // another Comfy node would send an extensionless file the engine
+        // refuses to load.
+        contentType: output.contentType || mimeForFilename(output.name),
         filename: output.name,
       });
     }

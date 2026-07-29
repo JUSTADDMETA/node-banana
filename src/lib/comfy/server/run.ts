@@ -185,7 +185,9 @@ function assetValue(asset: ComfyOutputAsset): string | null {
   if (asset.type === "text") return asset.text ?? null;
   if (!asset.bytes) return null;
   const base64 = Buffer.from(asset.bytes).toString("base64");
-  return `data:${asset.contentType ?? "application/octet-stream"};base64,${base64}`;
+  // `||`, not `??`: an empty content type is as useless as a missing one, and
+  // `data:;base64,…` is a text data URL that neither renders nor re-uploads.
+  return `data:${asset.contentType || "application/octet-stream"};base64,${base64}`;
 }
 
 /**
