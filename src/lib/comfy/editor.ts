@@ -750,6 +750,26 @@ const LOADER_FOR_SLOT_TYPE: Record<string, { classType: string; widget: unknown[
 };
 
 /**
+ * The concrete type to materialise a boundary slot as.
+ *
+ * A slot that accepts more than one type is written as a comma-separated union:
+ * an image-to-video blueprint declares its frame as `IMAGE,MASK`, meaning either
+ * will do. Matching the union string as a whole finds nothing, which silently
+ * cost those blueprints the very input they exist for — so each member is tried
+ * in the author's declared order and the first one Node Banana can supply wins.
+ */
+function materializableType(
+  raw: string | undefined,
+  table: Record<string, unknown>
+): string | null {
+  for (const member of (raw ?? "").split(",")) {
+    const type = member.trim().toUpperCase();
+    if (type && type in table) return type;
+  }
+  return null;
+}
+
+/**
  * Lift one blueprint into a standalone editor workflow ready for conversion.
  *
  * The instance node is kept intact — the converter already knows how to expand
@@ -802,9 +822,9 @@ export function blueprintToWorkflowFile(
   let nextLinkId = 900_000;
 
   (def.inputs ?? []).forEach((slot, index) => {
-    const type = (slot.type ?? "").toUpperCase();
-    const loader = LOADER_FOR_SLOT_TYPE[type];
-    if (!loader) {
+    const type = materializableType(slot.type, LOADER_FOR_SLOT_TYPE);
+    const loader = type ? LOADER_FOR_SLOT_TYPE[type] : undefined;
+    if (!loader || !type) {
       // A widget-backed slot is covered by proxyWidgets; a *link* slot (MODEL,
       // CONDITIONING, …) is not, and leaves the inner node missing a required
       // input the engine will reject. Report it rather than produce an app
@@ -839,10 +859,10 @@ export function blueprintToWorkflowFile(
   });
 
   (def.outputs ?? []).forEach((slot, index) => {
-    const type = (slot.type ?? "").toUpperCase();
-    const sink = SINK_FOR_SLOT_TYPE[type];
+    const type = materializableType(slot.type, SINK_FOR_SLOT_TYPE);
+    const sink = type ? SINK_FOR_SLOT_TYPE[type] : undefined;
     const label = slotLabel(slot, `output_${index}`);
-    if (!sink) {
+    if (!sink || !type) {
       skippedOutputs.push(`${label} (${slot.type ?? "unknown"})`);
       return;
     }

@@ -425,6 +425,61 @@ describe("blueprints", () => {
     expect(workflow.links?.some((l) => Array.isArray(l) && l[0] === socket?.link)).toBe(true);
   });
 
+  it("materialises a loader for a boundary slot that accepts more than one type", () => {
+    const file = blueprintFile();
+    // How ComfyUI writes a slot that takes either — an image-to-video
+    // blueprint's frame is `IMAGE,MASK`. Matching the union as one string finds
+    // nothing, which cost those blueprints the only input they exist for.
+    file.definitions!.subgraphs![0]!.inputs = [
+      { name: "input", type: "IMAGE,MASK", linkIds: [] },
+    ];
+    file.nodes[0]!.inputs = [{ name: "input", type: "IMAGE,MASK", link: null }];
+
+    const { workflow, unsupportedInputs } = blueprintToWorkflowFile(file, "3b5ed000");
+    expect(unsupportedInputs).toEqual([]);
+    const loader = workflow.nodes.find((n) => n.type === "LoadImage");
+    expect(loader).toBeDefined();
+    // The link and the loader's output carry the resolved member, not the union,
+    // so downstream slot matching sees a real type.
+    expect(loader?.outputs?.[0]?.type).toBe("IMAGE");
+    const socket = workflow.nodes.find((n) => String(n.id) === "135")?.inputs?.[0];
+    expect(socket?.link).toEqual(expect.any(Number));
+  });
+
+  it("takes the first supplyable member of a union, in declared order", () => {
+    const file = blueprintFile();
+    file.definitions!.subgraphs![0]!.inputs = [
+      { name: "input", type: "LATENT,MASK", linkIds: [] },
+    ];
+    file.nodes[0]!.inputs = [{ name: "input", type: "LATENT,MASK", link: null }];
+
+    const { workflow } = blueprintToWorkflowFile(file, "3b5ed000");
+    // LATENT has no loader, so the MASK alternative is what gets built.
+    expect(workflow.nodes.some((n) => n.type === "LoadImageMask")).toBe(true);
+  });
+
+  it("still reports a union no member of which can be supplied", () => {
+    const file = blueprintFile();
+    file.definitions!.subgraphs![0]!.inputs = [
+      { name: "guide", type: "LATENT,CONDITIONING", linkIds: [] },
+    ];
+    file.nodes[0]!.inputs = [{ name: "guide", type: "LATENT,CONDITIONING", link: null }];
+
+    const { workflow, unsupportedInputs } = blueprintToWorkflowFile(file, "3b5ed000");
+    expect(unsupportedInputs).toEqual(["guide (LATENT,CONDITIONING)"]);
+    expect(workflow.nodes.some((n) => n.type.startsWith("Load"))).toBe(false);
+  });
+
+  it("appends a sink for a union-typed boundary output", () => {
+    const file = blueprintFile();
+    file.definitions!.subgraphs![0]!.outputs = [
+      { name: "out", type: "IMAGE,MASK", linkIds: [] },
+    ];
+    const { workflow, skippedOutputs } = blueprintToWorkflowFile(file, "3b5ed000");
+    expect(skippedOutputs).toEqual([]);
+    expect(workflow.nodes.some((n) => n.type === "SaveImage")).toBe(true);
+  });
+
   it("leaves the caller's file untouched so a second blueprint still converts", () => {
     const file = blueprintFile();
     blueprintToWorkflowFile(file, "3b5ed000");
