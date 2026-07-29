@@ -13,6 +13,7 @@
 
 import {
   comboOptions,
+  declaredWidgetType,
   graphClassTypes,
   humanizeKey,
   isExposableWidget,
@@ -65,12 +66,17 @@ export function uniqueSlug(label: string, taken: Set<string>): string {
   return name;
 }
 
-/** The value type a widget's current value implies. */
+/**
+ * The value type of a widget: what the engine declares, falling back to what
+ * the current value implies when no catalog is available.
+ */
 function valueTypeOf(
   value: unknown,
-  options: string[] | null
+  options: string[] | null,
+  declared: ComfyWidgetCandidate["valueType"] | null
 ): ComfyWidgetCandidate["valueType"] {
   if (options) return "select";
+  if (declared && declared !== "select") return declared;
   if (typeof value === "boolean") return "boolean";
   if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
   return "text";
@@ -93,7 +99,7 @@ function widgetCandidate(
     inputKey,
     classType: node.class_type,
     label: title ? `${title} · ${humanizeKey(inputKey)}` : `${node.class_type} · ${humanizeKey(inputKey)}`,
-    valueType: valueTypeOf(value, options),
+    valueType: valueTypeOf(value, options, declaredWidgetType(objectInfo, node, inputKey)),
     currentValue: value,
     ...(options ? { options } : {}),
     ...constraints,
@@ -212,8 +218,13 @@ export function inspectWorkflow(
   const outputCandidates: ComfyNodeCandidate[] = [];
   const widgetCandidates: ComfyWidgetCandidate[] = [];
 
-  const appModeKeys = new Set(
-    (appMode?.inputs ?? []).map((entry) => bindingId(entry.nodeId, entry.widget))
+  // Author renames, keyed by binding — applied to the candidate list too, so
+  // the import dialog shows the same names the node will.
+  const appModeLabels = new Map(
+    (appMode?.inputs ?? []).map((entry) => [
+      bindingId(entry.nodeId, entry.widget),
+      entry.label ?? null,
+    ])
   );
 
   for (const [nodeId, node] of Object.entries(graph)) {
@@ -229,16 +240,17 @@ export function inspectWorkflow(
     }
     for (const [inputKey, value] of Object.entries(node.inputs)) {
       if (!isExposableWidget(node, inputKey, value)) continue;
-      widgetCandidates.push(
-        widgetCandidate(
-          nodeId,
-          node,
-          inputKey,
-          value as string | number | boolean,
-          objectInfo,
-          appModeKeys.has(bindingId(nodeId, inputKey))
-        )
+      const key = bindingId(nodeId, inputKey);
+      const candidate = widgetCandidate(
+        nodeId,
+        node,
+        inputKey,
+        value as string | number | boolean,
+        objectInfo,
+        appModeLabels.has(key)
       );
+      const authorLabel = appModeLabels.get(key);
+      widgetCandidates.push(authorLabel ? { ...candidate, label: authorLabel } : candidate);
     }
   }
 
@@ -264,10 +276,11 @@ export function inspectWorkflow(
         );
         continue;
       }
-      const candidate = widgetCandidates.find(
+      const found = widgetCandidates.find(
         (c) => c.nodeId === entry.nodeId && c.inputKey === entry.widget
       );
-      if (!candidate) continue;
+      if (!found) continue;
+      const candidate = found;
       // Prompt-shaped strings become connectable handles so they can be driven
       // by a Prompt or LLM node; everything else stays an inline control.
       if (candidate.connectableAs) {
@@ -276,6 +289,19 @@ export function inspectWorkflow(
         params.push(paramFromCandidate(candidate));
       }
     }
+    // A media loader the curated list does not mention is still a real entry
+    // point — App Mode curates *widgets*, and a blueprint's boundary inputs are
+    // not widgets at all. Leaving them out would produce a node with no way to
+    // feed it an image. They are optional, so an unconnected one just runs with
+    // whatever the workflow was saved with.
+    const claimed = new Set(inputs.map((i) => i.nodeId));
+    for (const candidate of [...imageInputCandidates, ...mediaInputCandidates]) {
+      if (claimed.has(candidate.nodeId)) continue;
+      const type = loaderInputType(candidate.classType);
+      if (!type) continue;
+      inputs.push({ ...inputFromLoader(candidate, type, taken), required: false });
+    }
+
     outputs = appMode.outputNodeIds
       .map((nodeId) => {
         const node = graph[nodeId];

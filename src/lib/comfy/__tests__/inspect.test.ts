@@ -120,6 +120,41 @@ describe("inspectWorkflow with App Mode", () => {
   });
 });
 
+describe("inspectWorkflow with App Mode and an uncurated loader", () => {
+  it("still exposes a media loader App Mode does not mention", () => {
+    // A blueprint's boundary inputs are not widgets, so they never appear in a
+    // curated list — dropping them would leave the node with no way to be fed.
+    const inspection = inspectWorkflow(graph(), {
+      appMode: { inputs: [{ nodeId: "31", widget: "steps" }], outputNodeIds: ["9"] },
+    });
+    const image = inspection.suggested.inputs.find((i) => i.type === "image");
+    expect(image).toMatchObject({ nodeId: "16", inputKey: "image" });
+    // Optional, since the author did not ask for it — an unconnected handle
+    // just runs with whatever the workflow was saved with.
+    expect(image?.required).toBe(false);
+  });
+
+  it("does not duplicate a loader the author did curate", () => {
+    const inspection = inspectWorkflow(graph(), {
+      appMode: { inputs: [{ nodeId: "16", widget: "image" }], outputNodeIds: ["9"] },
+    });
+    expect(inspection.suggested.inputs.filter((i) => i.nodeId === "16")).toHaveLength(1);
+    expect(inspection.suggested.inputs[0]?.required).toBe(true);
+  });
+
+  it("uses the author's rename over the derived label", () => {
+    const inspection = inspectWorkflow(graph(), {
+      appMode: {
+        inputs: [{ nodeId: "31", widget: "steps", label: "Detail" }],
+        outputNodeIds: ["9"],
+      },
+    });
+    expect(inspection.suggested.params[0]?.label).toBe("Detail");
+    // The dialog's candidate list must show the same name the node will.
+    expect(inspection.widgetCandidates.find((c) => c.inputKey === "steps")?.label).toBe("Detail");
+  });
+});
+
 describe("inspectWorkflow parameter typing", () => {
   const objectInfo: ComfyObjectInfo = {
     KSampler: {
@@ -147,6 +182,20 @@ describe("inspectWorkflow parameter typing", () => {
       default: "euler",
       description: "Which sampler.",
     });
+  });
+
+  it("trusts the engine's declared type over the current value's shape", () => {
+    const floatAtZero: ComfyGraph = {
+      "1": { class_type: "Primitive", inputs: { value: 0 } },
+      "2": { class_type: "SaveImage", inputs: { images: ["1", 0] } },
+    };
+    const inspection = inspectWorkflow(floatAtZero, {
+      objectInfo: { Primitive: { input: { required: { value: ["FLOAT", { default: 0.0 }] } } } },
+      appMode: { inputs: [{ nodeId: "1", widget: "value" }], outputNodeIds: ["2"] },
+    });
+    // A FLOAT sitting at 0 serializes as an integer; typing it as one would
+    // stop the user entering 0.5.
+    expect(inspection.suggested.params[0]?.type).toBe("number");
   });
 
   it("carries numeric bounds so the node can validate input", () => {

@@ -239,6 +239,30 @@ export function comboOptions(
   return optionsFromSpec(specFor(objectInfo, node, inputKey));
 }
 
+/**
+ * The value type the engine declares for a widget, or null when unknown.
+ *
+ * This beats inferring from the current value: a `FLOAT` widget sitting at `0`
+ * serializes as an integer in JSON, and typing it as one would stop the user
+ * entering `0.5`.
+ */
+export function declaredWidgetType(
+  objectInfo: ComfyObjectInfo | undefined,
+  node: ComfyGraphNode,
+  inputKey: string
+): "text" | "number" | "integer" | "boolean" | "select" | null {
+  const spec = specFor(objectInfo, node, inputKey);
+  if (!spec) return null;
+  const type = spec[0];
+  if (Array.isArray(type)) return "select";
+  if (type === "COMBO") return "select";
+  if (type === "FLOAT") return "number";
+  if (type === "INT") return "integer";
+  if (type === "BOOLEAN") return "boolean";
+  if (type === "STRING") return "text";
+  return null;
+}
+
 /** Numeric bounds and multiline flag declared for a widget in the catalog. */
 export function widgetConstraints(
   objectInfo: ComfyObjectInfo | undefined,

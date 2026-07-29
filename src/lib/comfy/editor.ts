@@ -26,6 +26,8 @@ interface EditorNodeInput {
   type?: string;
   link?: number | null;
   widget?: { name?: string };
+  /** The author's display rename for this socket or promoted widget. */
+  label?: string;
 }
 
 interface EditorNode {
@@ -541,7 +543,12 @@ export interface AppModeData {
    * way {@link convertEditorGraph} emits it (`instance:inner` for a widget
    * inside a subgraph), so it indexes straight into the converted API graph.
    */
-  inputs: Array<{ nodeId: string; widget: string }>;
+  inputs: Array<{
+    nodeId: string;
+    widget: string;
+    /** The author's display rename, when the format carries one. */
+    label?: string;
+  }>;
   /** Author-exposed output node ids, in order. */
   outputNodeIds: string[];
 }
@@ -721,40 +728,89 @@ const SINK_FOR_SLOT_TYPE: Record<string, { classType: string; inputName: string 
   STRING: { classType: "PreviewAny", inputName: "source" },
 };
 
+/** Loader node class that supplies a value of a given boundary-input type. */
+const LOADER_FOR_SLOT_TYPE: Record<string, { classType: string; widget: unknown[] }> = {
+  IMAGE: { classType: "LoadImage", widget: ["example.png", "image"] },
+  MASK: { classType: "LoadImageMask", widget: ["example.png", "red", "image"] },
+  AUDIO: { classType: "LoadAudio", widget: ["example.mp3", null, "audio"] },
+  VIDEO: { classType: "LoadVideo", widget: ["example.mp4", "video"] },
+};
+
 /**
  * Lift one blueprint into a standalone editor workflow ready for conversion.
  *
  * The instance node is kept intact — the converter already knows how to expand
- * a subgraph instance and namespace its inner ids as `instance:inner` — and a
- * sink node is appended for every boundary output. Without those sinks a
- * blueprint would run and persist nothing, because its results leave through
- * slots rather than through a `SaveImage`.
+ * a subgraph instance and namespace its inner ids as `instance:inner` — and the
+ * boundary is materialised into real nodes: a loader feeding each input slot,
+ * a sink draining each output slot.
  *
- * Boundary outputs whose type has no sink (LATENT, MODEL, …) are skipped and
- * reported, since there is nothing a node could display for them.
+ * Both halves are necessary. A blueprint's data enters and leaves through
+ * *slots*, not through `LoadImage`/`SaveImage` nodes, so without this a
+ * blueprint would inspect as having no inputs and would run persisting nothing.
+ *
+ * Boundary slots whose type has no loader or sink (LATENT, MODEL, …) are
+ * skipped and reported — there is nothing a node could feed them or display.
  */
 export function blueprintToWorkflowFile(
   file: EditorWorkflowFile,
   blueprintId: string
-): { workflow: EditorWorkflowFile; instanceNodeId: string; skippedOutputs: string[] } {
+): {
+  workflow: EditorWorkflowFile;
+  instanceNodeId: string;
+  skippedOutputs: string[];
+} {
   const def = (file.definitions?.subgraphs ?? []).find((d) => String(d.id) === blueprintId);
   if (!def) throw new ComfyConversionError(`Blueprint ${blueprintId} is not in this workflow`);
 
-  const instance = blueprintInstance(file, blueprintId);
-  if (!instance) {
+  const original = blueprintInstance(file, blueprintId);
+  if (!original) {
     throw new ComfyConversionError(
       `Blueprint "${def.name ?? blueprintId}" has no instance node to run`
     );
   }
 
+  // The instance's input links are rewritten below, so work on a copy — the
+  // caller's file may be reused (e.g. to inspect a second blueprint).
+  const instance: BlueprintInstanceNode = {
+    ...original,
+    inputs: (original.inputs ?? []).map((input) => ({ ...input })),
+  };
+
   const nodes: EditorNode[] = [instance];
   const links: EditorLinkTuple[] = [];
   const skippedOutputs: string[] = [];
 
-  // Ids for the appended sinks must not collide with anything already present,
-  // including inner nodes that will surface after expansion.
+  // Ids for the materialised boundary nodes must not collide with anything
+  // already present, including inner nodes that surface after expansion.
   let nextNodeId = 1_000_000;
   let nextLinkId = 900_000;
+
+  (def.inputs ?? []).forEach((slot, index) => {
+    const type = (slot.type ?? "").toUpperCase();
+    const loader = LOADER_FOR_SLOT_TYPE[type];
+    if (!loader) return; // not a media slot — proxied widgets cover the rest
+    // Slots are matched to the instance's sockets by name: an instance
+    // materialises only the boundary inputs the author actually wired, so
+    // positions do not line up.
+    const socket = (instance.inputs ?? []).find((i) => i.name === slot.name);
+    if (!socket) return;
+
+    const loaderId = nextNodeId++;
+    const linkId = nextLinkId++;
+    socket.link = linkId;
+    links.push([linkId, loaderId, 0, instance.id, index, type]);
+    // The title becomes `_meta.title` on conversion, which is what inspection
+    // reads for the handle's label — no separate mapping needed.
+    const label = slotLabel(slot, `input_${index}`);
+    nodes.push({
+      id: loaderId,
+      type: loader.classType,
+      title: label,
+      inputs: [],
+      outputs: [{ name: type, type }],
+      widgets_values: loader.widget,
+    });
+  });
 
   (def.outputs ?? []).forEach((slot, index) => {
     const type = (slot.type ?? "").toUpperCase();
@@ -780,8 +836,6 @@ export function blueprintToWorkflowFile(
   return {
     workflow: {
       nodes,
-      // The instance's own inputs are unconnected, so the only links are the
-      // ones wiring its outputs to the sinks added above.
       links,
       // Keep every definition so a blueprint that nests another still resolves.
       definitions: file.definitions,
@@ -809,6 +863,9 @@ export function blueprintAppMode(
   const proxied = instance?.properties?.proxyWidgets;
   if (!proxied?.length) return null;
 
+  const def = (file.definitions?.subgraphs ?? []).find((d) => String(d.id) === blueprintId);
+  const innerById = new Map((def?.nodes ?? []).map((n) => [String(n.id), n]));
+
   const inputs: AppModeData["inputs"] = [];
   for (const entry of proxied) {
     if (!Array.isArray(entry) || entry.length < 2) continue;
@@ -816,9 +873,16 @@ export function blueprintAppMode(
     // `control_after_generate` is proxied alongside a seed but is a frontend
     // affordance, not an input the engine reads.
     if (widget === "control_after_generate") continue;
-    const nodeId = `${instanceNodeId}:${String(entry[0])}`;
+    const innerId = String(entry[0]);
+    const nodeId = `${instanceNodeId}:${innerId}`;
     if (inputs.some((i) => i.nodeId === nodeId && i.widget === widget)) continue;
-    inputs.push({ nodeId, widget });
+    // The author's rename lives on the inner node's own input entry. Without
+    // it, two proxied `PrimitiveFloat.value` widgets both label as
+    // "PrimitiveFloat · Value" and the node's settings are unusable.
+    const label = innerById
+      .get(innerId)
+      ?.inputs?.find((i) => i.name === widget)?.label?.trim();
+    inputs.push({ nodeId, widget, ...(label ? { label } : {}) });
   }
   return inputs.length > 0 ? { inputs, outputNodeIds: [] } : null;
 }

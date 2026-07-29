@@ -394,6 +394,37 @@ describe("blueprints", () => {
     expect(skippedOutputs).toEqual(["LATENT (LATENT)"]);
   });
 
+  it("materialises a loader for each media boundary input", () => {
+    const { workflow } = blueprintToWorkflowFile(blueprintFile(), "3b5ed000");
+    const loader = workflow.nodes.find((n) => n.type === "LoadImage");
+    // A blueprint takes its image through a boundary *slot*, so without a
+    // materialised loader it would inspect as having no inputs at all.
+    expect(loader).toBeDefined();
+    // The instance's socket must now point at that loader's link.
+    const instance = workflow.nodes.find((n) => String(n.id) === "135");
+    const socket = instance?.inputs?.find((i) => i.name === "image");
+    expect(socket?.link).toEqual(expect.any(Number));
+    expect(workflow.links?.some((l) => Array.isArray(l) && l[0] === socket?.link)).toBe(true);
+  });
+
+  it("leaves the caller's file untouched so a second blueprint still converts", () => {
+    const file = blueprintFile();
+    blueprintToWorkflowFile(file, "3b5ed000");
+    // The instance's sockets are rewritten during lifting — on a copy, not the
+    // source, which the caller may inspect again.
+    expect(file.nodes[0]?.inputs?.[0]?.link).toBeNull();
+  });
+
+  it("carries the author's widget rename so proxied widgets stay distinguishable", () => {
+    const file = blueprintFile();
+    // Two PrimitiveFloat.value widgets would otherwise share a label.
+    file.definitions!.subgraphs![0]!.nodes[0]!.inputs = [
+      { name: "text", type: "STRING", label: "prompt", widget: { name: "text" } },
+    ];
+    const appMode = blueprintAppMode(file, "3b5ed000", "135");
+    expect(appMode?.inputs[0]).toEqual({ nodeId: "135:45", widget: "text", label: "prompt" });
+  });
+
   it("treats proxied widgets as the author's curated parameters", () => {
     const appMode = blueprintAppMode(blueprintFile(), "3b5ed000", "135");
     expect(appMode?.inputs).toEqual([
