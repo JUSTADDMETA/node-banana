@@ -85,6 +85,7 @@ LLM models:
 | `generateAudio` | AI audio/TTS generation | text | audio |
 | `audioInput` | Load/upload audio files | audio | audio |
 | `glbViewer` | Load/display 3D GLB models | none | image |
+| `comfyApp` | Run a ComfyUI workflow as a node | schema-driven | schema-driven |
 | `output` | Display final result | image | none |
 
 ## Node Connection System
@@ -131,6 +132,7 @@ Returns `{ images: string[], text: string | null }`.
 - `Shift + L` - Add LLM node
 - `Shift + A` - Add annotation node
 - `Shift + T` - Add audio (generateAudio) node
+- `Shift + C` - Add ComfyUI app node
 - `H` - Stack selected nodes horizontally
 - `V` - Stack selected nodes vertically
 - `G` - Arrange selected nodes in grid
@@ -200,6 +202,54 @@ If the model uses different endpoints than `/api/v1/jobs/createTask` and `/api/v
 - Add a custom polling function for the model's status endpoint
 - Add a branch in the Kie request-building logic (see `src/app/api/generate/providers/kie.ts`) for the custom request format
 
+## ComfyUI Integration
+
+Node Banana can run a ComfyUI workflow as a node (`comfyApp`). The workflow's
+**App Mode** (linear mode) configuration defines the node's surface: the
+author's chosen inputs become typed handles, their widgets become inline
+settings, and their output nodes become typed output handles.
+
+### Backends
+
+Chosen in Settings → ComfyUI, stored in `node-banana-comfy-settings` and
+forwarded per request as `X-Comfy-*` headers (so no server config is needed):
+
+| Mode | Transport | Notes |
+|------|-----------|-------|
+| `cloud` (default) | `@comfyorg/sdk` (Comfy API v2) | Needs a `comfyui-…` key from platform.comfy.org |
+| `local` | legacy `/api/prompt` | A stock ComfyUI; no sidecar needed |
+| `remote` | legacy `/api/prompt` | Same, elsewhere on the network |
+
+Local/remote endpoints fronted by `comfy-api-proxy` can opt into the SDK path
+with the "Behind comfy-api-proxy" toggle. A stock ComfyUI has no `/api/v2/*`
+routes, which is why the legacy engine is the default there.
+
+### Key files
+
+| Purpose | Location |
+|---------|----------|
+| Graph parsing, patching, pruning | `src/lib/comfy/graph.ts` |
+| Editor→API conversion, App Mode, Blueprints | `src/lib/comfy/editor.ts` |
+| Workflow → node contract | `src/lib/comfy/inspect.ts` |
+| Backend settings + request headers | `src/lib/comfy/settings.ts` |
+| Engine interface + both transports | `src/lib/comfy/server/` |
+| Node component | `src/components/nodes/ComfyAppNode.tsx` |
+| Import/confirm dialog | `src/components/modals/ComfyWorkflowImportModal.tsx` |
+| Settings tab | `src/components/settings/ComfySettingsTab.tsx` |
+| Executor | `src/store/execution/comfyAppExecutor.ts` |
+
+### Formats
+
+Both upload formats are accepted. An **editor save** (the normal ComfyUI Save)
+is the one that carries App Mode, but it is not executable — widget values are
+positional — so converting it needs `/api/object_info` from a reachable engine.
+An **API export** runs as-is but carries no App Mode, so inputs and outputs are
+detected heuristically and confirmed in the dialog.
+
+**Blueprints** are saved subgraphs, listed from `/api/global_subgraphs` (public,
+on Cloud and local alike). Their data enters and leaves through boundary slots,
+so importing one materialises a loader per media input and a sink per output.
+
 ## API Routes
 
 All routes in `src/app/api/`:
@@ -211,12 +261,18 @@ All routes in `src/app/api/`:
 | `/api/workflow` | default | Save/load workflow files |
 | `/api/save-generation` | default | Auto-save generated images |
 | `/api/logs` | default | Session logging |
+| `/api/comfy/status` | 1 min | Probe the configured ComfyUI engine |
+| `/api/comfy/inspect` | 2 min | Workflow upload → node contract |
+| `/api/comfy/blueprints` | 2 min | List/import ComfyUI Blueprints |
+| `/api/comfy/run` | 5 min | Submit a Comfy app run |
+| `/api/comfy/poll` | 5 min | Poll a run and collect its outputs |
 
 ## localStorage Keys
 
 - `node-banana-workflow-configs` - Project metadata (paths)
 - `node-banana-workflow-costs` - Cost tracking per workflow
 - `node-banana-nanoBanana-defaults` - Sticky generation settings
+- `node-banana-comfy-settings` - ComfyUI backend (cloud/local/remote), keys, job timeout
 
 ## Git Workflow
 

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { buildComfyApp } from "@/lib/comfy/buildApp";
 import { inputFromCandidate, paramFromCandidate } from "@/lib/comfy/inspect";
@@ -271,7 +272,7 @@ export function ComfyWorkflowImportModal({
 
   const canAttach = Boolean(inspection && name.trim() && outputs.length > 0);
 
-  return (
+  const dialog = (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
       onClick={(e) => {
@@ -402,6 +403,13 @@ export function ComfyWorkflowImportModal({
       />
     </div>
   );
+
+  // Portalled to the body: this dialog is rendered from inside a node, and
+  // React Flow's viewport carries a `transform`, which makes it the containing
+  // block for `position: fixed` — so without this the dialog is scaled and
+  // shifted by the canvas zoom.
+  if (typeof document === "undefined") return null;
+  return createPortal(dialog, document.body);
 }
 
 function TabButton({

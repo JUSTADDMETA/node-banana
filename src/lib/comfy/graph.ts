@@ -115,9 +115,38 @@ export function isSeedKey(inputKey: string): boolean {
   return leaf === "seed" || leaf === "noise_seed" || leaf.endsWith("_seed");
 }
 
-/** Human label for a node: its title if set, else `ClassType (#id)`. */
+/** Friendly default labels for the loader/sink classes users see most. */
+const FRIENDLY_CLASS_LABEL: Record<string, string> = {
+  LoadImage: "Image",
+  LoadImageMask: "Mask",
+  LoadImageOutput: "Image",
+  LoadAudio: "Audio",
+  VHS_LoadAudio: "Audio",
+  LoadVideo: "Video",
+  VHS_LoadVideo: "Video",
+  SaveImage: "Image",
+  PreviewImage: "Image",
+  SaveVideo: "Video",
+  VHS_VideoCombine: "Video",
+  SaveAudio: "Audio",
+  PreviewAudio: "Audio",
+  SaveGLB: "3D Model",
+  PreviewAny: "Text",
+  ShowText: "Text",
+};
+
+/**
+ * Human label for a node.
+ *
+ * The author's title wins. Failing that, a boundary node gets a plain
+ * type name — "Image" reads better on a handle than "LoadImage (#1)" — and
+ * anything else falls back to `ClassType (#id)`, which at least locates it in
+ * the original workflow.
+ */
 export function nodeLabel(nodeId: string, node: ComfyGraphNode): string {
-  return node._meta?.title?.trim() || `${node.class_type} (#${nodeId})`;
+  const title = node._meta?.title?.trim();
+  if (title) return title;
+  return FRIENDLY_CLASS_LABEL[node.class_type] ?? `${node.class_type} (#${nodeId})`;
 }
 
 /** `Sampler Steps` from `sampler_steps`. */

@@ -48,7 +48,8 @@ describe("inspectWorkflow without App Mode", () => {
 
   it("binds the Save node as the output", () => {
     expect(inspection.suggested.outputs).toEqual([
-      { id: "9", label: "SaveImage (#9)", type: "image", nodeId: "9", classType: "SaveImage" },
+      // An untitled sink reads better as its plain type than as its class name.
+      { id: "9", label: "Image", type: "image", nodeId: "9", classType: "SaveImage" },
     ]);
   });
 

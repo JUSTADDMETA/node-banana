@@ -1673,6 +1673,9 @@ export function WorkflowCanvas() {
           case "y":
             nodeType = "videoInput";
             break;
+          case "c":
+            nodeType = "comfyApp";
+            break;
         }
 
         if (nodeType) {

@@ -408,7 +408,7 @@ export function ProjectSetupModal({
       onWheelCapture={(e) => e.stopPropagation()}
     >
       <div
-        className="bg-neutral-800 rounded-xl w-[520px] border border-neutral-700 shadow-2xl overflow-clip flex flex-col max-h-[80vh]"
+        className="bg-neutral-800 rounded-xl w-[580px] border border-neutral-700 shadow-2xl overflow-clip flex flex-col max-h-[80vh]"
         onKeyDown={handleKeyDown}
       >
         <div className="px-8 pt-8 pb-0 shrink-0">

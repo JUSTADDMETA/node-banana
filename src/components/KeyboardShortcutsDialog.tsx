@@ -39,6 +39,7 @@ const shortcutGroups: ShortcutGroup[] = [
       { keys: ["Shift", "T"], description: "Add Audio node" },
       { keys: ["Shift", "Y"], description: "Add Video Input node" },
       { keys: ["Shift", "R"], description: "Add Array node" },
+      { keys: ["Shift", "C"], description: "Add ComfyUI App node" },
     ],
   },
   {
