@@ -498,6 +498,18 @@ describe("blueprints", () => {
     expect(appMode?.inputs[0]).toEqual({ nodeId: "135:45", widget: "text", label: "prompt" });
   });
 
+  it("ignores a label that merely repeats the widget name", () => {
+    const file = blueprintFile();
+    // ComfyUI writes `label` defaulted to the input's own name. Four proxied
+    // `CurveEditor.curve` widgets would then all read "curve", hiding the node
+    // titles (RGB Master, Red, Green, Blue) that actually tell them apart.
+    file.definitions!.subgraphs![0]!.nodes[0]!.inputs = [
+      { name: "text", type: "STRING", label: "Text", widget: { name: "text" } },
+    ];
+    const appMode = blueprintAppMode(file, "3b5ed000", "135");
+    expect(appMode?.inputs[0]).toEqual({ nodeId: "135:45", widget: "text" });
+  });
+
   it("treats proxied widgets as the author's curated parameters", () => {
     const appMode = blueprintAppMode(blueprintFile(), "3b5ed000", "135");
     expect(appMode?.inputs).toEqual([

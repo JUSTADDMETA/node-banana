@@ -926,9 +926,13 @@ export function blueprintAppMode(
     // The author's rename lives on the inner node's own input entry. Without
     // it, two proxied `PrimitiveFloat.value` widgets both label as
     // "PrimitiveFloat · Value" and the node's settings are unusable.
-    const label = innerById
-      .get(innerId)
-      ?.inputs?.find((i) => i.name === widget)?.label?.trim();
+    //
+    // ComfyUI defaults that `label` to the input's own name, though, and such a
+    // label carries nothing: four proxied `CurveEditor.curve` widgets would all
+    // read "curve" while their node titles say RGB Master, Red, Green and Blue.
+    // Only a genuine rename is taken.
+    const raw = innerById.get(innerId)?.inputs?.find((i) => i.name === widget)?.label?.trim();
+    const label = raw && raw.toLowerCase() !== widget.toLowerCase() ? raw : undefined;
     inputs.push({ nodeId, widget, ...(label ? { label } : {}) });
   }
   return inputs.length > 0 ? { inputs, outputNodeIds: [] } : null;

@@ -24,6 +24,53 @@ describe("uniqueSlug", () => {
   });
 });
 
+describe("inspectWorkflow with a curve widget", () => {
+  // How ComfyUI's CurveEditor arrives: the widget's value is an object, not a
+  // scalar, and a graph full of them used to inspect as having no settings.
+  const curveGraph = (): ComfyGraph => ({
+    "4": {
+      class_type: "CurveEditor",
+      inputs: {
+        curve: { points: [[0, 0], [1, 1]], interpolation: "monotone_cubic" },
+        histogram: ["9", 0],
+      },
+      _meta: { title: "RGB Master" },
+    },
+    "9": { class_type: "ImageHistogram", inputs: { image: ["1", 0] } },
+    "1": { class_type: "LoadImage", inputs: { image: "in.png" } },
+    "8": { class_type: "SaveImage", inputs: { images: ["4", 0], filename_prefix: "out" } },
+  });
+
+  it("exposes the curve as its own parameter type", () => {
+    const inspection = inspectWorkflow(curveGraph(), {
+      appMode: { inputs: [{ nodeId: "4", widget: "curve" }], outputNodeIds: ["8"] },
+    });
+    const param = inspection.suggested.params.find((p) => p.nodeId === "4");
+    expect(param).toMatchObject({ type: "curve", inputKey: "curve" });
+    expect(param?.default).toEqual({
+      points: [[0, 0], [1, 1]],
+      interpolation: "monotone_cubic",
+    });
+  });
+
+  it("never offers a curve as a connectable handle", () => {
+    // The engine declares CURVE `socketless`, and there is nothing on the canvas
+    // that could produce one.
+    const inspection = inspectWorkflow(curveGraph());
+    const candidate = inspection.widgetCandidates.find((c) => c.inputKey === "curve");
+    expect(candidate?.valueType).toBe("curve");
+    expect(candidate?.connectableAs).toBeNull();
+    expect(inspection.suggested.inputs.some((i) => i.inputKey === "curve")).toBe(false);
+  });
+
+  it("classifies a curve without a reachable catalog", () => {
+    // The value's shape is self-describing, which matters because an API-format
+    // import may have no engine at all.
+    const inspection = inspectWorkflow(curveGraph(), { objectInfo: {} });
+    expect(inspection.widgetCandidates.find((c) => c.inputKey === "curve")?.valueType).toBe("curve");
+  });
+});
+
 describe("inspectWorkflow without App Mode", () => {
   const inspection = inspectWorkflow(graph(), { defaultName: "My Workflow" });
 

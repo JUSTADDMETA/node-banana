@@ -352,6 +352,9 @@ function describeRun(
     .slice(0, 400);
   if (text) return `${appName}: ${text}`;
   const settings = Object.entries(params)
+    // A curve's coordinates would fill the line with "[object Object]" or worse,
+    // and its shape is not something a one-line summary can carry.
+    .filter(([, value]) => typeof value !== "object" || value === null)
     .map(([key, value]) => `${key.split(":").pop()}=${String(value)}`)
     .join(", ")
     .slice(0, 200);

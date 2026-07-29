@@ -126,6 +126,22 @@ describe("object_info driven metadata", () => {
     expect(widgetConstraints(objectInfo, node, "text").multiline).toBe(true);
   });
 
+  it("treats the int64 extremes as no bound at all", () => {
+    // What a generic `PrimitiveFloat` declares. Reported verbatim it would tell
+    // the user their brightness must stay under 9,223,372,036,854,775,807.
+    const unbounded: ComfyObjectInfo = {
+      PrimitiveFloat: {
+        input: {
+          required: {
+            value: ["FLOAT", { min: -9223372036854775808, max: 9223372036854775807 }],
+          },
+        },
+      },
+    };
+    const primitive = { class_type: "PrimitiveFloat", inputs: { value: 0 } };
+    expect(widgetConstraints(unbounded, primitive, "value")).toEqual({});
+  });
+
   it("descends into the selected option of a dynamic combo", () => {
     const dynamic: ComfyObjectInfo = {
       Partner: {

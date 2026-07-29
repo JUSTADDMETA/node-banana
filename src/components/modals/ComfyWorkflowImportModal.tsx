@@ -866,7 +866,7 @@ function ConfirmStep({
               >
                 <span
                   className="flex-1 min-w-0 text-xs text-neutral-300 truncate"
-                  title={`${candidate.label} — currently ${String(candidate.currentValue)}`}
+                  title={`${candidate.label} — currently ${describeValue(candidate.currentValue)}`}
                 >
                   {candidate.label}
                   {candidate.fromAppMode && <span className="text-emerald-400/70 ml-1">•</span>}
@@ -1003,6 +1003,15 @@ function TypePill({ color, children }: { color: string; children: React.ReactNod
       {children}
     </span>
   );
+}
+
+/** A widget's current value, short enough for a tooltip. */
+function describeValue(value: ComfyWidgetCandidate["currentValue"]): string {
+  // A curve is a nest of coordinates; its point count is the useful summary.
+  if (value && typeof value === "object") {
+    return "points" in value ? `a curve of ${value.points.length} points` : "a structured value";
+  }
+  return String(value);
 }
 
 function handleColor(type: string): string {

@@ -177,6 +177,35 @@ describe("buildRunGraph", () => {
     expect(pinned["31"]?.inputs.seed).toBe(999);
   });
 
+  it("patches a curve into the graph verbatim", () => {
+    const definition = app();
+    definition.graph["40"] = {
+      class_type: "CurveEditor",
+      inputs: { curve: { points: [[0, 0], [1, 1]], interpolation: "monotone_cubic" } },
+    };
+    definition.params = [
+      ...definition.params,
+      { id: "40:curve", label: "Curve", nodeId: "40", inputKey: "curve", type: "curve" },
+    ];
+    const shaped = {
+      points: [
+        [0, 0],
+        [0.5, 0.8],
+        [1, 1],
+      ],
+      interpolation: "monotone_cubic",
+    };
+    const graph = buildRunGraph({
+      app: definition,
+      text: {},
+      uploads: {},
+      params: { "40:curve": shaped },
+    });
+    // The engine expects its own JSON shape back — coercing it to a string or a
+    // number would be rejected outright.
+    expect(graph["40"]?.inputs.curve).toEqual(shaped);
+  });
+
   it("ignores blank parameter values instead of writing empties into the graph", () => {
     const graph = buildRunGraph({
       app: app(),

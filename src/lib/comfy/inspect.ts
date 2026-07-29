@@ -16,6 +16,7 @@ import {
   declaredWidgetType,
   graphClassTypes,
   humanizeKey,
+  isCurveValue,
   isExposableWidget,
   isPromptWidget,
   isSeedKey,
@@ -75,6 +76,9 @@ function valueTypeOf(
   options: string[] | null,
   declared: ComfyWidgetCandidate["valueType"] | null
 ): ComfyWidgetCandidate["valueType"] {
+  // Shape wins over the catalog here: a curve cannot be rendered as anything
+  // else, and its value is self-describing even when no engine is reachable.
+  if (isCurveValue(value)) return "curve";
   if (options) return "select";
   if (declared && declared !== "select") return declared;
   if (typeof value === "boolean") return "boolean";
@@ -87,7 +91,7 @@ function widgetCandidate(
   nodeId: string,
   node: ComfyGraphNode,
   inputKey: string,
-  value: string | number | boolean,
+  value: ComfyWidgetCandidate["currentValue"],
   objectInfo: ComfyObjectInfo | undefined,
   fromAppMode: boolean
 ): ComfyWidgetCandidate {
@@ -122,7 +126,9 @@ export function paramFromCandidate(candidate: ComfyWidgetCandidate): ComfyAppPar
           ? "integer"
           : candidate.valueType === "number"
             ? "number"
-            : "string";
+            : candidate.valueType === "curve"
+              ? "curve"
+              : "string";
   return {
     id: bindingId(candidate.nodeId, candidate.inputKey),
     label: candidate.label,
@@ -249,7 +255,7 @@ export function inspectWorkflow(
         nodeId,
         node,
         inputKey,
-        value as string | number | boolean,
+        value as ComfyWidgetCandidate["currentValue"],
         objectInfo,
         appModeLabels.has(key)
       );

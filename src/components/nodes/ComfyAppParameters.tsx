@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ComfyCurveEditor } from "./ComfyCurveEditor";
 import type { ComfyAppParam } from "@/lib/comfy/types";
 
 interface ComfyAppParametersProps {
@@ -10,8 +11,16 @@ interface ComfyAppParametersProps {
   onChange: (values: Record<string, unknown>) => void;
 }
 
-/** `Sampler Steps` from `KSampler · sampler_steps`. */
+/**
+ * `Sampler Steps` from `KSampler · sampler_steps`.
+ *
+ * The node name is noise for an ordinary widget — every setting on a KSampler
+ * would repeat it. For a curve it is the opposite: `Red · Curve` and
+ * `Green · Curve` are told apart by exactly the part being dropped, so those
+ * keep their full label.
+ */
 function shortLabel(param: ComfyAppParam): string {
+  if (param.type === "curve") return param.label;
   const tail = param.label.split("·").pop()?.trim();
   return tail && tail.length > 0 ? tail : param.label;
 }
@@ -51,12 +60,14 @@ function ComfyAppParametersInner({ params, values, onChange }: ComfyAppParameter
     return <span className="text-[9px] text-neutral-500">This workflow exposes no settings</span>;
   }
 
-  const multiline = sorted.filter((p) => p.multiline);
-  const compact = sorted.filter((p) => !p.multiline);
+  // A curve editor and a prompt box both need the full width; everything else
+  // packs into the grid.
+  const wide = sorted.filter((p) => p.multiline || p.type === "curve");
+  const compact = sorted.filter((p) => !p.multiline && p.type !== "curve");
 
   return (
     <div className="shrink-0 space-y-2">
-      {multiline.map((param) => (
+      {wide.map((param) => (
         <ComfyParameterInput
           key={param.id}
           param={param}
@@ -132,6 +143,17 @@ function ComfyParameterInputInner({ param, value, onChange }: ComfyParameterInpu
     },
     [onChange, param.id, param.type]
   );
+
+  if (param.type === "curve") {
+    return (
+      <ComfyCurveEditor
+        label={label}
+        value={value ?? param.default}
+        onChange={(curve) => onChange(param.id, curve)}
+        {...(param.description ? { description: param.description } : {})}
+      />
+    );
+  }
 
   if (param.enum && param.enum.length > 0) {
     return (

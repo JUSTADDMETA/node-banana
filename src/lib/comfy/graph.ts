@@ -6,6 +6,7 @@
  */
 
 import type {
+  ComfyCurve,
   ComfyGraph,
   ComfyGraphNode,
   ComfyInputType,
@@ -279,7 +280,7 @@ export function declaredWidgetType(
   objectInfo: ComfyObjectInfo | undefined,
   node: ComfyGraphNode,
   inputKey: string
-): "text" | "number" | "integer" | "boolean" | "select" | null {
+): "text" | "number" | "integer" | "boolean" | "select" | "curve" | null {
   const spec = specFor(objectInfo, node, inputKey);
   if (!spec) return null;
   const type = spec[0];
@@ -289,6 +290,7 @@ export function declaredWidgetType(
   if (type === "INT") return "integer";
   if (type === "BOOLEAN") return "boolean";
   if (type === "STRING") return "text";
+  if (type === "CURVE") return "curve";
   return null;
 }
 
@@ -301,8 +303,17 @@ export function widgetConstraints(
   const spec = specFor(objectInfo, node, inputKey);
   const opts = (spec?.[1] && typeof spec[1] === "object" ? spec[1] : {}) as Record<string, unknown>;
   const out: { minimum?: number; maximum?: number; multiline?: boolean; description?: string } = {};
-  if (typeof opts.min === "number" && Number.isFinite(opts.min)) out.minimum = opts.min;
-  if (typeof opts.max === "number" && Number.isFinite(opts.max)) out.maximum = opts.max;
+  const bound = (raw: unknown): number | undefined => {
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+    // A generic primitive declares the int64/float extremes, which mean "no
+    // limit" rather than a range. Surfacing them would show the user a bound of
+    // ±9,223,372,036,854,775,807 and make a slider meaningless.
+    return Math.abs(raw) > Number.MAX_SAFE_INTEGER ? undefined : raw;
+  };
+  const minimum = bound(opts.min);
+  const maximum = bound(opts.max);
+  if (minimum !== undefined) out.minimum = minimum;
+  if (maximum !== undefined) out.maximum = maximum;
   if (opts.multiline === true) out.multiline = true;
   if (typeof opts.tooltip === "string" && opts.tooltip.trim()) out.description = opts.tooltip.trim();
   return out;
@@ -375,7 +386,31 @@ export function isExposableWidget(node: ComfyGraphNode, inputKey: string, value:
   if (node.class_type === "CustomCombo" && (inputKey === "index" || /^option\d+$/.test(inputKey))) {
     return false;
   }
+  if (isCurveValue(value)) return true;
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+/**
+ * Whether a widget value is a tone curve.
+ *
+ * Structural, not nominal: the check is on the shape rather than the declaring
+ * class, so a `CURVE` widget on any node — core `CurveEditor` or a pack's own —
+ * is recognised without the catalog being reachable.
+ */
+export function isCurveValue(value: unknown): value is ComfyCurve {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const points = (value as { points?: unknown }).points;
+  return (
+    Array.isArray(points) &&
+    points.length >= 2 &&
+    points.every(
+      (point) =>
+        Array.isArray(point) &&
+        point.length >= 2 &&
+        typeof point[0] === "number" &&
+        typeof point[1] === "number"
+    )
+  );
 }
 
 /* ── patching ──────────────────────────────────────────────────── */

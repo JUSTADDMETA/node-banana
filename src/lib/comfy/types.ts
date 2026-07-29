@@ -73,16 +73,29 @@ export interface ComfyAppInput {
  * An inline widget parameter: rendered in the node's settings panel and
  * patched into the graph at run time.
  */
+/**
+ * A tone curve — the value of ComfyUI's `CURVE` widget.
+ *
+ * Points are normalised to 0–1 in both axes and ordered by x; the first and last
+ * anchor the ends of the range. This is the exact JSON the engine expects back,
+ * so it is stored and sent verbatim rather than reduced to something flatter.
+ */
+export interface ComfyCurve {
+  points: Array<[number, number]>;
+  /** ComfyUI's default is `monotone_cubic`; unknown values are passed through. */
+  interpolation?: string;
+}
+
 export interface ComfyAppParam {
   /** Stable id — `${nodeId}:${inputKey}`. */
   id: string;
   label: string;
   nodeId: string;
   inputKey: string;
-  type: "string" | "number" | "integer" | "boolean";
+  type: "string" | "number" | "integer" | "boolean" | "curve";
   /** Discrete choices when the widget is a combo. */
   enum?: string[];
-  default?: string | number | boolean;
+  default?: string | number | boolean | ComfyCurve;
   minimum?: number;
   maximum?: number;
   description?: string;
@@ -146,8 +159,8 @@ export interface ComfyWidgetCandidate {
   inputKey: string;
   classType: string;
   label: string;
-  valueType: "text" | "number" | "integer" | "boolean" | "select";
-  currentValue: string | number | boolean;
+  valueType: "text" | "number" | "integer" | "boolean" | "select" | "curve";
+  currentValue: string | number | boolean | ComfyCurve;
   options?: string[];
   minimum?: number;
   maximum?: number;

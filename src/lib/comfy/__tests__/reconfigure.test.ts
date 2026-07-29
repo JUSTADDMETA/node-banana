@@ -18,7 +18,7 @@ const candidate = (
   fromAppMode: false,
 });
 
-const param = (id: string, label: string, def?: unknown): ComfyAppParam => ({
+const param = (id: string, label: string, def?: ComfyAppParam["default"]): ComfyAppParam => ({
   id,
   label,
   nodeId: id.split(":")[0]!,
