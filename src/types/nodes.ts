@@ -18,6 +18,9 @@ export type { AnnotationNodeData, BaseNodeData };
 // Import from domain files to avoid circular dependencies
 import type { AspectRatio, Resolution, ModelType } from "./models";
 import type { LLMProvider, LLMModelType, SelectedModel, ProviderType } from "./providers";
+import type { ComfyAppDefinition } from "@/lib/comfy/types";
+
+export type { ComfyAppDefinition };
 
 /**
  * All available node types in the workflow editor
@@ -49,7 +52,8 @@ export type NodeType =
   | "switch"
   | "conditionalSwitch"
   | "generate3d"
-  | "glbViewer";
+  | "glbViewer"
+  | "comfyApp";
 
 /**
  * Node execution status
@@ -648,6 +652,44 @@ export interface GLBViewerNodeData extends BaseNodeData {
 }
 
 /**
+ * Comfy App node — a ComfyUI workflow bound as a node.
+ *
+ * The workflow's App Mode configuration (or, failing that, its detected
+ * loaders and sinks) defines the node's handles: `app.inputs` become typed
+ * target handles, `app.params` become inline settings, and `app.outputs`
+ * become typed source handles.
+ *
+ * The whole `app` is embedded rather than referenced, so a saved Node Banana
+ * workflow stays runnable without the original ComfyUI file — and so sharing a
+ * workflow shares the pipeline with it.
+ */
+export interface ComfyAppNodeData extends BaseNodeData {
+  app: ComfyAppDefinition | null;
+  /** Values for `app.params`, keyed by param id. */
+  paramValues: Record<string, unknown>;
+  /** Derived from `app.inputs` — drives dynamic handles and `dynamicInputs`. */
+  inputSchema?: ModelInputDef[];
+  /** Produced media, keyed by `ComfyAppOutput.id`. */
+  outputs: Record<string, string>;
+  /** External refs for produced media, for storage optimization. */
+  outputRefs?: Record<string, string>;
+  /** Convenience mirrors of the first output of each type, for downstream nodes. */
+  outputImage: string | null;
+  outputVideo: string | null;
+  outputAudio: string | null;
+  outputText: string | null;
+  output3dUrl: string | null;
+  /** Engine job id, kept so a run survives a page refresh mid-render. */
+  jobId?: string | null;
+  /** Engine-reported status while running (e.g. "queued", "in_progress"). */
+  runStatus?: string | null;
+  parametersExpanded?: boolean;
+  _settingsPanelHeight?: number;
+  status: NodeStatus;
+  error: string | null;
+}
+
+/**
  * Union of all node data types
  */
 export type WorkflowNodeData =
@@ -677,7 +719,8 @@ export type WorkflowNodeData =
   | RouterNodeData
   | SwitchNodeData
   | ConditionalSwitchNodeData
-  | GLBViewerNodeData;
+  | GLBViewerNodeData
+  | ComfyAppNodeData;
 
 /**
  * Workflow node with typed data (extended with optional groupId)

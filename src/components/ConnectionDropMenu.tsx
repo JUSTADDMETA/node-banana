@@ -139,6 +139,15 @@ const IMAGE_TARGET_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
+      </svg>
+    ),
+  },
 ];
 
 const TEXT_TARGET_OPTIONS: MenuOption[] = [
@@ -232,6 +241,15 @@ const TEXT_TARGET_OPTIONS: MenuOption[] = [
     icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+      </svg>
+    ),
+  },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
       </svg>
     ),
   },
@@ -335,6 +353,15 @@ const IMAGE_SOURCE_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
+      </svg>
+    ),
+  },
 ];
 
 const TEXT_SOURCE_OPTIONS: MenuOption[] = [
@@ -401,6 +428,15 @@ const TEXT_SOURCE_OPTIONS: MenuOption[] = [
     icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+      </svg>
+    ),
+  },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
       </svg>
     ),
   },
@@ -501,6 +537,15 @@ const VIDEO_TARGET_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
+      </svg>
+    ),
+  },
 ];
 
 // GenerateVideo, VideoStitch, and VideoInput nodes produce video output
@@ -571,6 +616,15 @@ const VIDEO_SOURCE_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
+      </svg>
+    ),
+  },
 ];
 
 // Audio target options (nodes that accept audio input)
@@ -632,6 +686,15 @@ const AUDIO_TARGET_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
+      </svg>
+    ),
+  },
 ];
 
 // Audio source options (nodes that produce audio output)
@@ -675,6 +738,15 @@ const AUDIO_SOURCE_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
+      </svg>
+    ),
+  },
 ];
 
 // 3D target options (nodes that accept 3D input)
@@ -698,6 +770,15 @@ const THREE_D_SOURCE_OPTIONS: MenuOption[] = [
     icon: (
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-2.25-1.313M21 7.5v2.25m0-2.25l-2.25 1.313M3 7.5l2.25-1.313M3 7.5l2.25 1.313M3 7.5v2.25m9 3l2.25-1.313M12 12.75l-2.25-1.313M12 12.75V15m0 6.75l2.25-1.313M12 21.75V19.5m0 2.25l-2.25-1.313m0-16.875L12 2.25l2.25 1.313M21 14.25v2.25l-2.25 1.313m-13.5 0L3 16.5v-2.25" />
+      </svg>
+    ),
+  },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
       </svg>
     ),
   },

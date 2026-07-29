@@ -1,0 +1,853 @@
+"use client";
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { buildComfyApp } from "@/lib/comfy/buildApp";
+import { inputFromCandidate, paramFromCandidate } from "@/lib/comfy/inspect";
+import { buildComfyHeaders, comfyConfigError, getComfySettings } from "@/lib/comfy/settings";
+import type {
+  ComfyAppDefinition,
+  ComfyAppInput,
+  ComfyAppOutput,
+  ComfyGraph,
+  ComfyInputType,
+  ComfyOutputType,
+  ComfyWidgetCandidate,
+  ComfyWorkflowInspection,
+} from "@/lib/comfy/types";
+
+interface ComfyWorkflowImportModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onAttach: (app: ComfyAppDefinition) => void;
+  /** Shown as the "replacing" hint when the node already has a workflow. */
+  existingName?: string;
+}
+
+interface BlueprintListItem {
+  id: string;
+  name: string;
+  nodePack: string;
+  source: string;
+}
+
+type Inspection = ComfyWorkflowInspection & { graph: ComfyGraph };
+
+/** How each detected widget is exposed on the node. */
+type WidgetRole = "off" | "setting" | "input";
+
+const INPUT_TYPE_LABEL: Record<ComfyInputType, string> = {
+  image: "Image",
+  text: "Text",
+  audio: "Audio",
+  video: "Video",
+};
+
+const OUTPUT_TYPE_LABEL: Record<ComfyOutputType, string> = {
+  image: "Image",
+  video: "Video",
+  audio: "Audio",
+  text: "Text",
+  "3d": "3D",
+};
+
+const bindingKey = (nodeId: string, inputKey: string): string => `${nodeId}:${inputKey}`;
+
+/**
+ * Import a ComfyUI workflow and confirm what it exposes.
+ *
+ * Two ways in: a workflow file the user already has (whatever ComfyUI saved —
+ * no special export), or a Blueprint the connected engine already ships. Either
+ * way the second step is the same: confirm the inputs, settings and outputs
+ * that will become the node's handles.
+ */
+export function ComfyWorkflowImportModal({
+  isOpen,
+  onClose,
+  onAttach,
+  existingName,
+}: ComfyWorkflowImportModalProps) {
+  const [tab, setTab] = useState<"file" | "blueprints">("file");
+  const [inspection, setInspection] = useState<Inspection | null>(null);
+  const [source, setSource] = useState<"upload" | "blueprint">("upload");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [missingNodes, setMissingNodes] = useState<string[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+
+  // Confirm-step state
+  const [name, setName] = useState("");
+  const [inputs, setInputs] = useState<ComfyAppInput[]>([]);
+  const [outputs, setOutputs] = useState<ComfyAppOutput[]>([]);
+  const [roles, setRoles] = useState<Record<string, WidgetRole>>({});
+
+  // Blueprint list state
+  const [blueprints, setBlueprints] = useState<BlueprintListItem[] | null>(null);
+  const [blueprintError, setBlueprintError] = useState<string | null>(null);
+  const [blueprintFilter, setBlueprintFilter] = useState("");
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const settings = useMemo(() => (isOpen ? getComfySettings() : null), [isOpen]);
+  const configError = settings ? comfyConfigError(settings) : null;
+
+  const reset = useCallback(() => {
+    setInspection(null);
+    setError(null);
+    setMissingNodes([]);
+    setName("");
+    setInputs([]);
+    setOutputs([]);
+    setRoles({});
+    setBusy(false);
+    setDragOver(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) reset();
+  }, [isOpen, reset]);
+
+  /** Adopt a fresh inspection into the confirm step. */
+  const adopt = useCallback((result: Inspection, from: "upload" | "blueprint") => {
+    setInspection(result);
+    setSource(from);
+    setName(result.suggested.name);
+    setInputs(result.suggested.inputs);
+    setOutputs(result.suggested.outputs);
+
+    const next: Record<string, WidgetRole> = {};
+    for (const candidate of result.widgetCandidates) {
+      const key = bindingKey(candidate.nodeId, candidate.inputKey);
+      if (result.suggested.inputs.some((i) => i.id === key)) next[key] = "input";
+      else if (result.suggested.params.some((p) => p.id === key)) next[key] = "setting";
+      else next[key] = "off";
+    }
+    setRoles(next);
+  }, []);
+
+  const readError = useCallback(async (response: Response, fallback: string): Promise<string> => {
+    try {
+      const body = (await response.json()) as { error?: string; missingNodes?: string[] };
+      setMissingNodes(body.missingNodes ?? []);
+      return body.error ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }, []);
+
+  const inspectFile = useCallback(
+    async (file: File) => {
+      setBusy(true);
+      setError(null);
+      setMissingNodes([]);
+      try {
+        const text = await file.text();
+        let workflow: unknown;
+        try {
+          workflow = JSON.parse(text);
+        } catch {
+          setError("That file is not valid JSON.");
+          return;
+        }
+        const response = await fetch("/api/comfy/inspect", {
+          method: "POST",
+          headers: buildComfyHeaders(getComfySettings()),
+          body: JSON.stringify({ workflow, filename: file.name }),
+        });
+        if (!response.ok) {
+          setError(await readError(response, "Could not read that workflow."));
+          return;
+        }
+        adopt((await response.json()) as Inspection, "upload");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not read that workflow.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [adopt, readError]
+  );
+
+  const loadBlueprints = useCallback(async () => {
+    setBlueprintError(null);
+    setBlueprints(null);
+    try {
+      const response = await fetch("/api/comfy/blueprints", {
+        headers: buildComfyHeaders(getComfySettings()),
+      });
+      if (!response.ok) {
+        const body = (await response.json()) as { error?: string };
+        setBlueprintError(body.error ?? "Could not load Blueprints.");
+        return;
+      }
+      const body = (await response.json()) as { blueprints: BlueprintListItem[] };
+      setBlueprints(body.blueprints);
+    } catch (err) {
+      setBlueprintError(err instanceof Error ? err.message : "Could not load Blueprints.");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isOpen && tab === "blueprints" && blueprints === null && !blueprintError) {
+      void loadBlueprints();
+    }
+  }, [isOpen, tab, blueprints, blueprintError, loadBlueprints]);
+
+  const importBlueprint = useCallback(
+    async (blueprintId: string) => {
+      setBusy(true);
+      setError(null);
+      setMissingNodes([]);
+      try {
+        const response = await fetch("/api/comfy/blueprints", {
+          method: "POST",
+          headers: buildComfyHeaders(getComfySettings()),
+          body: JSON.stringify({ id: blueprintId }),
+        });
+        if (!response.ok) {
+          setError(await readError(response, "Could not load that Blueprint."));
+          return;
+        }
+        adopt((await response.json()) as Inspection, "blueprint");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not load that Blueprint.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [adopt, readError]
+  );
+
+  /** Move a detected widget between "not exposed", "setting" and "input". */
+  const setRole = useCallback(
+    (candidate: ComfyWidgetCandidate, role: WidgetRole) => {
+      const key = bindingKey(candidate.nodeId, candidate.inputKey);
+      setRoles((prev) => ({ ...prev, [key]: role }));
+      setInputs((prev) => {
+        const without = prev.filter((i) => i.id !== key);
+        if (role !== "input" || !candidate.connectableAs) return without;
+        return [...without, inputFromCandidate(candidate, candidate.connectableAs, new Set())];
+      });
+    },
+    []
+  );
+
+  const renameInput = useCallback((inputId: string, label: string) => {
+    setInputs((prev) => prev.map((i) => (i.id === inputId ? { ...i, label } : i)));
+  }, []);
+
+  const renameOutput = useCallback((outputId: string, label: string) => {
+    setOutputs((prev) => prev.map((o) => (o.id === outputId ? { ...o, label } : o)));
+  }, []);
+
+  const toggleOutput = useCallback(
+    (candidateNodeId: string, classType: string, label: string, type: ComfyOutputType) => {
+      setOutputs((prev) =>
+        prev.some((o) => o.nodeId === candidateNodeId)
+          ? prev.filter((o) => o.nodeId !== candidateNodeId)
+          : [...prev, { id: candidateNodeId, label, type, nodeId: candidateNodeId, classType }]
+      );
+    },
+    []
+  );
+
+  const attach = useCallback(() => {
+    if (!inspection) return;
+    const params = inspection.widgetCandidates
+      .filter((c) => roles[bindingKey(c.nodeId, c.inputKey)] === "setting")
+      .map(paramFromCandidate);
+    onAttach(
+      buildComfyApp({
+        name,
+        source: source === "blueprint" ? "blueprint" : "upload",
+        graph: inspection.graph,
+        inputs,
+        params,
+        outputs,
+      })
+    );
+  }, [inspection, roles, name, source, inputs, outputs, onAttach]);
+
+  if (!isOpen) return null;
+
+  const canAttach = Boolean(inspection && name.trim() && outputs.length > 0);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      onWheelCapture={(e) => e.stopPropagation()}
+    >
+      <div
+        className="bg-neutral-800 rounded-xl w-[600px] border border-neutral-700 shadow-2xl overflow-clip flex flex-col max-h-[82vh]"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+      >
+        <div className="px-8 pt-8 pb-0 shrink-0">
+          <div className="flex items-center gap-2 mb-1">
+            <ComfyGlyph />
+            <h2 className="text-xl font-medium text-neutral-100">
+              {inspection ? "Confirm inputs and outputs" : "Add a ComfyUI workflow"}
+            </h2>
+          </div>
+          <p className="text-xs text-neutral-500 mb-5">
+            {inspection
+              ? "These become the node's handles and settings."
+              : existingName
+                ? `Replacing "${existingName}".`
+                : "Use any workflow saved from ComfyUI — no special export needed."}
+          </p>
+
+          {!inspection && (
+            <div className="flex gap-1.5 p-1 bg-neutral-900/50 rounded-lg">
+              <TabButton active={tab === "file"} onClick={() => setTab("file")}>
+                Workflow file
+              </TabButton>
+              <TabButton active={tab === "blueprints"} onClick={() => setTab("blueprints")}>
+                Blueprints
+              </TabButton>
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-8 py-5">
+          {configError && !inspection && (
+            <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+              <p className="text-xs text-amber-300">{configError}</p>
+            </div>
+          )}
+
+          {error && (
+            <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+              <p className="text-xs text-red-300 whitespace-pre-wrap">{error}</p>
+              {missingNodes.length > 0 && (
+                <p className="text-[10px] text-red-400/70 mt-2 font-mono break-words">
+                  {missingNodes.join(", ")}
+                </p>
+              )}
+            </div>
+          )}
+
+          {!inspection && tab === "file" && (
+            <FileDropZone
+              busy={busy}
+              dragOver={dragOver}
+              onDragOver={setDragOver}
+              onPick={() => fileInputRef.current?.click()}
+              onFile={inspectFile}
+            />
+          )}
+
+          {!inspection && tab === "blueprints" && (
+            <BlueprintPicker
+              blueprints={blueprints}
+              error={blueprintError}
+              filter={blueprintFilter}
+              onFilter={setBlueprintFilter}
+              onRetry={loadBlueprints}
+              onPick={importBlueprint}
+              busy={busy}
+            />
+          )}
+
+          {inspection && (
+            <ConfirmStep
+              inspection={inspection}
+              name={name}
+              onName={setName}
+              inputs={inputs}
+              outputs={outputs}
+              roles={roles}
+              onRole={setRole}
+              onRenameInput={renameInput}
+              onRenameOutput={renameOutput}
+              onToggleOutput={toggleOutput}
+            />
+          )}
+        </div>
+
+        <div className="flex justify-between gap-2 px-8 py-4 border-t border-neutral-700/60 shrink-0">
+          <button
+            type="button"
+            onClick={inspection ? reset : onClose}
+            className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+          >
+            {inspection ? "Back" : "Cancel"}
+          </button>
+          {inspection && (
+            <button
+              type="button"
+              onClick={attach}
+              disabled={!canAttach}
+              className="px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Add to node
+            </button>
+          )}
+        </div>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void inspectFile(file);
+          e.target.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-1.5 text-sm rounded-md transition-all duration-150 ${
+        active
+          ? "bg-neutral-700 text-neutral-100 font-medium"
+          : "text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800/50"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FileDropZone({
+  busy,
+  dragOver,
+  onDragOver,
+  onPick,
+  onFile,
+}: {
+  busy: boolean;
+  dragOver: boolean;
+  onDragOver: (over: boolean) => void;
+  onPick: () => void;
+  onFile: (file: File) => void;
+}) {
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        onDragOver(true);
+      }}
+      onDragLeave={() => onDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDragOver(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file) onFile(file);
+      }}
+      onClick={onPick}
+      className={`flex flex-col items-center justify-center gap-3 py-12 rounded-xl border border-dashed cursor-pointer transition-colors ${
+        dragOver
+          ? "border-blue-500 bg-blue-500/5"
+          : "border-neutral-600 hover:border-neutral-500 bg-neutral-900/40"
+      }`}
+    >
+      {busy ? (
+        <>
+          <div className="w-5 h-5 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
+          <span className="text-xs text-neutral-400">Reading workflow…</span>
+        </>
+      ) : (
+        <>
+          <svg
+            className="w-8 h-8 text-neutral-500"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <path d="m7 10 5-5 5 5" />
+            <path d="M12 5v12" />
+          </svg>
+          <div className="text-center">
+            <p className="text-sm text-neutral-300">Drop a workflow JSON here</p>
+            <p className="text-[11px] text-neutral-500 mt-0.5">
+              Saved or API-format exports both work
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function BlueprintPicker({
+  blueprints,
+  error,
+  filter,
+  onFilter,
+  onRetry,
+  onPick,
+  busy,
+}: {
+  blueprints: BlueprintListItem[] | null;
+  error: string | null;
+  filter: string;
+  onFilter: (value: string) => void;
+  onRetry: () => void;
+  onPick: (id: string) => void;
+  busy: boolean;
+}) {
+  if (error) {
+    return (
+      <div className="py-8 text-center">
+        <p className="text-xs text-neutral-400 mb-3">{error}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="px-3 py-1.5 text-xs rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-100 transition-colors"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  if (blueprints === null) {
+    return (
+      <div className="py-12 flex flex-col items-center gap-2">
+        <div className="w-5 h-5 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
+        <span className="text-xs text-neutral-500">Loading Blueprints…</span>
+      </div>
+    );
+  }
+
+  const term = filter.trim().toLowerCase();
+  const visible = term
+    ? blueprints.filter((b) => b.name.toLowerCase().includes(term))
+    : blueprints;
+
+  return (
+    <div className="space-y-3">
+      <input
+        type="text"
+        value={filter}
+        onChange={(e) => onFilter(e.target.value)}
+        placeholder="Search Blueprints…"
+        className="w-full px-3 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-neutral-100 text-sm focus:outline-none focus:border-neutral-500"
+      />
+      {visible.length === 0 ? (
+        <p className="text-xs text-neutral-500 py-8 text-center">
+          {blueprints.length === 0
+            ? "This ComfyUI has no Blueprints installed."
+            : "No Blueprints match that search."}
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {visible.map((blueprint) => (
+            <button
+              key={blueprint.id}
+              type="button"
+              disabled={busy}
+              onClick={() => onPick(blueprint.id)}
+              className="w-full text-left p-3 bg-neutral-900 rounded-lg border border-neutral-700 hover:border-neutral-500 disabled:opacity-50 transition-colors"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-neutral-100 truncate">{blueprint.name}</span>
+                <span className="text-[10px] text-neutral-500 shrink-0">{blueprint.nodePack}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConfirmStep({
+  inspection,
+  name,
+  onName,
+  inputs,
+  outputs,
+  roles,
+  onRole,
+  onRenameInput,
+  onRenameOutput,
+  onToggleOutput,
+}: {
+  inspection: Inspection;
+  name: string;
+  onName: (value: string) => void;
+  inputs: ComfyAppInput[];
+  outputs: ComfyAppOutput[];
+  roles: Record<string, WidgetRole>;
+  onRole: (candidate: ComfyWidgetCandidate, role: WidgetRole) => void;
+  onRenameInput: (id: string, label: string) => void;
+  onRenameOutput: (id: string, label: string) => void;
+  onToggleOutput: (
+    nodeId: string,
+    classType: string,
+    label: string,
+    type: ComfyOutputType
+  ) => void;
+}) {
+  // Widgets the author curated float to the top: those are the ones the app is
+  // actually meant to expose, and the rest is a long tail of internals.
+  const candidates = useMemo(
+    () =>
+      [...inspection.widgetCandidates].sort(
+        (a, b) => Number(b.fromAppMode) - Number(a.fromAppMode)
+      ),
+    [inspection.widgetCandidates]
+  );
+
+  const mediaInputs = inputs.filter((i) => i.type !== "text");
+
+  return (
+    <div className="space-y-5">
+      {inspection.hasAppMode && (
+        <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/25">
+          <p className="text-xs text-emerald-300">
+            App Mode detected — the author&apos;s inputs and outputs are pre-selected.
+          </p>
+        </div>
+      )}
+
+      {inspection.warnings.map((warning) => (
+        <div key={warning} className="p-3 rounded-lg bg-neutral-900 border border-neutral-700">
+          <p className="text-xs text-neutral-400">{warning}</p>
+        </div>
+      ))}
+
+      <div>
+        <label className="block text-sm text-neutral-400 mb-1">Node name</label>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => onName(e.target.value)}
+          className="w-full px-3 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-neutral-100 text-sm focus:outline-none focus:border-neutral-500"
+        />
+        <p className="text-[10px] text-neutral-600 mt-1">
+          {inspection.nodeCount} nodes · {inspection.classTypes.length} node types
+        </p>
+      </div>
+
+      <Section
+        title="Inputs"
+        hint="Connected from other nodes."
+        empty="Nothing in this workflow accepts an incoming connection."
+        isEmpty={mediaInputs.length === 0 && inputs.length === 0}
+      >
+        {inputs.map((input) => (
+          <div key={input.id} className="flex items-center gap-2">
+            <TypePill color={handleColor(input.type)}>{INPUT_TYPE_LABEL[input.type]}</TypePill>
+            <input
+              type="text"
+              value={input.label}
+              onChange={(e) => onRenameInput(input.id, e.target.value)}
+              className="flex-1 min-w-0 px-2 py-1 bg-neutral-800 border border-neutral-600 rounded-lg text-neutral-100 text-xs focus:outline-none focus:border-neutral-500"
+            />
+            <span className="text-[10px] text-neutral-600 shrink-0 font-mono">
+              #{input.nodeId}
+            </span>
+          </div>
+        ))}
+      </Section>
+
+      <Section
+        title="Settings"
+        hint="Adjustable on the node itself."
+        empty="This workflow has no adjustable widgets."
+        isEmpty={candidates.length === 0}
+      >
+        <div className="space-y-1">
+          {candidates.map((candidate) => {
+            const key = bindingKey(candidate.nodeId, candidate.inputKey);
+            const role = roles[key] ?? "off";
+            return (
+              <div
+                key={key}
+                className="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-neutral-900/60"
+              >
+                <span
+                  className="flex-1 min-w-0 text-xs text-neutral-300 truncate"
+                  title={`${candidate.label} — currently ${String(candidate.currentValue)}`}
+                >
+                  {candidate.label}
+                  {candidate.fromAppMode && <span className="text-emerald-400/70 ml-1">•</span>}
+                </span>
+                <RoleToggle
+                  role={role}
+                  connectable={candidate.connectableAs !== null}
+                  onChange={(next) => onRole(candidate, next)}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section
+        title="Outputs"
+        hint="Produced results, connected onward."
+        empty="This workflow has no Save or Preview node."
+        isEmpty={inspection.outputCandidates.length === 0}
+      >
+        {inspection.outputCandidates.map((candidate) => {
+          const bound = outputs.find((o) => o.nodeId === candidate.nodeId);
+          const type = outputTypeOf(inspection, candidate.nodeId);
+          return (
+            <div key={candidate.nodeId} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(bound)}
+                onChange={() =>
+                  onToggleOutput(candidate.nodeId, candidate.classType, candidate.label, type)
+                }
+                className="w-3.5 h-3.5 rounded bg-neutral-800 shrink-0"
+              />
+              <TypePill color={handleColor(type)}>{OUTPUT_TYPE_LABEL[type]}</TypePill>
+              <input
+                type="text"
+                value={bound?.label ?? candidate.label}
+                disabled={!bound}
+                onChange={(e) => onRenameOutput(candidate.nodeId, e.target.value)}
+                className="flex-1 min-w-0 px-2 py-1 bg-neutral-800 border border-neutral-600 rounded-lg text-neutral-100 text-xs focus:outline-none focus:border-neutral-500 disabled:opacity-40"
+              />
+              <span className="text-[10px] text-neutral-600 shrink-0 font-mono">
+                #{candidate.nodeId}
+              </span>
+            </div>
+          );
+        })}
+      </Section>
+    </div>
+  );
+}
+
+function Section({
+  title,
+  hint,
+  empty,
+  isEmpty,
+  children,
+}: {
+  title: string;
+  hint: string;
+  empty: string;
+  isEmpty: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline gap-2 mb-2">
+        <h3 className="text-sm text-neutral-200 font-medium">{title}</h3>
+        <span className="text-[10px] text-neutral-600">{hint}</span>
+      </div>
+      {isEmpty ? (
+        <p className="text-xs text-neutral-600 py-2">{empty}</p>
+      ) : (
+        <div className="space-y-1.5">{children}</div>
+      )}
+    </div>
+  );
+}
+
+function RoleToggle({
+  role,
+  connectable,
+  onChange,
+}: {
+  role: WidgetRole;
+  connectable: boolean;
+  onChange: (role: WidgetRole) => void;
+}) {
+  const options: Array<{ value: WidgetRole; label: string; title: string }> = [
+    { value: "off", label: "Hide", title: "Keep the workflow's saved value" },
+    { value: "setting", label: "Setting", title: "Adjustable on the node" },
+    ...(connectable
+      ? [
+          {
+            value: "input" as const,
+            label: "Input",
+            title: "A text handle other nodes can connect to",
+          },
+        ]
+      : []),
+  ];
+  return (
+    <div className="flex gap-0.5 p-0.5 bg-neutral-900 rounded-md shrink-0">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          title={option.title}
+          onClick={() => onChange(option.value)}
+          className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+            role === option.value
+              ? "bg-neutral-700 text-neutral-100"
+              : "text-neutral-500 hover:text-neutral-300"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TypePill({ color, children }: { color: string; children: React.ReactNode }) {
+  return (
+    <span
+      className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide"
+      style={{ color, backgroundColor: `color-mix(in oklab, ${color} 15%, transparent)` }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function handleColor(type: string): string {
+  if (type === "text") return "var(--handle-color-text)";
+  if (type === "audio") return "var(--handle-color-audio)";
+  if (type === "video") return "var(--handle-color-video)";
+  if (type === "3d") return "var(--handle-color-3d)";
+  return "var(--handle-color-image)";
+}
+
+/** The handle type inspection assigned to a sink node. */
+function outputTypeOf(inspection: Inspection, nodeId: string): ComfyOutputType {
+  const suggested = inspection.suggested.outputs.find((o) => o.nodeId === nodeId);
+  return suggested?.type ?? "image";
+}
+
+function ComfyGlyph() {
+  return (
+    <svg
+      className="w-5 h-5 text-neutral-300"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      <path d="M10 6.5h2.5a1.5 1.5 0 0 1 1.5 1.5v9.5" />
+    </svg>
+  );
+}

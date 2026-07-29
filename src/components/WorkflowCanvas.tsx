@@ -50,6 +50,7 @@ import {
   RouterNode,
   SwitchNode,
   ConditionalSwitchNode,
+  ComfyAppNode,
 } from "./nodes";
 
 // Lazy-load GLBViewerNode to avoid bundling three.js for users who don't use 3D nodes
@@ -118,6 +119,7 @@ const rawNodeTypes: NodeTypes = {
   switch: SwitchNode,
   conditionalSwitch: ConditionalSwitchNode,
   glbViewer: GLBViewerNode,
+  comfyApp: ComfyAppNode,
 };
 
 // Wrap every node component in a per-node error boundary so a single
@@ -198,6 +200,7 @@ function getMiniMapNodeColor(node: Node): string {
     case "switch": return "#8b5cf6";
     case "conditionalSwitch": return "#06b6d4";
     case "glbViewer": return "#0ea5e9";
+    case "comfyApp": return "#7dd3fc";
     default: return "#94a3b8";
   }
 }
@@ -225,6 +228,24 @@ const getHandleType = (handleId: string | null | undefined): "image" | "text" | 
   if (handleId.startsWith("image-") || handleId.includes("image") || handleId.includes("frame")) return "image";
   if (handleId.startsWith("text-") || handleId === "prompt" || handleId === "negative_prompt" || handleId.includes("prompt")) return "text";
   return null;
+};
+
+/**
+ * The type of a Comfy app node's *output* handle.
+ *
+ * Their ids are the ComfyUI graph node ids the outputs came from, so unlike
+ * every other node's handles they carry no type in the name. The attached
+ * app contract is the only place that mapping exists.
+ */
+const getComfyOutputHandleType = (
+  node: Node | undefined,
+  handleId: string | null | undefined,
+): "image" | "text" | "video" | "audio" | "3d" | null => {
+  if (node?.type !== "comfyApp" || !handleId) return null;
+  const app = (node.data as { app?: { outputs?: Array<{ id: string; type: string }> } }).app;
+  const output = app?.outputs?.find((o) => o.id === handleId);
+  if (!output) return null;
+  return output.type as "image" | "text" | "video" | "audio" | "3d";
 };
 
 // Define which handles each node type has
@@ -286,6 +307,11 @@ const getNodeHandles = (nodeType: string): { inputs: string[]; outputs: string[]
       return { inputs: ["text"], outputs: [] }; // Outputs handled dynamically in ConditionalSwitchNode
     case "glbViewer":
       return { inputs: ["3d"], outputs: ["image"] };
+    case "comfyApp":
+      // Handles come from the attached ComfyUI workflow's contract, so the
+      // static list is the superset every app could expose. The real per-node
+      // set is read from `inputSchema` / `app.outputs` at connection time.
+      return { inputs: ["image", "text", "video", "audio"], outputs: ["image", "text", "video", "audio", "3d"] };
     default:
       return { inputs: [], outputs: [] };
   }
@@ -517,6 +543,7 @@ export function WorkflowCanvas() {
     switch: 'Switch',
     conditionalSwitch: 'Conditional Switch',
     glbViewer: '3D Viewer',
+    comfyApp: 'ComfyUI App',
   };
 
   // Helper to get node title (used for FloatingNodeHeader)
@@ -610,12 +637,17 @@ export function WorkflowCanvas() {
   // Defined inside component to have access to nodes array for video validation
   const isValidConnection = useCallback(
     (connection: Connection | Edge): boolean => {
-      const sourceType = getHandleType(connection.sourceHandle);
-      const targetType = getHandleType(connection.targetHandle);
-
       // Switch input: accept any type (generic-input handle)
       const targetNode = nodes.find((n) => n.id === connection.target);
       const sourceNode = nodes.find((n) => n.id === connection.source);
+
+      // A Comfy app's output handles are named after graph nodes ("9"), which
+      // no naming convention can decode — read their type from the attached
+      // workflow's contract instead.
+      const sourceType =
+        getComfyOutputHandleType(sourceNode, connection.sourceHandle) ??
+        getHandleType(connection.sourceHandle);
+      const targetType = getHandleType(connection.targetHandle);
       if (targetNode?.type === "switch" && connection.targetHandle === "generic-input") return true;
 
       // Switch output: the type is determined by inputType stored in node data
@@ -658,7 +690,7 @@ export function WorkflowCanvas() {
         if (!targetNode) return false;
 
         const targetNodeType = targetNode.type;
-        if (targetNodeType === "generateVideo" || targetNodeType === "videoStitch" || targetNodeType === "easeCurve" || targetNodeType === "videoTrim" || targetNodeType === "videoFrameGrab" || targetNodeType === "videoInput" || targetNodeType === "output" || targetNodeType === "outputGallery" || targetNodeType === "router") {
+        if (targetNodeType === "generateVideo" || targetNodeType === "videoStitch" || targetNodeType === "easeCurve" || targetNodeType === "videoTrim" || targetNodeType === "videoFrameGrab" || targetNodeType === "videoInput" || targetNodeType === "output" || targetNodeType === "outputGallery" || targetNodeType === "router" || targetNodeType === "comfyApp") {
           // For output node, we allow video even though its handle is typed as "image"
           // because output node can display both images and videos
           return true;
@@ -681,6 +713,9 @@ export function WorkflowCanvas() {
         if (sourceType === "audio") {
           const targetNode = nodes.find((n) => n.id === connection.target);
           if (targetNode?.type === "output" || targetNode?.type === "router") return true;
+        }
+        if (sourceNode?.type === "comfyApp" || targetNode?.type === "comfyApp") {
+          return sourceType === "audio" && targetType === "audio";
         }
         return sourceType === "audio" && targetType === "audio";
       }

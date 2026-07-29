@@ -22,6 +22,7 @@ const RUNNABLE_TYPES = new Set([
   'generateAudio',
   'llmGenerate',
   'removeBackground',
+  'comfyApp',
 ]);
 const EXPANDABLE_TYPES = new Set(['prompt', 'promptConstructor', 'splitGrid', 'annotation']);
 
