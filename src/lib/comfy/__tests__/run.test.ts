@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { buildRunGraph, hashSeed, resolveOutputs } from "../server/run";
+import { buildRunGraph, hashSeed, newRunTag, resolveOutputs } from "../server/run";
 import type { ComfyAppDefinition } from "../types";
 
 const app = (overrides: Partial<ComfyAppDefinition> = {}): ComfyAppDefinition => ({
@@ -51,6 +51,14 @@ const app = (overrides: Partial<ComfyAppDefinition> = {}): ComfyAppDefinition =>
   ...overrides,
 });
 
+describe("newRunTag", () => {
+  it("is unique and safe to append to a filename prefix", () => {
+    const tags = new Set(Array.from({ length: 100 }, () => newRunTag()));
+    expect(tags.size).toBe(100);
+    for (const tag of tags) expect(tag).toMatch(/^[0-9a-f]{10}$/);
+  });
+});
+
 describe("hashSeed", () => {
   it("is deterministic and stays inside the safe integer range", () => {
     expect(hashSeed("run-1")).toBe(hashSeed("run-1"));
@@ -71,6 +79,36 @@ describe("buildRunGraph", () => {
     expect(graph["16"]?.inputs.image).toBe("uploaded-123.png");
     expect(graph["24"]?.inputs.text).toBe("a running fox");
     expect(graph["31"]?.inputs.steps).toBe(35);
+  });
+
+  it("passes the run tag down to the bound sink", () => {
+    // A converted graph always carries the saver's required `filename_prefix`.
+    const saving = () => {
+      const definition = app();
+      definition.graph["9"] = {
+        class_type: "SaveImage",
+        inputs: { images: ["31", 0], filename_prefix: "art" },
+      };
+      return definition;
+    };
+    // Two runs of an otherwise identical graph must differ at the sink, or the
+    // engine executes nothing the second time and returns no outputs at all.
+    const first = buildRunGraph({
+      app: saving(),
+      text: {},
+      uploads: {},
+      params: {},
+      runTag: "aaa111",
+    });
+    const second = buildRunGraph({
+      app: saving(),
+      text: {},
+      uploads: {},
+      params: {},
+      runTag: "bbb222",
+    });
+    expect(first["9"]?.inputs.filename_prefix).not.toEqual(second["9"]?.inputs.filename_prefix);
+    expect(first["31"]).toEqual(second["31"]);
   });
 
   it("keeps the author's saved values for inputs left unconnected", () => {

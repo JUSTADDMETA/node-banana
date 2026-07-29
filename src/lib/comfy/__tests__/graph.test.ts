@@ -260,6 +260,63 @@ describe("patchGraph", () => {
     expect(patched["1"]?.inputs.filename_prefix).toBe("node-banana");
   });
 
+  it("gives each run its own output filename so a repeat run is not served from cache", () => {
+    const graph: ComfyGraph = {
+      "1": { class_type: "SaveImage", inputs: { images: ["2", 0], filename_prefix: "art" } },
+      "2": { class_type: "UpscaleImage", inputs: { image: ["3", 0] } },
+    };
+    const first = patchGraph(graph, {
+      media: [],
+      assignments: [],
+      outputNodeIds: ["1"],
+      runTag: "aaa111",
+    });
+    const second = patchGraph(graph, {
+      media: [],
+      assignments: [],
+      outputNodeIds: ["1"],
+      runTag: "bbb222",
+    });
+    expect(first["1"]?.inputs.filename_prefix).toBe("art_aaa111");
+    expect(second["1"]?.inputs.filename_prefix).toBe("art_bbb222");
+    // Only the sink varies — upstream must stay byte-identical so the engine
+    // can still serve the expensive work from its cache.
+    expect(first["2"]).toEqual(second["2"]);
+  });
+
+  it("tags a rewritten preview sink too", () => {
+    const graph: ComfyGraph = {
+      "1": { class_type: "PreviewImage", inputs: { images: ["2", 0] } },
+    };
+    const patched = patchGraph(graph, {
+      media: [],
+      assignments: [],
+      outputNodeIds: ["1"],
+      runTag: "ccc333",
+    });
+    expect(patched["1"]?.class_type).toBe("SaveImage");
+    expect(patched["1"]?.inputs.filename_prefix).toBe("node-banana_ccc333");
+  });
+
+  it("leaves filenames alone without a run tag, and never invents one", () => {
+    const graph: ComfyGraph = {
+      "1": { class_type: "SaveImage", inputs: { images: ["2", 0], filename_prefix: "art" } },
+      "2": { class_type: "ShowText", inputs: { text: ["3", 0] } },
+    };
+    const untagged = patchGraph(graph, { media: [], assignments: [], outputNodeIds: ["1"] });
+    expect(untagged["1"]?.inputs.filename_prefix).toBe("art");
+
+    // A sink with no filename to vary must not gain one — an input the class
+    // does not declare would fail validation on the engine.
+    const tagged = patchGraph(graph, {
+      media: [],
+      assignments: [],
+      outputNodeIds: ["1", "2"],
+      runTag: "ddd444",
+    });
+    expect(tagged["2"]?.inputs).not.toHaveProperty("filename_prefix");
+  });
+
   it("re-derives a CustomCombo's index from the chosen label", () => {
     const graph: ComfyGraph = {
       "1": {

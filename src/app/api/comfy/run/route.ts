@@ -13,6 +13,7 @@ import { engineFromRequest } from "@/lib/comfy/server";
 import {
   buildRunGraph,
   hashSeed,
+  newRunTag,
   uploadInputs,
   type ResolvedInputMedia,
 } from "@/lib/comfy/server/run";
@@ -115,6 +116,9 @@ export async function POST(request: NextRequest) {
       ...(body.randomizeSeeds === false
         ? {}
         : { seed: hashSeed(body.seedKey ?? crypto.randomUUID()) }),
+      // Always, regardless of `randomizeSeeds`: this is what makes a repeat run
+      // produce a result at all, not what makes it produce a *different* one.
+      runTag: newRunTag(),
     });
 
     const jobId = await engine.submit(graph, {

@@ -28,6 +28,16 @@ export function hashSeed(key: string): number {
   return Math.abs(h) % MAX_SEED;
 }
 
+/**
+ * A short, filename-safe token unique to one run.
+ *
+ * Kept free of `-` and `/` so appending it to a `filename_prefix` can neither
+ * create a directory nor confuse ComfyUI's own `_00001_` counter suffix.
+ */
+export function newRunTag(): string {
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+}
+
 /** One connected input, already resolved to bytes by the caller. */
 export interface ResolvedInputMedia {
   /** `ComfyAppInput.name` this satisfies. */
@@ -47,6 +57,11 @@ export interface BuildRunGraphOptions {
   params: Record<string, unknown>;
   /** When set, every unpinned seed widget is replaced with this value. */
   seed?: number;
+  /**
+   * Token making this run's output filenames unique, so the engine's node cache
+   * cannot swallow a repeat run. See {@link import("../graph").PatchGraphParams.runTag}.
+   */
+  runTag?: string;
 }
 
 /**
@@ -106,6 +121,7 @@ export function buildRunGraph(options: BuildRunGraphOptions): ComfyGraph {
     assignments,
     outputNodeIds,
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...(options.runTag ? { runTag: options.runTag } : {}),
     pinnedSeeds,
   });
 }
@@ -189,7 +205,7 @@ export async function collectRun(
   const outputs = resolveOutputs(app, assets);
   if (outputs.length === 0) {
     throw new ComfyEngineError(
-      `${engine.label} finished the run but produced no output. Check that the workflow's output node is connected and not muted.`
+      `${engine.label} finished the run but produced no output. Check that the workflow's output node is connected and not muted. A preview-only output (text or 3D) can also come back empty on a repeat run, because it names no file to vary and the engine serves it from its cache.`
     );
   }
   return outputs;

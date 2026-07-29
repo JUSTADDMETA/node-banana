@@ -391,6 +391,21 @@ export interface PatchGraphParams {
   /** Output nodes to keep — preview sinks among them are rewritten to savers. */
   outputNodeIds: string[];
   /**
+   * A token unique to this run, appended to each bound sink's `filename_prefix`.
+   *
+   * ComfyUI caches every node's result by the signature of its inputs, so
+   * submitting a graph the engine has already executed re-runs nothing — and a
+   * job that executes nothing emits no outputs at all, which is
+   * indistinguishable from a workflow whose sink is broken. Re-running an
+   * unchanged app node, or running two nodes that resolve to the same graph,
+   * therefore fails on the *second* attempt and every one after it.
+   *
+   * Giving the sink a filename it has never written makes exactly that one node
+   * miss the cache. Everything upstream still hits it, so the result is
+   * produced without paying to regenerate it.
+   */
+  runTag?: string;
+  /**
    * Seed applied to every seed-shaped numeric input the user did not pin.
    * Omit to leave the graph's own seeds untouched.
    */
@@ -451,9 +466,16 @@ export function patchGraph(graph: ComfyGraph, params: PatchGraphParams): ComfyGr
     const node = patched[nodeId];
     if (!node) continue;
     const replacement = PREVIEW_TO_SAVE[node.class_type];
-    if (!replacement) continue;
-    node.class_type = replacement;
-    node.inputs = { images: node.inputs.images, filename_prefix: "node-banana" };
+    if (replacement) {
+      node.class_type = replacement;
+      node.inputs = { images: node.inputs.images, filename_prefix: "node-banana" };
+    }
+    // Sinks that name their own file get a fresh one per run — see `runTag`.
+    // A sink with no `filename_prefix` (a text or 3D preview) has nothing safe
+    // to vary, so it keeps whatever the author saved.
+    if (params.runTag && typeof node.inputs.filename_prefix === "string") {
+      node.inputs.filename_prefix = `${node.inputs.filename_prefix}_${params.runTag}`;
+    }
   }
 
   for (const node of Object.values(patched)) {
