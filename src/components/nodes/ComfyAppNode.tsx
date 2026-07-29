@@ -7,12 +7,22 @@ import { BaseNode } from "./BaseNode";
 import { ComfyAppParameters } from "./ComfyAppParameters";
 import { HandleLabel } from "./HandleLabel";
 import { InlineParameterPanel } from "./InlineParameterPanel";
-import { ComfyWorkflowImportModal } from "@/components/modals/ComfyWorkflowImportModal";
+import {
+  ComfyWorkflowImportModal,
+  type ComfyReconfigureTarget,
+} from "@/components/modals/ComfyWorkflowImportModal";
 import { useShowHandleLabels } from "@/hooks/useShowHandleLabels";
 import { useWorkflowStore } from "@/store/workflowStore";
+import { outputsToNodeData } from "@/store/execution/comfyAppExecutor";
 import { appToInputSchema } from "@/lib/comfy/nodeSchema";
+import { mergeParamValues } from "@/lib/comfy/reconfigure";
 import { getComfySettings } from "@/lib/comfy/settings";
-import type { ComfyAppDefinition, ComfyInputType, ComfyOutputType } from "@/lib/comfy/types";
+import type {
+  ComfyAppDefinition,
+  ComfyInputType,
+  ComfyOutputType,
+  ComfyWorkflowInspection,
+} from "@/lib/comfy/types";
 import type { ComfyAppNodeData } from "@/types";
 import { downloadMedia } from "@/utils/downloadMedia";
 
@@ -40,13 +50,14 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   const nodeData = data;
   const updateNodeData = useWorkflowStore((state) => state.updateNodeData);
   const showLabels = useShowHandleLabels(selected);
-  const [importOpen, setImportOpen] = useState(false);
+  /** `replace` picks a different workflow; `edit` revisits this one's picks. */
+  const [modal, setModal] = useState<"replace" | "edit" | null>(null);
 
   // Created from the connection menu, which had nowhere to attach its wire —
   // go straight to choosing a workflow so the node becomes usable.
   useEffect(() => {
     if (!nodeData._autoOpenImport) return;
-    setImportOpen(true);
+    setModal("replace");
     updateNodeData(id, { _autoOpenImport: false });
   }, [nodeData._autoOpenImport, id, updateNodeData]);
 
@@ -79,11 +90,14 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
 
   const outputHandles = useMemo(() => app?.outputs ?? [], [app]);
 
-  const handleAttach = useCallback(
+  /**
+   * Drop edges bound to handles the incoming contract does not declare.
+   *
+   * They would otherwise hang off the node with nowhere to attach — invisible,
+   * unselectable, yet still counted as a dependency when the graph runs.
+   */
+  const pruneStaleEdges = useCallback(
     (attached: ComfyAppDefinition) => {
-      // A different workflow means different handles. Any edge still pointing
-      // at one this contract does not declare would otherwise hang off the
-      // node with nowhere to attach, and would silently feed nothing.
       const inputHandleIds = new Set(
         (() => {
           const counters: Record<string, number> = {};
@@ -102,9 +116,16 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
           removeEdge(edge.id);
         }
       }
+    },
+    [edges, id, removeEdge]
+  );
 
+  const handleAttach = useCallback(
+    (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection) => {
+      pruneStaleEdges(attached);
       updateNodeData(id, {
         app: attached,
+        inspection,
         inputSchema: appToInputSchema(attached),
         // A new contract invalidates the previous run entirely — old parameter
         // ids point at nodes the new graph may not even have.
@@ -124,15 +145,56 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
         runStatus: null,
         jobId: null,
       });
-      setImportOpen(false);
+      setModal(null);
     },
-    [id, updateNodeData, edges, removeEdge]
+    [id, updateNodeData, pruneStaleEdges]
+  );
+
+  /**
+   * The same workflow, exposing a different selection of it.
+   *
+   * Unlike attaching, this keeps the run: the graph has not changed, so the
+   * last result is still that graph's result, and a value the user dialled in
+   * on a setting they kept must survive being shown the list again.
+   */
+  const handleReconfigure = useCallback(
+    (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection) => {
+      pruneStaleEdges(attached);
+      const paramValues = mergeParamValues(attached.params, nodeData.paramValues ?? {});
+      // Results are keyed by output handle id, so a dropped output's value has
+      // to go — and the typed mirrors re-derived from what is left, exactly as
+      // a run would compute them.
+      const surviving = attached.outputs
+        .map((output) => ({
+          handleId: output.id,
+          type: output.type,
+          value: nodeData.outputs?.[output.id] ?? "",
+        }))
+        .filter((output) => output.value !== "");
+
+      updateNodeData(id, {
+        app: attached,
+        inspection,
+        inputSchema: appToInputSchema(attached),
+        paramValues,
+        ...outputsToNodeData(attached.outputs, surviving),
+      });
+      setModal(null);
+    },
+    [id, updateNodeData, pruneStaleEdges, nodeData.paramValues, nodeData.outputs]
   );
 
   const handleParamsChange = useCallback(
     (values: Record<string, unknown>) => updateNodeData(id, { paramValues: values }),
     [id, updateNodeData]
   );
+
+  // Identity-stable, because the dialog re-reads the workflow whenever this
+  // changes — a fresh object every render would re-fetch on every render.
+  const reconfigureTarget = useMemo<ComfyReconfigureTarget | null>(() => {
+    if (modal !== "edit" || !app) return null;
+    return nodeData.inspection ? { app, inspection: nodeData.inspection } : { app };
+  }, [modal, app, nodeData.inspection]);
 
   const primaryPreview = useMemo(() => {
     if (!app) return null;
@@ -225,12 +287,13 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
 
         <div className="relative w-full h-full min-h-0 flex flex-col overflow-hidden">
           {!app ? (
-            <EmptyState onImport={() => setImportOpen(true)} />
+            <EmptyState onImport={() => setModal("replace")} />
           ) : (
             <>
               <ComfyAppHeader
                 app={app}
-                onReplace={() => setImportOpen(true)}
+                onEdit={() => setModal("edit")}
+                onReplace={() => setModal("replace")}
                 runStatus={isRunning ? nodeData.runStatus ?? "running" : null}
               />
               <div className="flex-1 min-h-0 rounded-md overflow-hidden bg-neutral-900/60 flex items-center justify-center">
@@ -246,10 +309,11 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
       </BaseNode>
 
       <ComfyWorkflowImportModal
-        isOpen={importOpen}
-        onClose={() => setImportOpen(false)}
-        onAttach={handleAttach}
+        isOpen={modal !== null}
+        onClose={() => setModal(null)}
+        onAttach={modal === "edit" ? handleReconfigure : handleAttach}
         {...(app ? { existingName: app.name } : {})}
+        {...(reconfigureTarget ? { reconfigure: reconfigureTarget } : {})}
       />
     </>
   );
@@ -294,10 +358,12 @@ function EmptyState({ onImport }: { onImport: () => void }) {
 
 function ComfyAppHeader({
   app,
+  onEdit,
   onReplace,
   runStatus,
 }: {
   app: ComfyAppDefinition;
+  onEdit: () => void;
   onReplace: () => void;
   runStatus: string | null;
 }) {
@@ -315,28 +381,49 @@ function ComfyAppHeader({
               }`}
         </p>
       </div>
-      <button
-        type="button"
-        onClick={onReplace}
-        title="Replace this workflow"
-        className="nodrag nopan shrink-0 text-neutral-500 hover:text-neutral-200 transition-colors"
-      >
-        <svg
-          className="w-3.5 h-3.5"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M21 2v6h-6" />
-          <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
-          <path d="M3 22v-6h6" />
-          <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-        </svg>
-      </button>
+      <HeaderButton onClick={onEdit} title="Choose inputs, settings and outputs">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </HeaderButton>
+      <HeaderButton onClick={onReplace} title="Replace this workflow">
+        <path d="M21 2v6h-6" />
+        <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+        <path d="M3 22v-6h6" />
+        <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+      </HeaderButton>
     </div>
+  );
+}
+
+function HeaderButton({
+  onClick,
+  title,
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      className="nodrag nopan shrink-0 text-neutral-500 hover:text-neutral-200 transition-colors"
+    >
+      <svg
+        className="w-3.5 h-3.5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {children}
+      </svg>
+    </button>
   );
 }
 

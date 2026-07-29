@@ -4,7 +4,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 
 import { buildComfyApp } from "@/lib/comfy/buildApp";
-import { inputFromCandidate, paramFromCandidate } from "@/lib/comfy/inspect";
+import { loaderInputType } from "@/lib/comfy/graph";
+import { inputFromCandidate, inputFromLoader, paramFromCandidate } from "@/lib/comfy/inspect";
+import { withAppLabels } from "@/lib/comfy/reconfigure";
 import { buildComfyHeaders, comfyConfigError, getComfySettings } from "@/lib/comfy/settings";
 import type {
   ComfyAppDefinition,
@@ -12,17 +14,32 @@ import type {
   ComfyAppOutput,
   ComfyGraph,
   ComfyInputType,
+  ComfyNodeCandidate,
   ComfyOutputType,
   ComfyWidgetCandidate,
   ComfyWorkflowInspection,
 } from "@/lib/comfy/types";
 
+/** An already-attached workflow whose picks are being revisited. */
+export interface ComfyReconfigureTarget {
+  app: ComfyAppDefinition;
+  /** The candidate list stored at import; re-derived from the graph if absent. */
+  inspection?: ComfyWorkflowInspection;
+}
+
 interface ComfyWorkflowImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAttach: (app: ComfyAppDefinition) => void;
+  /** The confirmed contract, plus the candidate list it was chosen from. */
+  onAttach: (app: ComfyAppDefinition, inspection: ComfyWorkflowInspection) => void;
   /** Shown as the "replacing" hint when the node already has a workflow. */
   existingName?: string;
+  /**
+   * Set to skip the file/blueprint step and edit an attached workflow's picks
+   * directly. The node's current selection is what gets pre-filled, not the
+   * inspection's original suggestion.
+   */
+  reconfigure?: ComfyReconfigureTarget | null;
 }
 
 interface BlueprintListItem {
@@ -67,6 +84,7 @@ export function ComfyWorkflowImportModal({
   onClose,
   onAttach,
   existingName,
+  reconfigure,
 }: ComfyWorkflowImportModalProps) {
   const [tab, setTab] = useState<"file" | "blueprints">("file");
   const [inspection, setInspection] = useState<Inspection | null>(null);
@@ -107,23 +125,37 @@ export function ComfyWorkflowImportModal({
     if (!isOpen) reset();
   }, [isOpen, reset]);
 
-  /** Adopt a fresh inspection into the confirm step. */
-  const adopt = useCallback((result: Inspection, from: "upload" | "blueprint") => {
-    setInspection(result);
-    setSource(from);
-    setName(result.suggested.name);
-    setInputs(result.suggested.inputs);
-    setOutputs(result.suggested.outputs);
+  /**
+   * Move an inspection into the confirm step.
+   *
+   * `selection` is the contract whose picks should be pre-filled: the
+   * inspection's own suggestion on a fresh import, or the node's existing
+   * contract when its picks are being revisited.
+   */
+  const adopt = useCallback(
+    (
+      result: Inspection,
+      from: "upload" | "blueprint",
+      selection?: Pick<ComfyAppDefinition, "name" | "inputs" | "params" | "outputs">
+    ) => {
+      const picked = selection ?? result.suggested;
+      setInspection(result);
+      setSource(from);
+      setName(picked.name);
+      setInputs(picked.inputs);
+      setOutputs(picked.outputs);
 
-    const next: Record<string, WidgetRole> = {};
-    for (const candidate of result.widgetCandidates) {
-      const key = bindingKey(candidate.nodeId, candidate.inputKey);
-      if (result.suggested.inputs.some((i) => i.id === key)) next[key] = "input";
-      else if (result.suggested.params.some((p) => p.id === key)) next[key] = "setting";
-      else next[key] = "off";
-    }
-    setRoles(next);
-  }, []);
+      const next: Record<string, WidgetRole> = {};
+      for (const candidate of result.widgetCandidates) {
+        const key = bindingKey(candidate.nodeId, candidate.inputKey);
+        if (picked.inputs.some((i) => i.id === key)) next[key] = "input";
+        else if (picked.params.some((p) => p.id === key)) next[key] = "setting";
+        else next[key] = "off";
+      }
+      setRoles(next);
+    },
+    []
+  );
 
   const readError = useCallback(async (response: Response, fallback: string): Promise<string> => {
     try {
@@ -167,6 +199,50 @@ export function ComfyWorkflowImportModal({
     },
     [adopt, readError]
   );
+
+  // Revisiting an attached workflow: go straight to the picks. The candidate
+  // list stored at import is preferred — re-deriving it from the runnable graph
+  // works, but App Mode lives in the uploaded file, so the author's curation
+  // (which widgets they meant to expose, and their names for them) is lost.
+  useEffect(() => {
+    if (!isOpen || !reconfigure) return;
+    const { app, inspection: stored } = reconfigure;
+    const from = app.source === "blueprint" ? "blueprint" : "upload";
+
+    if (stored) {
+      adopt(withAppLabels({ ...stored, graph: app.graph }, app), from, app);
+      return;
+    }
+
+    let cancelled = false;
+    setBusy(true);
+    setError(null);
+    void (async () => {
+      try {
+        const response = await fetch("/api/comfy/inspect", {
+          method: "POST",
+          headers: buildComfyHeaders(getComfySettings()),
+          body: JSON.stringify({ workflow: app.graph, filename: `${app.name}.json` }),
+        });
+        if (cancelled) return;
+        if (!response.ok) {
+          setError(await readError(response, "Could not re-read this workflow."));
+          return;
+        }
+        const result = (await response.json()) as Inspection;
+        if (!cancelled) adopt(withAppLabels(result, app), from, app);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not re-read this workflow.");
+        }
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, reconfigure, adopt, readError]);
 
   const loadBlueprints = useCallback(async () => {
     setBlueprintError(null);
@@ -232,6 +308,37 @@ export function ComfyWorkflowImportModal({
     []
   );
 
+  /**
+   * Expose or hide a media loader.
+   *
+   * Re-enabling one restores the requiredness inspection gave it, rather than
+   * defaulting: an App Mode input the author marked essential must stay
+   * essential, while a loader that was merely detected stays optional so the
+   * workflow still runs on the author's own image.
+   */
+  const toggleMediaInput = useCallback(
+    (candidate: ComfyNodeCandidate, type: ComfyInputType) => {
+      if (!inspection) return;
+      setInputs((prev) => {
+        if (prev.some((i) => i.nodeId === candidate.nodeId)) {
+          return prev.filter((i) => i.nodeId !== candidate.nodeId);
+        }
+        const taken = new Set(prev.map((i) => i.name));
+        const restored = inputFromLoader(
+          candidate,
+          type,
+          taken,
+          inspection.graph[candidate.nodeId]
+        );
+        const suggested = inspection.suggested.inputs.find(
+          (i) => i.nodeId === candidate.nodeId
+        );
+        return [...prev, { ...restored, required: suggested?.required ?? false }];
+      });
+    },
+    [inspection]
+  );
+
   const renameInput = useCallback((inputId: string, label: string) => {
     setInputs((prev) => prev.map((i) => (i.id === inputId ? { ...i, label } : i)));
   }, []);
@@ -256,6 +363,11 @@ export function ComfyWorkflowImportModal({
     const params = inspection.widgetCandidates
       .filter((c) => roles[bindingKey(c.nodeId, c.inputKey)] === "setting")
       .map(paramFromCandidate);
+    // The candidate list travels back to the node so the picks can be revisited.
+    // The graph is dropped (the app already carries it), as are the blueprint
+    // listing and the import-time warnings — both describe the upload, not the
+    // contract, and replaying "could not reach the engine" weeks later misleads.
+    const { graph: _graph, ...snapshot } = inspection;
     onAttach(
       buildComfyApp({
         name,
@@ -264,7 +376,8 @@ export function ComfyWorkflowImportModal({
         inputs,
         params,
         outputs,
-      })
+      }),
+      { ...snapshot, blueprints: [], warnings: [] }
     );
   }, [inspection, roles, name, source, inputs, outputs, onAttach]);
 
@@ -290,18 +403,22 @@ export function ComfyWorkflowImportModal({
           <div className="flex items-center gap-2 mb-1">
             <ComfyGlyph />
             <h2 className="text-xl font-medium text-neutral-100">
-              {inspection ? "Confirm inputs and outputs" : "Add a ComfyUI workflow"}
+              {reconfigure
+                ? "Inputs, settings and outputs"
+                : inspection
+                  ? "Confirm inputs and outputs"
+                  : "Add a ComfyUI workflow"}
             </h2>
           </div>
           <p className="text-xs text-neutral-500 mb-5">
-            {inspection
+            {inspection || reconfigure
               ? "These become the node's handles and settings."
               : existingName
                 ? `Replacing "${existingName}".`
                 : "Use any workflow saved from ComfyUI — no special export needed."}
           </p>
 
-          {!inspection && (
+          {!inspection && !reconfigure && (
             <div className="flex gap-1.5 p-1 bg-neutral-900/50 rounded-lg">
               <TabButton active={tab === "file"} onClick={() => setTab("file")}>
                 Workflow file
@@ -331,7 +448,14 @@ export function ComfyWorkflowImportModal({
             </div>
           )}
 
-          {!inspection && tab === "file" && (
+          {reconfigure && !inspection && !error && (
+            <div className="py-12 flex flex-col items-center gap-2">
+              <div className="w-5 h-5 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
+              <span className="text-xs text-neutral-500">Reading this workflow…</span>
+            </div>
+          )}
+
+          {!reconfigure && !inspection && tab === "file" && (
             <FileDropZone
               busy={busy}
               dragOver={dragOver}
@@ -341,7 +465,7 @@ export function ComfyWorkflowImportModal({
             />
           )}
 
-          {!inspection && tab === "blueprints" && (
+          {!reconfigure && !inspection && tab === "blueprints" && (
             <BlueprintPicker
               blueprints={blueprints}
               error={blueprintError}
@@ -365,6 +489,7 @@ export function ComfyWorkflowImportModal({
               onRenameInput={renameInput}
               onRenameOutput={renameOutput}
               onToggleOutput={toggleOutput}
+              onToggleMediaInput={toggleMediaInput}
             />
           )}
         </div>
@@ -372,10 +497,12 @@ export function ComfyWorkflowImportModal({
         <div className="flex justify-between gap-2 px-8 py-4 border-t border-neutral-700/60 shrink-0">
           <button
             type="button"
-            onClick={inspection ? reset : onClose}
+            // There is nothing behind the picks when they were opened directly,
+            // so "Back" would strand the dialog on an empty file step.
+            onClick={inspection && !reconfigure ? reset : onClose}
             className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
           >
-            {inspection ? "Back" : "Cancel"}
+            {inspection && !reconfigure ? "Back" : "Cancel"}
           </button>
           {inspection && (
             <button
@@ -384,7 +511,7 @@ export function ComfyWorkflowImportModal({
               disabled={!canAttach}
               className="px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Add to node
+              {reconfigure ? "Save changes" : "Add to node"}
             </button>
           )}
         </div>
@@ -595,6 +722,7 @@ function ConfirmStep({
   onRenameInput,
   onRenameOutput,
   onToggleOutput,
+  onToggleMediaInput,
 }: {
   inspection: Inspection;
   name: string;
@@ -611,6 +739,7 @@ function ConfirmStep({
     label: string,
     type: ComfyOutputType
   ) => void;
+  onToggleMediaInput: (candidate: ComfyNodeCandidate, type: ComfyInputType) => void;
 }) {
   // Widgets the author curated float to the top: those are the ones the app is
   // actually meant to expose, and the rest is a long tail of internals.
@@ -622,7 +751,22 @@ function ConfirmStep({
     [inspection.widgetCandidates]
   );
 
-  const mediaInputs = inputs.filter((i) => i.type !== "text");
+  // Every loader in the graph, selected or not — a workflow can carry several
+  // and only some are meant to be wired from the canvas.
+  const mediaCandidates = useMemo(
+    () =>
+      [...inspection.imageInputCandidates, ...inspection.mediaInputCandidates].map(
+        (candidate) => ({
+          candidate,
+          type: loaderInputType(candidate.classType) ?? ("image" as ComfyInputType),
+        })
+      ),
+    [inspection.imageInputCandidates, inspection.mediaInputCandidates]
+  );
+
+  // Text inputs are promoted widgets, so the Settings list below owns their
+  // on/off state; here they only get renamed.
+  const textInputs = inputs.filter((i) => i.type === "text");
 
   return (
     <div className="space-y-5">
@@ -657,10 +801,40 @@ function ConfirmStep({
         title="Inputs"
         hint="Connected from other nodes."
         empty="Nothing in this workflow accepts an incoming connection."
-        isEmpty={mediaInputs.length === 0 && inputs.length === 0}
+        isEmpty={mediaCandidates.length === 0 && textInputs.length === 0}
       >
-        {inputs.map((input) => (
+        {mediaCandidates.map(({ candidate, type }) => {
+          const bound = inputs.find((i) => i.nodeId === candidate.nodeId);
+          return (
+            <div key={candidate.nodeId} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={Boolean(bound)}
+                onChange={() => onToggleMediaInput(candidate, type)}
+                className="w-3.5 h-3.5 rounded bg-neutral-800 shrink-0"
+                title={
+                  bound
+                    ? "Remove this handle — the workflow keeps its own file"
+                    : "Expose this loader as a handle"
+                }
+              />
+              <TypePill color={handleColor(type)}>{INPUT_TYPE_LABEL[type]}</TypePill>
+              <input
+                type="text"
+                value={bound?.label ?? candidate.label}
+                disabled={!bound}
+                onChange={(e) => bound && onRenameInput(bound.id, e.target.value)}
+                className="flex-1 min-w-0 px-2 py-1 bg-neutral-800 border border-neutral-600 rounded-lg text-neutral-100 text-xs focus:outline-none focus:border-neutral-500 disabled:opacity-40"
+              />
+              <span className="text-[10px] text-neutral-600 shrink-0 font-mono">
+                #{candidate.nodeId}
+              </span>
+            </div>
+          );
+        })}
+        {textInputs.map((input) => (
           <div key={input.id} className="flex items-center gap-2">
+            <span className="w-3.5 shrink-0" aria-hidden />
             <TypePill color={handleColor(input.type)}>{INPUT_TYPE_LABEL[input.type]}</TypePill>
             <input
               type="text"
@@ -696,6 +870,9 @@ function ConfirmStep({
                 >
                   {candidate.label}
                   {candidate.fromAppMode && <span className="text-emerald-400/70 ml-1">•</span>}
+                </span>
+                <span className="text-[10px] text-neutral-600 shrink-0 font-mono">
+                  #{candidate.nodeId}
                 </span>
                 <RoleToggle
                   role={role}

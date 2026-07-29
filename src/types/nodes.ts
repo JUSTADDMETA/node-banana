@@ -18,9 +18,9 @@ export type { AnnotationNodeData, BaseNodeData };
 // Import from domain files to avoid circular dependencies
 import type { AspectRatio, Resolution, ModelType } from "./models";
 import type { LLMProvider, LLMModelType, SelectedModel, ProviderType } from "./providers";
-import type { ComfyAppDefinition } from "@/lib/comfy/types";
+import type { ComfyAppDefinition, ComfyWorkflowInspection } from "@/lib/comfy/types";
 
-export type { ComfyAppDefinition };
+export type { ComfyAppDefinition, ComfyWorkflowInspection };
 
 /**
  * All available node types in the workflow editor
@@ -666,6 +666,16 @@ export interface GLBViewerNodeData extends BaseNodeData {
  */
 export interface ComfyAppNodeData extends BaseNodeData {
   app: ComfyAppDefinition | null;
+  /**
+   * The full candidate list the import produced, kept so the choice of inputs,
+   * settings and outputs can be revisited later.
+   *
+   * `app` only records what was *picked*; everything the user declined is here.
+   * Re-deriving it from `app.graph` would work but would lose the author's App
+   * Mode curation — which widgets they meant to expose, and what they called
+   * them — because that lives in the uploaded file, not the runnable graph.
+   */
+  inspection?: ComfyWorkflowInspection;
   /** Values for `app.params`, keyed by param id. */
   paramValues: Record<string, unknown>;
   /** Derived from `app.inputs` — drives dynamic handles and `dynamicInputs`. */
