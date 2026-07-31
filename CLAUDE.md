@@ -240,6 +240,10 @@ routes, which is why the legacy engine is the default there.
 
 ### Formats
 
+Dropping either format onto the canvas creates a `comfyApp` node at the drop
+point and opens the confirm step on it; our own workflow saves still replace the
+canvas, told apart by shape in `src/lib/comfy/detect.ts`.
+
 Both upload formats are accepted. An **editor save** (the normal ComfyUI Save)
 is the one that carries App Mode, but it is not executable — widget values are
 positional — so converting it needs `/api/object_info` from a reachable engine.

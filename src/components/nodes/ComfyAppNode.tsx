@@ -10,6 +10,7 @@ import { InlineParameterPanel } from "./InlineParameterPanel";
 import {
   ComfyWorkflowImportModal,
   type ComfyReconfigureTarget,
+  type ComfyUpload,
 } from "@/components/modals/ComfyWorkflowImportModal";
 import { useShowHandleLabels } from "@/hooks/useShowHandleLabels";
 import { useWorkflowStore } from "@/store/workflowStore";
@@ -52,6 +53,8 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   const showLabels = useShowHandleLabels(selected);
   /** `replace` picks a different workflow; `edit` revisits this one's picks. */
   const [modal, setModal] = useState<"replace" | "edit" | null>(null);
+  /** A workflow dropped on the canvas, to be read instead of asking for a file. */
+  const [dropped, setDropped] = useState<ComfyUpload | null>(null);
 
   // Created from the connection menu, which had nowhere to attach its wire —
   // go straight to choosing a workflow so the node becomes usable.
@@ -60,6 +63,18 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
     setModal("replace");
     updateNodeData(id, { _autoOpenImport: false });
   }, [nodeData._autoOpenImport, id, updateNodeData]);
+
+  // Created by dropping a ComfyUI workflow onto the canvas: skip the file step
+  // and read the dropped file straight away. It moves into local state because
+  // it belongs to this import, not to the node — a saved workflow should not
+  // carry a copy of the upload it was built from.
+  useEffect(() => {
+    const pending = nodeData._pendingWorkflow;
+    if (!pending) return;
+    setDropped(pending);
+    setModal("replace");
+    updateNodeData(id, { _pendingWorkflow: null });
+  }, [nodeData._pendingWorkflow, id, updateNodeData]);
 
   const edges = useWorkflowStore((state) => state.edges);
   const removeEdge = useWorkflowStore((state) => state.removeEdge);
@@ -146,6 +161,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
         jobId: null,
       });
       setModal(null);
+      setDropped(null);
     },
     [id, updateNodeData, pruneStaleEdges]
   );
@@ -310,10 +326,14 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
 
       <ComfyWorkflowImportModal
         isOpen={modal !== null}
-        onClose={() => setModal(null)}
+        onClose={() => {
+          setModal(null);
+          setDropped(null);
+        }}
         onAttach={modal === "edit" ? handleReconfigure : handleAttach}
         {...(app ? { existingName: app.name } : {})}
         {...(reconfigureTarget ? { reconfigure: reconfigureTarget } : {})}
+        {...(dropped && modal === "replace" ? { upload: dropped } : {})}
       />
     </>
   );

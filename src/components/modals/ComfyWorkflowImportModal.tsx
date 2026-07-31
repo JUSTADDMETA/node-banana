@@ -20,6 +20,13 @@ import type {
   ComfyWorkflowInspection,
 } from "@/lib/comfy/types";
 
+/** A workflow JSON handed to the dialog rather than picked from disk. */
+export interface ComfyUpload {
+  workflow: unknown;
+  /** The original filename — it seeds the node's default name. */
+  filename: string;
+}
+
 /** An already-attached workflow whose picks are being revisited. */
 export interface ComfyReconfigureTarget {
   app: ComfyAppDefinition;
@@ -40,6 +47,12 @@ interface ComfyWorkflowImportModalProps {
    * inspection's original suggestion.
    */
   reconfigure?: ComfyReconfigureTarget | null;
+  /**
+   * A workflow the user already handed over — dropped onto the canvas rather
+   * than chosen here. Read as soon as the dialog opens, so it lands on the
+   * picks with no second "choose a file" step.
+   */
+  upload?: ComfyUpload | null;
 }
 
 interface BlueprintListItem {
@@ -85,6 +98,7 @@ export function ComfyWorkflowImportModal({
   onAttach,
   existingName,
   reconfigure,
+  upload,
 }: ComfyWorkflowImportModalProps) {
   const [tab, setTab] = useState<"file" | "blueprints">("file");
   const [inspection, setInspection] = useState<Inspection | null>(null);
@@ -167,24 +181,16 @@ export function ComfyWorkflowImportModal({
     }
   }, []);
 
-  const inspectFile = useCallback(
-    async (file: File) => {
+  const inspectWorkflow = useCallback(
+    async (workflow: unknown, filename: string) => {
       setBusy(true);
       setError(null);
       setMissingNodes([]);
       try {
-        const text = await file.text();
-        let workflow: unknown;
-        try {
-          workflow = JSON.parse(text);
-        } catch {
-          setError("That file is not valid JSON.");
-          return;
-        }
         const response = await fetch("/api/comfy/inspect", {
           method: "POST",
           headers: buildComfyHeaders(getComfySettings()),
-          body: JSON.stringify({ workflow, filename: file.name }),
+          body: JSON.stringify({ workflow, filename }),
         });
         if (!response.ok) {
           setError(await readError(response, "Could not read that workflow."));
@@ -199,6 +205,31 @@ export function ComfyWorkflowImportModal({
     },
     [adopt, readError]
   );
+
+  const inspectFile = useCallback(
+    async (file: File) => {
+      let workflow: unknown;
+      try {
+        workflow = JSON.parse(await file.text());
+      } catch {
+        setError("That file is not valid JSON.");
+        return;
+      }
+      await inspectWorkflow(workflow, file.name);
+    },
+    [inspectWorkflow]
+  );
+
+  // A workflow dropped onto the canvas: the user has already chosen, so read it
+  // rather than showing them a file picker for a file they just gave us. Guarded
+  // by identity so a re-render — or a Back out of the picks — does not re-read.
+  const readUpload = useRef<ComfyUpload | null>(null);
+  useEffect(() => {
+    if (!isOpen || !upload || reconfigure) return;
+    if (readUpload.current === upload) return;
+    readUpload.current = upload;
+    void inspectWorkflow(upload.workflow, upload.filename);
+  }, [isOpen, upload, reconfigure, inspectWorkflow]);
 
   // Revisiting an attached workflow: go straight to the picks. The candidate
   // list stored at import is preferred — re-deriving it from the runnable graph

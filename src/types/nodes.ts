@@ -699,6 +699,12 @@ export interface ComfyAppNodeData extends BaseNodeData {
   /** Set when the node is created from the connection menu, so it opens the
    *  import dialog immediately — it has no handles until a workflow is chosen. */
   _autoOpenImport?: boolean;
+  /**
+   * A workflow dropped onto the canvas, handed to the node that was created
+   * for it. Consumed and cleared on mount — it is the upload, not part of the
+   * node's state, and must never reach a saved file.
+   */
+  _pendingWorkflow?: { workflow: unknown; filename: string } | null;
   status: NodeStatus;
   error: string | null;
 }

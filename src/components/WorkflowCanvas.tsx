@@ -63,6 +63,7 @@ import { EdgeToolbar } from "./EdgeToolbar";
 import { GlobalImageHistory } from "./GlobalImageHistory";
 import { GroupBackgroundsPortal, GroupControlsOverlay } from "./GroupsOverlay";
 import { NodeType, NanoBananaNodeData, HandleType, PromptNodeData, LLMGenerateNodeData, PromptConstructorNodeData, AvailableVariable } from "@/types";
+import { isComfyWorkflow, isNodeBananaWorkflow } from "@/lib/comfy/detect";
 import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import { FloatingNodeHeader } from "./nodes/FloatingNodeHeader";
 import { ControlPanel } from "./nodes/ControlPanel";
@@ -2070,18 +2071,32 @@ export function WorkflowCanvas() {
       const jsonFiles = allFiles.filter((file) => file.type === "application/json" || file.name.endsWith(".json"));
       if (jsonFiles.length > 0) {
         const file = jsonFiles[0];
+        // Captured now: the reader resolves after the drop event is recycled.
+        const dropPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY });
         const reader = new FileReader();
         reader.onload = async (e) => {
+          let parsed: unknown;
           try {
-            const workflow = JSON.parse(e.target?.result as string) as WorkflowFile;
-            if (workflow.version && workflow.nodes && workflow.edges) {
-              await loadWorkflow(workflow);
-            } else {
-              alert("Invalid workflow file format");
-            }
+            parsed = JSON.parse(e.target?.result as string);
           } catch {
             alert("Failed to parse workflow file");
+            return;
           }
+          if (isNodeBananaWorkflow(parsed)) {
+            await loadWorkflow(parsed as WorkflowFile);
+            return;
+          }
+          // A ComfyUI workflow becomes a node rather than replacing the canvas.
+          // The node reads it and opens the import dialog, so the inputs and
+          // outputs it will expose are still confirmed before it is usable.
+          if (isComfyWorkflow(parsed)) {
+            const nodeId = addNode("comfyApp", dropPosition);
+            updateNodeData(nodeId, {
+              _pendingWorkflow: { workflow: parsed, filename: file.name },
+            });
+            return;
+          }
+          alert("Invalid workflow file format");
         };
         reader.readAsText(file);
         return;
