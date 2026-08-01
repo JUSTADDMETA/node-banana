@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Handle, NodeProps, Node, Position } from "@xyflow/react";
+import { Handle, NodeProps, Node, Position, useUpdateNodeInternals } from "@xyflow/react";
 
 import { BaseNode } from "./BaseNode";
 import { ComfyAppParameters } from "./ComfyAppParameters";
@@ -104,6 +104,25 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   }, [app]);
 
   const outputHandles = useMemo(() => app?.outputs ?? [], [app]);
+
+  /**
+   * Re-register the handles whenever the contract changes them.
+   *
+   * React Flow reads a node's handles once, when it measures the node, and
+   * caches where they are. Every other node declares its handles up front, but
+   * this one has none until a workflow is attached — so the ones that appear
+   * afterwards are invisible to the connection system: a wire dropped on them
+   * lands nowhere, and an edge made anyway cannot be drawn. Resizing the node
+   * forces a re-measure, which is why that appeared to fix it.
+   */
+  const updateNodeInternals = useUpdateNodeInternals();
+  const handleIds = useMemo(
+    () => [...inputHandles.map((i) => i.handleId), ...outputHandles.map((o) => o.id)].join("|"),
+    [inputHandles, outputHandles]
+  );
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [handleIds, id, updateNodeInternals]);
 
   /**
    * Drop edges bound to handles the incoming contract does not declare.
