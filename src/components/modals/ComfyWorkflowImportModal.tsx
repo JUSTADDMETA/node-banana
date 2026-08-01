@@ -117,7 +117,7 @@ export function ComfyWorkflowImportModal({
   // Blueprint list state
   const [blueprints, setBlueprints] = useState<BlueprintListItem[] | null>(null);
   const [blueprintError, setBlueprintError] = useState<string | null>(null);
-  const [blueprintFilter, setBlueprintFilter] = useState("");
+  const [blueprintId, setBlueprintId] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const settings = useMemo(() => (isOpen ? getComfySettings() : null), [isOpen]);
@@ -500,10 +500,10 @@ export function ComfyWorkflowImportModal({
             <BlueprintPicker
               blueprints={blueprints}
               error={blueprintError}
-              filter={blueprintFilter}
-              onFilter={setBlueprintFilter}
+              selected={blueprintId}
+              onSelect={setBlueprintId}
               onRetry={loadBlueprints}
-              onPick={importBlueprint}
+              onAdd={() => void importBlueprint(blueprintId)}
               busy={busy}
             />
           )}
@@ -659,21 +659,29 @@ function FileDropZone({
   );
 }
 
+/**
+ * Pick one Blueprint out of the engine's catalog.
+ *
+ * A catalog is long — Comfy Cloud ships around ninety — and every entry is the
+ * same kind of thing, so one field to choose from beats a wall of cards to
+ * scroll: the whole list is reachable by keyboard, and nothing loads until the
+ * choice is confirmed.
+ */
 function BlueprintPicker({
   blueprints,
   error,
-  filter,
-  onFilter,
+  selected,
+  onSelect,
   onRetry,
-  onPick,
+  onAdd,
   busy,
 }: {
   blueprints: BlueprintListItem[] | null;
   error: string | null;
-  filter: string;
-  onFilter: (value: string) => void;
+  selected: string;
+  onSelect: (id: string) => void;
   onRetry: () => void;
-  onPick: (id: string) => void;
+  onAdd: () => void;
   busy: boolean;
 }) {
   if (error) {
@@ -700,44 +708,48 @@ function BlueprintPicker({
     );
   }
 
-  const term = filter.trim().toLowerCase();
-  const visible = term
-    ? blueprints.filter((b) => b.name.toLowerCase().includes(term))
-    : blueprints;
+  if (blueprints.length === 0) {
+    return (
+      <p className="text-xs text-neutral-500 py-8 text-center">
+        This ComfyUI has no Blueprints installed.
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-3">
-      <input
-        type="text"
-        value={filter}
-        onChange={(e) => onFilter(e.target.value)}
-        placeholder="Search Blueprints…"
-        className="w-full px-3 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-neutral-100 text-sm focus:outline-none focus:border-neutral-500"
-      />
-      {visible.length === 0 ? (
-        <p className="text-xs text-neutral-500 py-8 text-center">
-          {blueprints.length === 0
-            ? "This ComfyUI has no Blueprints installed."
-            : "No Blueprints match that search."}
-        </p>
-      ) : (
-        <div className="space-y-1.5">
-          {visible.map((blueprint) => (
-            <button
-              key={blueprint.id}
-              type="button"
-              disabled={busy}
-              onClick={() => onPick(blueprint.id)}
-              className="w-full text-left p-3 bg-neutral-900 rounded-lg border border-neutral-700 hover:border-neutral-500 disabled:opacity-50 transition-colors"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-neutral-100 truncate">{blueprint.name}</span>
-                <span className="text-[10px] text-neutral-500 shrink-0">{blueprint.nodePack}</span>
-              </div>
-            </button>
+      <div>
+        <label htmlFor="comfy-blueprint" className="block text-sm text-neutral-400 mb-1">
+          Blueprint
+        </label>
+        <select
+          id="comfy-blueprint"
+          value={selected}
+          disabled={busy}
+          onChange={(e) => onSelect(e.target.value)}
+          className="w-full px-3 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-neutral-100 text-sm focus:outline-none focus:border-neutral-500 disabled:opacity-50"
+        >
+          <option value="">Choose a Blueprint…</option>
+          {blueprints.map((blueprint) => (
+            <option key={blueprint.id} value={blueprint.id}>
+              {blueprint.name}
+            </option>
           ))}
-        </div>
-      )}
+        </select>
+        <p className="text-[10px] text-neutral-600 mt-1">
+          {blueprints.length} available on this ComfyUI
+        </p>
+      </div>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={!selected || busy}
+          className="px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {busy ? "Reading…" : "Add"}
+        </button>
+      </div>
     </div>
   );
 }
