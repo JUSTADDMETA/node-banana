@@ -663,9 +663,9 @@ function FileDropZone({
  * Pick one Blueprint out of the engine's catalog.
  *
  * A catalog is long — Comfy Cloud ships around ninety — and every entry is the
- * same kind of thing, so one field to choose from beats a wall of cards to
- * scroll: the whole list is reachable by keyboard, and nothing loads until the
- * choice is confirmed.
+ * same kind of thing, so they share one list rather than each getting a card
+ * and a button of its own. Picking only highlights a row; nothing is fetched
+ * until Add (or a double-click) confirms it.
  */
 function BlueprintPicker({
   blueprints,
@@ -684,6 +684,8 @@ function BlueprintPicker({
   onAdd: () => void;
   busy: boolean;
 }) {
+  const [filter, setFilter] = useState("");
+
   if (error) {
     return (
       <div className="py-8 text-center">
@@ -716,31 +718,76 @@ function BlueprintPicker({
     );
   }
 
+  const term = filter.trim().toLowerCase();
+  const visible = term
+    ? blueprints.filter((b) => b.name.toLowerCase().includes(term))
+    : blueprints;
+
   return (
     <div className="space-y-3">
-      <div>
-        <label htmlFor="comfy-blueprint" className="block text-sm text-neutral-400 mb-1">
-          Blueprint
-        </label>
-        <select
-          id="comfy-blueprint"
-          value={selected}
-          disabled={busy}
-          onChange={(e) => onSelect(e.target.value)}
-          className="w-full px-3 py-2 bg-neutral-900 border border-neutral-600 rounded-lg text-neutral-100 text-sm focus:outline-none focus:border-neutral-500 disabled:opacity-50"
+      <div className="rounded-lg border border-neutral-700 bg-neutral-900 overflow-hidden">
+        {/* Header row: the list is long enough that scanning it is the slow way
+            to a known name. */}
+        <div className="flex items-center gap-2 px-3 border-b border-neutral-800">
+          <svg
+            className="w-3.5 h-3.5 shrink-0 text-neutral-600"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search Blueprints…"
+            aria-label="Search Blueprints"
+            className="w-full bg-transparent py-2 text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none"
+          />
+        </div>
+        <div
+          role="listbox"
+          aria-label="Blueprints"
+          className="divide-y divide-neutral-800/80 max-h-[280px] overflow-y-auto"
         >
-          <option value="">Choose a Blueprint…</option>
-          {blueprints.map((blueprint) => (
-            <option key={blueprint.id} value={blueprint.id}>
-              {blueprint.name}
-            </option>
-          ))}
-        </select>
-        <p className="text-[10px] text-neutral-600 mt-1">
-          {blueprints.length} available on this ComfyUI
-        </p>
+          {visible.map((blueprint) => {
+            const isSelected = blueprint.id === selected;
+            return (
+              <button
+                key={blueprint.id}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                disabled={busy}
+                onClick={() => onSelect(blueprint.id)}
+                onDoubleClick={onAdd}
+                className={`w-full text-left px-3 py-2 text-sm truncate transition-colors disabled:cursor-not-allowed ${
+                  isSelected
+                    ? "bg-neutral-700 text-white"
+                    : "text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
+                }`}
+              >
+                {blueprint.name}
+              </button>
+            );
+          })}
+          {visible.length === 0 && (
+            <p className="px-3 py-6 text-xs text-neutral-600 text-center">
+              No Blueprints match that search.
+            </p>
+          )}
+        </div>
       </div>
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[10px] text-neutral-600">
+          {term
+            ? `${visible.length} of ${blueprints.length} Blueprints`
+            : `${blueprints.length} available on this ComfyUI`}
+        </span>
         <button
           type="button"
           onClick={onAdd}
