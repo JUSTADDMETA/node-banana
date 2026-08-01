@@ -268,6 +268,10 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
         minHeight={220}
         aspectFitMedia={primaryPreview?.type === "image" ? primaryPreview.value : null}
         settingsExpanded={Boolean(nodeData.parametersExpanded)}
+        // The default content box is padded for a node with a header on top —
+        // no padding above, a wider gap below. A frame drawn inside it wants
+        // the same margin on all four sides.
+        {...(app ? {} : { contentClassName: "p-3 flex-1 min-h-0 flex flex-col" })}
         {...(settingsPanel ? { settingsPanel } : {})}
       >
         {/* Input handles — one per connectable input the workflow exposes */}
@@ -409,7 +413,7 @@ function EmptyState({
           }
         });
       }}
-      className={`nodrag nopan flex-1 flex flex-col items-center justify-center gap-4 my-2 rounded-xl border border-dashed transition-colors ${
+      className={`nodrag nopan flex-1 flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed transition-colors ${
         dragOver
           ? "border-blue-500 bg-blue-500/5"
           : "border-neutral-600 hover:border-neutral-500 bg-neutral-900/40"
@@ -419,7 +423,10 @@ function EmptyState({
       <button
         type="button"
         onClick={onImport}
-        className="nodrag nopan px-3 py-1.5 text-xs rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-100 transition-colors"
+        // `leading-none` is what centres this: the default 16px line box on
+        // 12px text reserves room for descenders the label never uses, and
+        // padding then measures from that empty space rather than the letters.
+        className="nodrag nopan inline-flex items-center pl-[11px] pr-3 py-1.5 text-xs leading-none rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-100 transition-colors"
       >
         Load workflow
       </button>
