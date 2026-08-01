@@ -46,6 +46,11 @@ interface FloatingNodeHeaderProps {
   alwaysVisibleButtons?: ReactNode;
   provider?: ProviderType;
   title: string;
+  /**
+   * Shown instead of the title text — for a node whose kind is better said with
+   * a logo. `title` still supplies the accessible name and the tooltip.
+   */
+  titleLogo?: ReactNode;
   customTitle?: string;
   comment?: string;
   onCustomTitleChange?: (nodeId: string, title: string) => void;
@@ -69,6 +74,7 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
   alwaysVisibleButtons,
   provider,
   title,
+  titleLogo,
   customTitle,
   comment,
   onCustomTitleChange,
@@ -354,11 +360,18 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
             />
           ) : (
             <span
-              className="nodrag text-xs font-semibold uppercase tracking-wide text-neutral-400 cursor-text truncate"
+              className="nodrag flex items-center gap-1.5 min-w-0 text-xs font-semibold uppercase tracking-wide text-neutral-400 cursor-text truncate"
               onClick={() => setIsEditingTitle(true)}
               title="Click to edit title"
             >
-              {customTitle ? `${customTitle} - ${title}` : title}
+              {titleLogo}
+              {/* With a logo standing in for the kind of node, a custom title is
+                  the whole label rather than a prefix to it. */}
+              {titleLogo
+                ? customTitle && <span className="truncate">{customTitle}</span>
+                : customTitle
+                  ? `${customTitle} - ${title}`
+                  : title}
             </span>
           )}
         </div>

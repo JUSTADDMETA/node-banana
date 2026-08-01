@@ -64,6 +64,7 @@ import { GlobalImageHistory } from "./GlobalImageHistory";
 import { GroupBackgroundsPortal, GroupControlsOverlay } from "./GroupsOverlay";
 import { NodeType, NanoBananaNodeData, HandleType, PromptNodeData, LLMGenerateNodeData, PromptConstructorNodeData, AvailableVariable } from "@/types";
 import { isComfyWorkflow, isNodeBananaWorkflow } from "@/lib/comfy/detect";
+import { ComfyWordmark } from "./icons/ComfyWordmark";
 import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import { FloatingNodeHeader } from "./nodes/FloatingNodeHeader";
 import { ControlPanel } from "./nodes/ControlPanel";
@@ -2460,6 +2461,11 @@ export function WorkflowCanvas() {
                 width={headerWidth}
                 selected={!!node.selected}
                 title={getNodeTitle(node)}
+                titleLogo={
+                  node.type === "comfyApp" ? (
+                    <ComfyWordmark className="h-3 w-auto shrink-0" label={getNodeTitle(node)} />
+                  ) : undefined
+                }
                 customTitle={node.data?.customTitle}
                 comment={node.data?.comment}
                 provider={(node.data as any)?.selectedModel?.provider}
