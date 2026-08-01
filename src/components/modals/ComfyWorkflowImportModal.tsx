@@ -490,7 +490,7 @@ export function ComfyWorkflowImportModal({
         className="bg-neutral-800 rounded-xl w-[600px] border border-neutral-700 shadow-2xl overflow-clip flex flex-col max-h-[82vh] focus:outline-none animate-dialog-panel"
         onKeyDown={trapFocus}
       >
-        <div className="px-8 pt-8 pb-0 shrink-0 animate-dialog-section">
+        <div className="px-4 pt-4 pb-0 shrink-0 animate-dialog-section">
           <div className="flex items-center gap-2 mb-1">
             <ComfyMark className="w-4 h-[19px] text-neutral-300 shrink-0" />
             <h2 id="comfy-import-title" className="text-xl font-medium text-neutral-100">
@@ -533,10 +533,10 @@ export function ComfyWorkflowImportModal({
             heading inside a padded scroller stops at the *content* edge, and
             rows then scroll through the padding band above it in full view. */}
         <div
-          className="flex-1 min-h-0 overflow-y-auto px-8 animate-dialog-section"
+          className="flex-1 min-h-0 overflow-y-auto px-4 animate-dialog-section"
           style={{ animationDelay: "80ms" }}
         >
-          <div className="py-5">
+          <div className="py-4">
           {configError && !inspection && (
             <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
               <p className="text-xs text-amber-300">{configError}</p>
@@ -602,7 +602,7 @@ export function ComfyWorkflowImportModal({
         </div>
 
         <div
-          className="flex items-center justify-between gap-3 px-8 py-4 border-t border-neutral-700/60 shrink-0 animate-dialog-section"
+          className="flex items-center justify-between gap-3 p-4 border-t border-neutral-700/60 shrink-0 animate-dialog-section"
           style={{ animationDelay: "160ms" }}
         >
           <button
@@ -1199,7 +1199,7 @@ function Section({
       {/* Sticky, and bled to the dialog's edges so rows pass behind it rather
           than beside it — three sections deep, the heading is the only thing
           saying which list you are in. */}
-      <div className="sticky top-0 z-10 -mx-8 px-8 py-2 bg-neutral-800 flex items-baseline gap-2">
+      <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-neutral-800 flex items-baseline gap-2">
         <h3 className="text-sm text-neutral-200 font-medium shrink-0">{title}</h3>
         <span className="text-[10px] text-neutral-600 truncate">{hint}</span>
         {count && !isEmpty && (
