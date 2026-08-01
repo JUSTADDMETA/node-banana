@@ -4,11 +4,20 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 
 import { ComfyMark } from "@/components/icons/ComfyMark";
+import {
+  ComfySettingsTab,
+  useComfySettingsDraft,
+} from "@/components/settings/ComfySettingsTab";
 import { buildComfyApp } from "@/lib/comfy/buildApp";
 import { loaderInputType } from "@/lib/comfy/graph";
 import { inputFromCandidate, inputFromLoader, paramFromCandidate } from "@/lib/comfy/inspect";
 import { withAppLabels } from "@/lib/comfy/reconfigure";
-import { buildComfyHeaders, comfyConfigError, getComfySettings } from "@/lib/comfy/settings";
+import {
+  buildComfyHeaders,
+  comfyConfigError,
+  getComfySettings,
+  saveComfySettings,
+} from "@/lib/comfy/settings";
 import type {
   ComfyAppDefinition,
   ComfyAppInput,
@@ -85,6 +94,9 @@ const OUTPUT_TYPE_LABEL: Record<ComfyOutputType, string> = {
 
 const bindingKey = (nodeId: string, inputKey: string): string => `${nodeId}:${inputKey}`;
 
+/** ComfyUI's own guide to preparing a workflow for this — inputs, outputs, saving. */
+const APP_MODE_DOCS = "https://docs.comfy.org/interface/app-mode";
+
 /** The dialog's one committing action, wherever the current step puts it. */
 const PRIMARY_BUTTON =
   "px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-[background-color,scale] duration-150 active:scale-[0.96] disabled:active:scale-100";
@@ -124,9 +136,19 @@ export function ComfyWorkflowImportModal({
   const [blueprintError, setBlueprintError] = useState<string | null>(null);
   const [blueprintId, setBlueprintId] = useState("");
 
+  // Connection settings, reachable from here: a dialog that reports "no engine
+  // configured" and offers no way to configure one is a dead end.
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsDraft, setSettingsDraft] = useComfySettingsDraft(showSettings);
+  const [settingsSaved, setSettingsSaved] = useState(0);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const settings = useMemo(() => (isOpen ? getComfySettings() : null), [isOpen]);
+  const settings = useMemo(
+    () => (isOpen ? getComfySettings() : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isOpen, settingsSaved]
+  );
   const configError = settings ? comfyConfigError(settings) : null;
 
   // Escape belongs to the dialog, not to whatever happens to be focused. Bound
@@ -171,6 +193,21 @@ export function ComfyWorkflowImportModal({
     }
   }, []);
 
+  /**
+   * Keep the new connection and go back to what the dialog was doing.
+   *
+   * The Blueprint list is dropped rather than kept: it is the *old* engine's
+   * catalog, and the point of coming here was usually that the old one was
+   * wrong or unreachable.
+   */
+  const saveSettings = useCallback(() => {
+    saveComfySettings(settingsDraft);
+    setSettingsSaved((n) => n + 1);
+    setShowSettings(false);
+    setBlueprints(null);
+    setBlueprintError(null);
+  }, [settingsDraft]);
+
   const reset = useCallback(() => {
     setInspection(null);
     setError(null);
@@ -182,6 +219,10 @@ export function ComfyWorkflowImportModal({
     setBusy(false);
     setDragOver(false);
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) setShowSettings(false);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) reset();
@@ -462,6 +503,14 @@ export function ComfyWorkflowImportModal({
 
   if (!isOpen) return null;
 
+  const subtitle = showSettings
+    ? "Where your workflows run, and what they run as."
+    : inspection || reconfigure
+      ? "These become the node's handles and settings."
+      : existingName
+        ? `Replacing "${existingName}".`
+        : null;
+
   const canAttach = Boolean(inspection && name.trim() && outputs.length > 0);
   const blockingReason = !inspection
     ? null
@@ -491,34 +540,78 @@ export function ComfyWorkflowImportModal({
         onKeyDown={trapFocus}
       >
         <div className="px-4 pt-4 pb-0 shrink-0 animate-dialog-section">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2">
             <ComfyMark className="w-4 h-[19px] text-neutral-300 shrink-0" />
-            <h2 id="comfy-import-title" className="text-xl font-medium text-neutral-100">
-              {reconfigure
-                ? "Inputs, settings and outputs"
-                : inspection
-                  ? "Confirm inputs and outputs"
-                  : "Add a ComfyUI workflow"}
+            <h2 id="comfy-import-title" className="text-xl font-medium text-neutral-100 truncate">
+              {showSettings
+                ? "ComfyUI connection"
+                : reconfigure
+                  ? "Inputs, settings and outputs"
+                  : inspection
+                    ? "Confirm inputs and outputs"
+                    : "Add a ComfyUI workflow"}
             </h2>
-            {inspection?.hasAppMode && (
-              <span
-                className="ml-auto shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-300/90 border border-emerald-500/25"
-                title="This workflow ships an App Mode configuration — its author's inputs, settings and outputs are already selected."
+            <div className="ml-auto shrink-0 flex items-center gap-1 -my-1">
+              {inspection?.hasAppMode && !showSettings && (
+                <span
+                  className="mr-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-300/90 border border-emerald-500/25"
+                  title="This workflow ships an App Mode configuration — its author's inputs, settings and outputs are already selected."
+                >
+                  App Mode
+                </span>
+              )}
+              <a
+                href={APP_MODE_DOCS}
+                target="_blank"
+                rel="noreferrer noopener"
+                title="How to set a workflow up for this — ComfyUI's App Mode guide"
+                aria-label="Read the App Mode guide"
+                className="w-10 h-10 flex items-center justify-center rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-700/50 transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
               >
-                App Mode
-              </span>
-            )}
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                </svg>
+              </a>
+              <button
+                type="button"
+                onClick={() => setShowSettings((open) => !open)}
+                title="ComfyUI connection — engine, API key"
+                aria-label="ComfyUI connection settings"
+                aria-pressed={showSettings}
+                className={`w-10 h-10 flex items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 active:scale-[0.96] ${
+                  showSettings
+                    ? "bg-neutral-700 text-neutral-100"
+                    : "text-neutral-500 hover:text-neutral-200 hover:bg-neutral-700/50"
+                }`}
+              >
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </button>
+            </div>
           </div>
-          <p className="text-xs text-neutral-500 mb-5">
-            {inspection || reconfigure
-              ? "These become the node's handles and settings."
-              : existingName
-                ? `Replacing "${existingName}".`
-                : "Use any workflow saved from ComfyUI — no special export needed."}
-          </p>
+          {subtitle && <p className="text-xs text-neutral-500 mt-1">{subtitle}</p>}
 
-          {!inspection && !reconfigure && (
-            <div className="flex gap-1.5 p-1 bg-neutral-900/50 rounded-lg">
+          {!inspection && !reconfigure && !showSettings && (
+            <div className="flex gap-1.5 p-1 mt-4 bg-neutral-900/50 rounded-lg">
               <TabButton active={tab === "file"} onClick={() => setTab("file")}>
                 Workflow file
               </TabButton>
@@ -537,13 +630,17 @@ export function ComfyWorkflowImportModal({
           style={{ animationDelay: "80ms" }}
         >
           <div className="py-4">
-          {configError && !inspection && (
+          {showSettings && (
+            <ComfySettingsTab settings={settingsDraft} onChange={setSettingsDraft} />
+          )}
+
+          {!showSettings && configError && !inspection && (
             <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
               <p className="text-xs text-amber-300">{configError}</p>
             </div>
           )}
 
-          {error && (
+          {!showSettings && error && (
             <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
               <p className="text-xs text-red-300 whitespace-pre-wrap">{error}</p>
               {missingNodes.length > 0 && (
@@ -554,14 +651,14 @@ export function ComfyWorkflowImportModal({
             </div>
           )}
 
-          {reconfigure && !inspection && !error && (
+          {!showSettings && reconfigure && !inspection && !error && (
             <div className="py-12 flex flex-col items-center gap-2">
               <div className="w-5 h-5 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
               <span className="text-xs text-neutral-500">Reading this workflow…</span>
             </div>
           )}
 
-          {!reconfigure && !inspection && tab === "file" && (
+          {!showSettings && !reconfigure && !inspection && tab === "file" && (
             <FileDropZone
               busy={busy}
               dragOver={dragOver}
@@ -571,7 +668,7 @@ export function ComfyWorkflowImportModal({
             />
           )}
 
-          {!reconfigure && !inspection && tab === "blueprints" && (
+          {!showSettings && !reconfigure && !inspection && tab === "blueprints" && (
             <BlueprintPicker
               blueprints={blueprints}
               error={blueprintError}
@@ -583,7 +680,7 @@ export function ComfyWorkflowImportModal({
             />
           )}
 
-          {inspection && (
+          {!showSettings && inspection && (
             <ConfirmStep
               inspection={inspection}
               name={name}
@@ -609,17 +706,27 @@ export function ComfyWorkflowImportModal({
             type="button"
             // There is nothing behind the picks when they were opened directly,
             // so "Back" would strand the dialog on an empty file step.
-            onClick={inspection && !reconfigure ? reset : onClose}
+            onClick={
+              showSettings
+                ? () => setShowSettings(false)
+                : inspection && !reconfigure
+                  ? reset
+                  : onClose
+            }
             className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-[color,scale] duration-150 active:scale-[0.96]"
           >
-            {inspection && !reconfigure ? "Back" : "Cancel"}
+            {showSettings || (inspection && !reconfigure) ? "Back" : "Cancel"}
           </button>
           {/* Why the button is dead, said where the button is — otherwise the
               reason is a section away, under two screens of settings. */}
-          {inspection && blockingReason && (
+          {!showSettings && inspection && blockingReason && (
             <span className="text-[11px] text-neutral-500 truncate">{blockingReason}</span>
           )}
-          {inspection ? (
+          {showSettings ? (
+            <button type="button" onClick={saveSettings} className={PRIMARY_BUTTON}>
+              Save connection
+            </button>
+          ) : inspection ? (
             <button type="button" onClick={attach} disabled={!canAttach} className={PRIMARY_BUTTON}>
               {reconfigure ? "Save changes" : "Add to node"}
             </button>
