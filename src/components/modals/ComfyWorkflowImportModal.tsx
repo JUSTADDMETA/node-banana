@@ -86,7 +86,7 @@ const bindingKey = (nodeId: string, inputKey: string): string => `${nodeId}:${in
 
 /** The dialog's one committing action, wherever the current step puts it. */
 const PRIMARY_BUTTON =
-  "px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
+  "px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-[background-color,scale] duration-150 active:scale-[0.96] disabled:active:scale-100";
 
 /**
  * Import a ComfyUI workflow and confirm what it exposes.
@@ -124,8 +124,51 @@ export function ComfyWorkflowImportModal({
   const [blueprintId, setBlueprintId] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const settings = useMemo(() => (isOpen ? getComfySettings() : null), [isOpen]);
   const configError = settings ? comfyConfigError(settings) : null;
+
+  // Escape belongs to the dialog, not to whatever happens to be focused. Bound
+  // on the document because opening the dialog does not move focus into it —
+  // a keydown on the page would otherwise never reach the panel.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, onClose]);
+
+  // Focus starts inside, so the first Tab continues through the dialog rather
+  // than through the canvas behind it.
+  useEffect(() => {
+    if (!isOpen) return;
+    const frame = requestAnimationFrame(() => panelRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [isOpen]);
+
+  /** Keep Tab inside the dialog: a modal the keyboard can walk out of is not one. */
+  const trapFocus = useCallback((event: React.KeyboardEvent) => {
+    if (event.key !== "Tab" || !panelRef.current) return;
+    const focusable = panelRef.current.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === panelRef.current)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }, []);
 
   const reset = useCallback(() => {
     setInspection(null);
@@ -419,33 +462,51 @@ export function ComfyWorkflowImportModal({
   if (!isOpen) return null;
 
   const canAttach = Boolean(inspection && name.trim() && outputs.length > 0);
+  const blockingReason = !inspection
+    ? null
+    : !name.trim()
+      ? "Give this node a name"
+      : outputs.length === 0
+        ? "Choose at least one output"
+        : null;
   const showBlueprintAdd =
     !reconfigure && tab === "blueprints" && blueprints !== null && blueprints.length > 0;
 
   const dialog = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 animate-dialog-backdrop"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
       onWheelCapture={(e) => e.stopPropagation()}
     >
       <div
-        className="bg-neutral-800 rounded-xl w-[600px] border border-neutral-700 shadow-2xl overflow-clip flex flex-col max-h-[82vh]"
-        onKeyDown={(e) => {
-          if (e.key === "Escape") onClose();
-        }}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="comfy-import-title"
+        tabIndex={-1}
+        className="bg-neutral-800 rounded-xl w-[600px] border border-neutral-700 shadow-2xl overflow-clip flex flex-col max-h-[82vh] focus:outline-none animate-dialog-panel"
+        onKeyDown={trapFocus}
       >
-        <div className="px-8 pt-8 pb-0 shrink-0">
+        <div className="px-8 pt-8 pb-0 shrink-0 animate-dialog-section">
           <div className="flex items-center gap-2 mb-1">
             <ComfyGlyph />
-            <h2 className="text-xl font-medium text-neutral-100">
+            <h2 id="comfy-import-title" className="text-xl font-medium text-neutral-100">
               {reconfigure
                 ? "Inputs, settings and outputs"
                 : inspection
                   ? "Confirm inputs and outputs"
                   : "Add a ComfyUI workflow"}
             </h2>
+            {inspection?.hasAppMode && (
+              <span
+                className="ml-auto shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-300/90 border border-emerald-500/25"
+                title="This workflow ships an App Mode configuration — its author's inputs, settings and outputs are already selected."
+              >
+                App Mode
+              </span>
+            )}
           </div>
           <p className="text-xs text-neutral-500 mb-5">
             {inspection || reconfigure
@@ -467,7 +528,10 @@ export function ComfyWorkflowImportModal({
           )}
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-8 py-5">
+        <div
+          className="flex-1 min-h-0 overflow-y-auto px-8 py-5 animate-dialog-section"
+          style={{ animationDelay: "80ms" }}
+        >
           {configError && !inspection && (
             <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
               <p className="text-xs text-amber-300">{configError}</p>
@@ -531,16 +595,24 @@ export function ComfyWorkflowImportModal({
           )}
         </div>
 
-        <div className="flex justify-between gap-2 px-8 py-4 border-t border-neutral-700/60 shrink-0">
+        <div
+          className="flex items-center justify-between gap-3 px-8 py-4 border-t border-neutral-700/60 shrink-0 animate-dialog-section"
+          style={{ animationDelay: "160ms" }}
+        >
           <button
             type="button"
             // There is nothing behind the picks when they were opened directly,
             // so "Back" would strand the dialog on an empty file step.
             onClick={inspection && !reconfigure ? reset : onClose}
-            className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+            className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-[color,scale] duration-150 active:scale-[0.96]"
           >
             {inspection && !reconfigure ? "Back" : "Cancel"}
           </button>
+          {/* Why the button is dead, said where the button is — otherwise the
+              reason is a section away, under two screens of settings. */}
+          {inspection && blockingReason && (
+            <span className="text-[11px] text-neutral-500 truncate">{blockingReason}</span>
+          )}
           {inspection ? (
             <button type="button" onClick={attach} disabled={!canAttach} className={PRIMARY_BUTTON}>
               {reconfigure ? "Save changes" : "Add to node"}
@@ -597,7 +669,7 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`px-3 py-1.5 text-sm rounded-md transition-all duration-150 ${
+      className={`px-3 py-1.5 text-sm rounded-md transition-[background-color,color,scale] duration-150 active:scale-[0.96] ${
         active
           ? "bg-neutral-700 text-neutral-100 font-medium"
           : "text-neutral-400 hover:text-neutral-300 hover:bg-neutral-800/50"
@@ -707,7 +779,7 @@ function BlueprintPicker({
         <button
           type="button"
           onClick={onRetry}
-          className="px-3 py-1.5 text-xs rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-100 transition-colors"
+          className="px-3 py-2 text-xs rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-100 transition-[background-color,scale] duration-150 active:scale-[0.96]"
         >
           Try again
         </button>
@@ -778,7 +850,7 @@ function BlueprintPicker({
               disabled={busy}
               onClick={() => onSelect(blueprint.id)}
               onDoubleClick={onAdd}
-              className={`w-full text-left px-3 py-3 text-sm truncate transition-colors disabled:cursor-not-allowed ${
+              className={`w-full text-left px-3 py-3 text-sm truncate transition-[background-color,color,scale] duration-150 active:scale-[0.99] disabled:cursor-not-allowed ${
                 isSelected
                   ? "bg-neutral-700 text-white"
                   : "text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
@@ -828,15 +900,48 @@ function ConfirmStep({
   ) => void;
   onToggleMediaInput: (candidate: ComfyNodeCandidate, type: ComfyInputType) => void;
 }) {
-  // Widgets the author curated float to the top: those are the ones the app is
-  // actually meant to expose, and the rest is a long tail of internals.
-  const candidates = useMemo(
-    () =>
-      [...inspection.widgetCandidates].sort(
-        (a, b) => Number(b.fromAppMode) - Number(a.fromAppMode)
-      ),
-    [inspection.widgetCandidates]
-  );
+  const [showAll, setShowAll] = useState(false);
+  const [widgetFilter, setWidgetFilter] = useState("");
+
+  /**
+   * The widgets worth showing without being asked for.
+   *
+   * A workflow of any size offers dozens — a Cloud Blueprint typically ~30,
+   * mostly loader plumbing (which checkpoint, which dtype, which device) that
+   * no node should expose. The ones its author curated, plus whatever is
+   * already exposed, are the short list; the rest waits behind a disclosure.
+   */
+  const [featured, rest] = useMemo(() => {
+    const isFeatured = (c: ComfyWidgetCandidate) =>
+      c.fromAppMode || (roles[bindingKey(c.nodeId, c.inputKey)] ?? "off") !== "off";
+    return [
+      inspection.widgetCandidates.filter(isFeatured),
+      inspection.widgetCandidates.filter((c) => !isFeatured(c)),
+    ];
+    // Deliberately not reacting to `roles`: a widget must not leap between
+    // lists as it is ticked, which would move the row out from under the
+    // pointer mid-click.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inspection.widgetCandidates]);
+
+  /** The hidden remainder, grouped by the node it belongs to. */
+  const groups = useMemo(() => {
+    const term = widgetFilter.trim().toLowerCase();
+    const matching = term
+      ? rest.filter((c) => c.label.toLowerCase().includes(term))
+      : rest;
+    const byNode = new Map<string, { classType: string; items: ComfyWidgetCandidate[] }>();
+    for (const candidate of matching) {
+      const group = byNode.get(candidate.nodeId) ?? { classType: candidate.classType, items: [] };
+      group.items.push(candidate);
+      byNode.set(candidate.nodeId, group);
+    }
+    return [...byNode.entries()];
+  }, [rest, widgetFilter]);
+
+  const exposedCount = inspection.widgetCandidates.filter(
+    (c) => (roles[bindingKey(c.nodeId, c.inputKey)] ?? "off") !== "off"
+  ).length;
 
   // Every loader in the graph, selected or not — a workflow can carry several
   // and only some are meant to be wired from the canvas.
@@ -857,14 +962,6 @@ function ConfirmStep({
 
   return (
     <div className="space-y-5">
-      {inspection.hasAppMode && (
-        <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/25">
-          <p className="text-xs text-emerald-300">
-            App Mode detected — the author&apos;s inputs and outputs are pre-selected.
-          </p>
-        </div>
-      )}
-
       {inspection.warnings.map((warning) => (
         <div key={warning} className="p-3 rounded-lg bg-neutral-900 border border-neutral-700">
           <p className="text-xs text-neutral-400">{warning}</p>
@@ -887,25 +984,30 @@ function ConfirmStep({
       <Section
         title="Inputs"
         hint="Connected from other nodes."
+        count={`${inputs.length} of ${mediaCandidates.length + textInputs.length} exposed`}
         empty="Nothing in this workflow accepts an incoming connection."
         isEmpty={mediaCandidates.length === 0 && textInputs.length === 0}
       >
         {mediaCandidates.map(({ candidate, type }) => {
           const bound = inputs.find((i) => i.nodeId === candidate.nodeId);
           return (
-            <div key={candidate.nodeId} className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(bound)}
-                onChange={() => onToggleMediaInput(candidate, type)}
-                className="w-3.5 h-3.5 rounded bg-neutral-800 shrink-0"
+            <div key={candidate.nodeId} className="flex items-center gap-2 min-h-10">
+              <label
+                className="flex items-center gap-2 shrink-0 h-10 pl-0.5 cursor-pointer"
                 title={
                   bound
                     ? "Remove this handle — the workflow keeps its own file"
                     : "Expose this loader as a handle"
                 }
-              />
-              <TypePill color={handleColor(type)}>{INPUT_TYPE_LABEL[type]}</TypePill>
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(bound)}
+                  onChange={() => onToggleMediaInput(candidate, type)}
+                  className="w-3.5 h-3.5 rounded bg-neutral-800 shrink-0"
+                />
+                <TypePill color={handleColor(type)}>{INPUT_TYPE_LABEL[type]}</TypePill>
+              </label>
               <input
                 type="text"
                 value={bound?.label ?? candidate.label}
@@ -939,42 +1041,109 @@ function ConfirmStep({
       <Section
         title="Settings"
         hint="Adjustable on the node itself."
+        count={`${exposedCount} of ${inspection.widgetCandidates.length} exposed`}
         empty="This workflow has no adjustable widgets."
-        isEmpty={candidates.length === 0}
+        isEmpty={inspection.widgetCandidates.length === 0}
       >
-        <div className="space-y-1">
-          {candidates.map((candidate) => {
-            const key = bindingKey(candidate.nodeId, candidate.inputKey);
-            const role = roles[key] ?? "off";
-            return (
-              <div
-                key={key}
-                className="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-neutral-900/60"
-              >
-                <span
-                  className="flex-1 min-w-0 text-xs text-neutral-300 truncate"
-                  title={`${candidate.label} — currently ${describeValue(candidate.currentValue)}`}
-                >
-                  {candidate.label}
-                  {candidate.fromAppMode && <span className="text-emerald-400/70 ml-1">•</span>}
-                </span>
-                <span className="text-[10px] text-neutral-600 shrink-0 font-mono">
-                  #{candidate.nodeId}
-                </span>
-                <RoleToggle
-                  role={role}
-                  connectable={candidate.connectableAs !== null}
-                  onChange={(next) => onRole(candidate, next)}
-                />
-              </div>
-            );
-          })}
+        <div className="-mx-2">
+          {featured.map((candidate) => (
+            <SettingRow
+              key={bindingKey(candidate.nodeId, candidate.inputKey)}
+              candidate={candidate}
+              label={candidate.label}
+              role={roles[bindingKey(candidate.nodeId, candidate.inputKey)] ?? "off"}
+              onRole={onRole}
+            />
+          ))}
+          {featured.length === 0 && !showAll && (
+            <p className="px-2 text-xs text-neutral-600">
+              This workflow&apos;s author exposed none of its widgets.
+            </p>
+          )}
         </div>
+
+        {rest.length > 0 && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setShowAll((open) => !open)}
+              aria-expanded={showAll}
+              className="flex items-center gap-1.5 min-h-10 text-xs text-neutral-400 hover:text-neutral-200 transition-[color,scale] duration-150 active:scale-[0.96]"
+            >
+              <svg
+                className={`w-3 h-3 transition-transform duration-150 ${showAll ? "rotate-90" : ""}`}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+              {showAll ? "Hide" : `Show ${rest.length} more`} widget{rest.length === 1 ? "" : "s"}
+            </button>
+
+            {showAll && (
+              <div className="mt-1 space-y-3">
+                <div className="flex items-center gap-2 px-2 rounded-lg bg-neutral-900 border border-neutral-700">
+                  <svg
+                    className="w-3.5 h-3.5 shrink-0 text-neutral-400"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  >
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.5-3.5" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={widgetFilter}
+                    onChange={(e) => setWidgetFilter(e.target.value)}
+                    placeholder="Search widgets…"
+                    aria-label="Search widgets"
+                    className="w-full bg-transparent py-2 text-xs text-neutral-100 placeholder:text-neutral-400 focus:outline-none"
+                  />
+                </div>
+                {groups.length === 0 ? (
+                  <p className="px-2 py-2 text-xs text-neutral-600">No widgets match that search.</p>
+                ) : (
+                  // Grouped by node: the class name is the same on every row of a
+                  // group, so saying it once leaves the widget's own name to read.
+                  groups.map(([nodeId, group]) => (
+                    <div key={nodeId}>
+                      <div className="flex items-baseline gap-2 px-2 mb-0.5">
+                        <span className="text-[11px] font-medium text-neutral-400">
+                          {group.classType}
+                        </span>
+                        <span className="text-[10px] text-neutral-600 font-mono">#{nodeId}</span>
+                      </div>
+                      <div className="-mx-2">
+                        {group.items.map((candidate) => (
+                          <SettingRow
+                            key={bindingKey(candidate.nodeId, candidate.inputKey)}
+                            candidate={candidate}
+                            label={widgetName(candidate)}
+                            role={roles[bindingKey(candidate.nodeId, candidate.inputKey)] ?? "off"}
+                            onRole={onRole}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </Section>
 
       <Section
         title="Outputs"
         hint="Produced results, connected onward."
+        count={`${outputs.length} of ${inspection.outputCandidates.length} exposed`}
         empty="This workflow has no Save or Preview node."
         isEmpty={inspection.outputCandidates.length === 0}
       >
@@ -982,16 +1151,18 @@ function ConfirmStep({
           const bound = outputs.find((o) => o.nodeId === candidate.nodeId);
           const type = outputTypeOf(inspection, candidate.nodeId);
           return (
-            <div key={candidate.nodeId} className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={Boolean(bound)}
-                onChange={() =>
-                  onToggleOutput(candidate.nodeId, candidate.classType, candidate.label, type)
-                }
-                className="w-3.5 h-3.5 rounded bg-neutral-800 shrink-0"
-              />
-              <TypePill color={handleColor(type)}>{OUTPUT_TYPE_LABEL[type]}</TypePill>
+            <div key={candidate.nodeId} className="flex items-center gap-2 min-h-10">
+              <label className="flex items-center gap-2 shrink-0 h-10 pl-0.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(bound)}
+                  onChange={() =>
+                    onToggleOutput(candidate.nodeId, candidate.classType, candidate.label, type)
+                  }
+                  className="w-3.5 h-3.5 rounded bg-neutral-800 shrink-0"
+                />
+                <TypePill color={handleColor(type)}>{OUTPUT_TYPE_LABEL[type]}</TypePill>
+              </label>
               <input
                 type="text"
                 value={bound?.label ?? candidate.label}
@@ -1013,21 +1184,30 @@ function ConfirmStep({
 function Section({
   title,
   hint,
+  count,
   empty,
   isEmpty,
   children,
 }: {
   title: string;
   hint: string;
+  /** State of the section, readable without scrolling it. */
+  count?: string;
   empty: string;
   isEmpty: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <div className="flex items-baseline gap-2 mb-2">
-        <h3 className="text-sm text-neutral-200 font-medium">{title}</h3>
-        <span className="text-[10px] text-neutral-600">{hint}</span>
+      {/* Sticky, and bled to the dialog's edges so rows pass behind it rather
+          than beside it — three sections deep, the heading is the only thing
+          saying which list you are in. */}
+      <div className="sticky top-0 z-10 -mx-8 px-8 py-2 bg-neutral-800 flex items-baseline gap-2">
+        <h3 className="text-sm text-neutral-200 font-medium shrink-0">{title}</h3>
+        <span className="text-[10px] text-neutral-600 truncate">{hint}</span>
+        {count && !isEmpty && (
+          <span className="ml-auto shrink-0 text-[10px] text-neutral-500 tabular-nums">{count}</span>
+        )}
       </div>
       {isEmpty ? (
         <p className="text-xs text-neutral-600 py-2">{empty}</p>
@@ -1038,45 +1218,72 @@ function Section({
   );
 }
 
-function RoleToggle({
+/** `KSampler · Seed` → `Seed`, for rows already sitting under their node. */
+function widgetName(candidate: ComfyWidgetCandidate): string {
+  const tail = candidate.label.split("·").pop()?.trim();
+  return tail && tail.length > 0 ? tail : candidate.label;
+}
+
+/**
+ * One widget, exposed or not.
+ *
+ * The whole row is the target: a checkbox alone is 14px of hittable area in a
+ * list dozens long. Connectable widgets get a second choice — inline setting or
+ * a handle — but only once exposed, and only where it is possible at all, which
+ * in a typical workflow is one row in thirty.
+ */
+function SettingRow({
+  candidate,
+  label,
   role,
-  connectable,
-  onChange,
+  onRole,
 }: {
+  candidate: ComfyWidgetCandidate;
+  label: string;
   role: WidgetRole;
-  connectable: boolean;
-  onChange: (role: WidgetRole) => void;
+  onRole: (candidate: ComfyWidgetCandidate, role: WidgetRole) => void;
 }) {
-  const options: Array<{ value: WidgetRole; label: string; title: string }> = [
-    { value: "off", label: "Hide", title: "Keep the workflow's saved value" },
-    { value: "setting", label: "Setting", title: "Adjustable on the node" },
-    ...(connectable
-      ? [
-          {
-            value: "input" as const,
-            label: "Input",
-            title: "A text handle other nodes can connect to",
-          },
-        ]
-      : []),
-  ];
+  const exposed = role !== "off";
   return (
-    <div className="flex gap-0.5 p-0.5 bg-neutral-900 rounded-md shrink-0">
-      {options.map((option) => (
+    <div className="flex items-center gap-2 pr-2 rounded-lg hover:bg-neutral-900/60 transition-colors">
+      <label className="flex flex-1 min-w-0 items-center gap-2.5 min-h-10 pl-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={exposed}
+          onChange={() => onRole(candidate, exposed ? "off" : "setting")}
+          className="w-3.5 h-3.5 shrink-0 rounded bg-neutral-800"
+        />
+        <span
+          className={`flex-1 min-w-0 text-xs truncate ${exposed ? "text-neutral-100" : "text-neutral-400"}`}
+          title={`${candidate.label} — currently ${describeValue(candidate.currentValue)}`}
+        >
+          {label}
+        </span>
+      </label>
+      {candidate.fromAppMode && (
+        <span
+          className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400/70"
+          title="Chosen by this workflow's author"
+        />
+      )}
+      {exposed && candidate.connectableAs && (
         <button
-          key={option.value}
           type="button"
-          title={option.title}
-          onClick={() => onChange(option.value)}
-          className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
-            role === option.value
+          onClick={() => onRole(candidate, role === "input" ? "setting" : "input")}
+          title={
+            role === "input"
+              ? "Currently a handle — click to make it an inline setting"
+              : "Currently an inline setting — click to make it a handle other nodes connect to"
+          }
+          className={`shrink-0 px-2 py-1 rounded-md text-[10px] transition-[background-color,color,scale] duration-150 active:scale-[0.96] ${
+            role === "input"
               ? "bg-neutral-700 text-neutral-100"
-              : "text-neutral-500 hover:text-neutral-300"
+              : "text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
           }`}
         >
-          {option.label}
+          Input
         </button>
-      ))}
+      )}
     </div>
   );
 }
