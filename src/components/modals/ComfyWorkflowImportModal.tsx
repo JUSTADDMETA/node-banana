@@ -988,54 +988,40 @@ function ConfirmStep({
         empty="Nothing in this workflow accepts an incoming connection."
         isEmpty={mediaCandidates.length === 0 && textInputs.length === 0}
       >
-        {mediaCandidates.map(({ candidate, type }) => {
-          const bound = inputs.find((i) => i.nodeId === candidate.nodeId);
-          return (
-            <div key={candidate.nodeId} className="flex items-center gap-2 min-h-10">
-              <label
-                className="flex items-center gap-2 shrink-0 h-10 pl-0.5 cursor-pointer"
-                title={
-                  bound
-                    ? "Remove this handle — the workflow keeps its own file"
-                    : "Expose this loader as a handle"
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={Boolean(bound)}
-                  onChange={() => onToggleMediaInput(candidate, type)}
-                  className="w-3.5 h-3.5 rounded bg-neutral-800 shrink-0"
-                />
-                <TypePill color={handleColor(type)}>{INPUT_TYPE_LABEL[type]}</TypePill>
-              </label>
-              <input
-                type="text"
-                value={bound?.label ?? candidate.label}
-                disabled={!bound}
-                onChange={(e) => bound && onRenameInput(bound.id, e.target.value)}
-                className="flex-1 min-w-0 px-2 py-1 bg-neutral-800 border border-neutral-600 rounded-lg text-neutral-100 text-xs focus:outline-none focus:border-neutral-500 disabled:opacity-40"
+        <ListBox>
+          {mediaCandidates.map(({ candidate, type }) => {
+            const bound = inputs.find((i) => i.nodeId === candidate.nodeId);
+            return (
+              <BindingRow
+                key={candidate.nodeId}
+                type={type}
+                typeLabel={INPUT_TYPE_LABEL[type]}
+                nodeId={candidate.nodeId}
+                name={bound?.label ?? candidate.label}
+                bound={Boolean(bound)}
+                onRename={(value) => bound && onRenameInput(bound.id, value)}
+                onToggle={() => onToggleMediaInput(candidate, type)}
+                onLabel="Input"
+                onTitle="A handle other nodes connect to"
+                offTitle="Hidden — the workflow keeps its own file"
               />
-              <span className="text-[10px] text-neutral-600 shrink-0 font-mono">
-                #{candidate.nodeId}
-              </span>
-            </div>
-          );
-        })}
-        {textInputs.map((input) => (
-          <div key={input.id} className="flex items-center gap-2">
-            <span className="w-3.5 shrink-0" aria-hidden />
-            <TypePill color={handleColor(input.type)}>{INPUT_TYPE_LABEL[input.type]}</TypePill>
-            <input
-              type="text"
-              value={input.label}
-              onChange={(e) => onRenameInput(input.id, e.target.value)}
-              className="flex-1 min-w-0 px-2 py-1 bg-neutral-800 border border-neutral-600 rounded-lg text-neutral-100 text-xs focus:outline-none focus:border-neutral-500"
+            );
+          })}
+          {textInputs.map((input) => (
+            <BindingRow
+              key={input.id}
+              type={input.type}
+              typeLabel={INPUT_TYPE_LABEL[input.type]}
+              nodeId={input.nodeId}
+              name={input.label}
+              bound
+              onRename={(value) => onRenameInput(input.id, value)}
+              onLabel="Input"
+              onTitle="A handle other nodes connect to"
+              offTitle=""
             />
-            <span className="text-[10px] text-neutral-600 shrink-0 font-mono">
-              #{input.nodeId}
-            </span>
-          </div>
-        ))}
+          ))}
+        </ListBox>
       </Section>
 
       <Section
@@ -1045,22 +1031,25 @@ function ConfirmStep({
         empty="This workflow has no adjustable widgets."
         isEmpty={inspection.widgetCandidates.length === 0}
       >
-        <div className="-mx-2">
-          {featured.map((candidate) => (
-            <SettingRow
-              key={bindingKey(candidate.nodeId, candidate.inputKey)}
-              candidate={candidate}
-              label={candidate.label}
-              role={roles[bindingKey(candidate.nodeId, candidate.inputKey)] ?? "off"}
-              onRole={onRole}
-            />
-          ))}
-          {featured.length === 0 && !showAll && (
-            <p className="px-2 text-xs text-neutral-600">
+        {featured.length > 0 ? (
+          <ListBox>
+            {featured.map((candidate) => (
+              <SettingRow
+                key={bindingKey(candidate.nodeId, candidate.inputKey)}
+                candidate={candidate}
+                label={candidate.label}
+                role={roles[bindingKey(candidate.nodeId, candidate.inputKey)] ?? "off"}
+                onRole={onRole}
+              />
+            ))}
+          </ListBox>
+        ) : (
+          !showAll && (
+            <p className="text-xs text-neutral-600">
               This workflow&apos;s author exposed none of its widgets.
             </p>
-          )}
-        </div>
+          )
+        )}
 
         {rest.length > 0 && (
           <div className="mt-2">
@@ -1085,8 +1074,8 @@ function ConfirmStep({
             </button>
 
             {showAll && (
-              <div className="mt-1 space-y-3">
-                <div className="flex items-center gap-2 px-2 rounded-lg bg-neutral-900 border border-neutral-700">
+              <div className="mt-1 rounded-lg border border-neutral-700/60 bg-neutral-900 overflow-hidden">
+                <div className="flex items-center gap-2 px-2.5 border-b border-neutral-800">
                   <svg
                     className="w-3.5 h-3.5 shrink-0 text-neutral-400"
                     viewBox="0 0 24 24"
@@ -1104,23 +1093,27 @@ function ConfirmStep({
                     onChange={(e) => setWidgetFilter(e.target.value)}
                     placeholder="Search widgets…"
                     aria-label="Search widgets"
-                    className="w-full bg-transparent py-2 text-xs text-neutral-100 placeholder:text-neutral-400 focus:outline-none"
+                    className="w-full bg-transparent py-2.5 text-xs text-neutral-100 placeholder:text-neutral-400 focus:outline-none"
                   />
                 </div>
-                {groups.length === 0 ? (
-                  <p className="px-2 py-2 text-xs text-neutral-600">No widgets match that search.</p>
-                ) : (
-                  // Grouped by node: the class name is the same on every row of a
-                  // group, so saying it once leaves the widget's own name to read.
-                  groups.map(([nodeId, group]) => (
-                    <div key={nodeId}>
-                      <div className="flex items-baseline gap-2 px-2 mb-0.5">
-                        <span className="text-[11px] font-medium text-neutral-400">
-                          {group.classType}
-                        </span>
-                        <span className="text-[10px] text-neutral-600 font-mono">#{nodeId}</span>
-                      </div>
-                      <div className="-mx-2">
+                {/* Bounded: thirty rows would push the Outputs section — and the
+                    reason Save is disabled — back off the bottom of the dialog. */}
+                <div className="max-h-[300px] overflow-y-auto">
+                  {groups.length === 0 ? (
+                    <p className="px-2.5 py-4 text-xs text-neutral-600">
+                      No widgets match that search.
+                    </p>
+                  ) : (
+                    // Grouped by node: the class name is the same on every row of a
+                    // group, so saying it once leaves the widget's own name to read.
+                    groups.map(([nodeId, group]) => (
+                      <div key={nodeId} className="border-b border-neutral-800/60 last:border-b-0">
+                        <div className="flex items-baseline gap-2 px-2.5 pt-2 pb-0.5 bg-neutral-950/40">
+                          <span className="text-[11px] font-medium text-neutral-400">
+                            {group.classType}
+                          </span>
+                          <span className="text-[10px] text-neutral-600 font-mono">#{nodeId}</span>
+                        </div>
                         {group.items.map((candidate) => (
                           <SettingRow
                             key={bindingKey(candidate.nodeId, candidate.inputKey)}
@@ -1131,9 +1124,9 @@ function ConfirmStep({
                           />
                         ))}
                       </div>
-                    </div>
-                  ))
-                )}
+                    ))
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1147,35 +1140,29 @@ function ConfirmStep({
         empty="This workflow has no Save or Preview node."
         isEmpty={inspection.outputCandidates.length === 0}
       >
-        {inspection.outputCandidates.map((candidate) => {
-          const bound = outputs.find((o) => o.nodeId === candidate.nodeId);
-          const type = outputTypeOf(inspection, candidate.nodeId);
-          return (
-            <div key={candidate.nodeId} className="flex items-center gap-2 min-h-10">
-              <label className="flex items-center gap-2 shrink-0 h-10 pl-0.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(bound)}
-                  onChange={() =>
-                    onToggleOutput(candidate.nodeId, candidate.classType, candidate.label, type)
-                  }
-                  className="w-3.5 h-3.5 rounded bg-neutral-800 shrink-0"
-                />
-                <TypePill color={handleColor(type)}>{OUTPUT_TYPE_LABEL[type]}</TypePill>
-              </label>
-              <input
-                type="text"
-                value={bound?.label ?? candidate.label}
-                disabled={!bound}
-                onChange={(e) => onRenameOutput(candidate.nodeId, e.target.value)}
-                className="flex-1 min-w-0 px-2 py-1 bg-neutral-800 border border-neutral-600 rounded-lg text-neutral-100 text-xs focus:outline-none focus:border-neutral-500 disabled:opacity-40"
+        <ListBox>
+          {inspection.outputCandidates.map((candidate) => {
+            const bound = outputs.find((o) => o.nodeId === candidate.nodeId);
+            const type = outputTypeOf(inspection, candidate.nodeId);
+            return (
+              <BindingRow
+                key={candidate.nodeId}
+                type={type}
+                typeLabel={OUTPUT_TYPE_LABEL[type]}
+                nodeId={candidate.nodeId}
+                name={bound?.label ?? candidate.label}
+                bound={Boolean(bound)}
+                onRename={(value) => onRenameOutput(candidate.nodeId, value)}
+                onToggle={() =>
+                  onToggleOutput(candidate.nodeId, candidate.classType, candidate.label, type)
+                }
+                onLabel="Output"
+                onTitle="A handle downstream nodes read from"
+                offTitle="Hidden — this result is discarded"
               />
-              <span className="text-[10px] text-neutral-600 shrink-0 font-mono">
-                #{candidate.nodeId}
-              </span>
-            </div>
-          );
-        })}
+            );
+          })}
+        </ListBox>
       </Section>
     </div>
   );
@@ -1224,6 +1211,110 @@ function widgetName(candidate: ComfyWidgetCandidate): string {
   return tail && tail.length > 0 ? tail : candidate.label;
 }
 
+/** The recessed surface a list of rows sits on. */
+function ListBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-neutral-700/60 bg-neutral-900 overflow-hidden divide-y divide-neutral-800/60">
+      {children}
+    </div>
+  );
+}
+
+/**
+ * What a row becomes, chosen from named states rather than ticked.
+ *
+ * Each option says what the row *is* when it wins — Setting, Input, Output —
+ * so the row's state is legible without cross-referencing a checkbox against
+ * the section it sits in.
+ */
+function ChoiceToggle({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: Array<{ value: string; label: string; title: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="flex gap-0.5 p-0.5 bg-neutral-950/60 rounded-md shrink-0">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          title={option.title}
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+          className={`px-2.5 py-1.5 text-[10px] font-medium rounded transition-[background-color,color,scale] duration-150 active:scale-[0.96] ${
+            value === option.value
+              ? "bg-neutral-700 text-neutral-100"
+              : "text-neutral-500 hover:text-neutral-200"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A loader or a sink: a handle on the node, or left to the workflow's own file.
+ *
+ * The name is editable in place, but only once the row is on — a field that
+ * renames something the node will not have is a place to waste a keystroke.
+ */
+function BindingRow({
+  type,
+  typeLabel,
+  nodeId,
+  name,
+  bound,
+  onRename,
+  onToggle,
+  onLabel,
+  onTitle,
+  offTitle,
+}: {
+  type: string;
+  typeLabel: string;
+  nodeId: string;
+  name: string;
+  bound: boolean;
+  onRename: (value: string) => void;
+  /** Absent for rows that cannot be turned off, such as a promoted widget. */
+  onToggle?: () => void;
+  onLabel: string;
+  onTitle: string;
+  offTitle: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 min-h-11 px-2.5 hover:bg-neutral-800/40 transition-colors">
+      <TypePill color={handleColor(type)}>{typeLabel}</TypePill>
+      <input
+        type="text"
+        value={name}
+        disabled={!bound}
+        onChange={(e) => onRename(e.target.value)}
+        className="flex-1 min-w-0 px-2 py-1.5 bg-transparent border border-transparent rounded-md text-neutral-100 text-xs hover:border-neutral-700 focus:border-neutral-600 focus:bg-neutral-950/40 focus:outline-none disabled:text-neutral-500 disabled:hover:border-transparent"
+      />
+      <span className="text-[10px] text-neutral-600 shrink-0 font-mono">#{nodeId}</span>
+      {onToggle && (
+        <ChoiceToggle
+          value={bound ? "on" : "off"}
+          onChange={(next) => {
+            if ((next === "on") !== bound) onToggle();
+          }}
+          options={[
+            { value: "off", label: "Hide", title: offTitle },
+            { value: "on", label: onLabel, title: onTitle },
+          ]}
+        />
+      )}
+    </div>
+  );
+}
+
 /**
  * One widget, exposed or not.
  *
@@ -1245,45 +1336,37 @@ function SettingRow({
 }) {
   const exposed = role !== "off";
   return (
-    <div className="flex items-center gap-2 pr-2 rounded-lg hover:bg-neutral-900/60 transition-colors">
-      <label className="flex flex-1 min-w-0 items-center gap-2.5 min-h-10 pl-2 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={exposed}
-          onChange={() => onRole(candidate, exposed ? "off" : "setting")}
-          className="w-3.5 h-3.5 shrink-0 rounded bg-neutral-800"
-        />
-        <span
-          className={`flex-1 min-w-0 text-xs truncate ${exposed ? "text-neutral-100" : "text-neutral-400"}`}
-          title={`${candidate.label} — currently ${describeValue(candidate.currentValue)}`}
-        >
-          {label}
-        </span>
-      </label>
+    <div className="flex items-center gap-2 min-h-11 px-2.5 hover:bg-neutral-800/40 transition-colors">
+      <span
+        className={`flex-1 min-w-0 text-xs truncate ${exposed ? "text-neutral-100" : "text-neutral-400"}`}
+        title={`${candidate.label} — currently ${describeValue(candidate.currentValue)}`}
+      >
+        {label}
+      </span>
       {candidate.fromAppMode && (
         <span
           className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400/70"
           title="Chosen by this workflow's author"
         />
       )}
-      {exposed && candidate.connectableAs && (
-        <button
-          type="button"
-          onClick={() => onRole(candidate, role === "input" ? "setting" : "input")}
-          title={
-            role === "input"
-              ? "Currently a handle — click to make it an inline setting"
-              : "Currently an inline setting — click to make it a handle other nodes connect to"
-          }
-          className={`shrink-0 px-2 py-1 rounded-md text-[10px] transition-[background-color,color,scale] duration-150 active:scale-[0.96] ${
-            role === "input"
-              ? "bg-neutral-700 text-neutral-100"
-              : "text-neutral-500 hover:text-neutral-200 hover:bg-neutral-800"
-          }`}
-        >
-          Input
-        </button>
-      )}
+      <ChoiceToggle
+        value={role}
+        onChange={(next) => onRole(candidate, next as WidgetRole)}
+        options={[
+          { value: "off", label: "Hide", title: "Keep the workflow's saved value" },
+          { value: "setting", label: "Setting", title: "Adjustable on the node itself" },
+          // Only some widgets can be driven by a wire — a model filename cannot.
+          ...(candidate.connectableAs
+            ? [
+                {
+                  value: "input",
+                  label: "Input",
+                  title: "A handle other nodes connect to",
+                },
+              ]
+            : []),
+        ]}
+      />
     </div>
   );
 }
