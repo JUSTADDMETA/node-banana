@@ -409,15 +409,15 @@ function ComfyAppHeader({
   return (
     <div className="flex items-center gap-2 pt-2 pb-1.5 shrink-0">
       <div className="min-w-0 flex-1">
+        {/* Where this came from, not what it is called — the node's own header
+            carries the workflow's name, and repeating it here says nothing. */}
         <p className="text-[11px] font-medium text-neutral-200 truncate" title={app.name}>
-          {app.name}
+          {app.source === "blueprint" ? "Blueprint" : "App workflow"}
         </p>
         <p className="text-[9px] text-neutral-500 truncate">
           {runStatus
             ? runStatus.replace(/_/g, " ")
-            : `${app.nodeCount} node${app.nodeCount === 1 ? "" : "s"}${
-                app.source === "blueprint" ? " · Blueprint" : ""
-              }`}
+            : `${app.nodeCount} node${app.nodeCount === 1 ? "" : "s"}`}
         </p>
       </div>
       <HeaderButton onClick={onEdit} title="Choose inputs, settings and outputs">

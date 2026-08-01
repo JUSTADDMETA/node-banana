@@ -576,6 +576,12 @@ export function WorkflowCanvas() {
       if (model?.name) return model.name;
     }
 
+    // A Comfy node is titled by the workflow it runs; the wordmark beside it
+    // already says what kind of node it is. Unattached, the mark stands alone.
+    if (node.type === "comfyApp") {
+      return ((node.data as any)?.app?.name as string) || "";
+    }
+
     return NODE_TITLES[node.type || ""] || "Node";
   }, []);
 
@@ -2463,7 +2469,7 @@ export function WorkflowCanvas() {
                 title={getNodeTitle(node)}
                 titleLogo={
                   node.type === "comfyApp" ? (
-                    <ComfyWordmark className="h-3 w-auto shrink-0" label={getNodeTitle(node)} />
+                    <ComfyWordmark className="h-3 w-auto shrink-0" />
                   ) : undefined
                 }
                 customTitle={node.data?.customTitle}
