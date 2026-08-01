@@ -84,6 +84,10 @@ const OUTPUT_TYPE_LABEL: Record<ComfyOutputType, string> = {
 
 const bindingKey = (nodeId: string, inputKey: string): string => `${nodeId}:${inputKey}`;
 
+/** The dialog's one committing action, wherever the current step puts it. */
+const PRIMARY_BUTTON =
+  "px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
+
 /**
  * Import a ComfyUI workflow and confirm what it exposes.
  *
@@ -415,6 +419,8 @@ export function ComfyWorkflowImportModal({
   if (!isOpen) return null;
 
   const canAttach = Boolean(inspection && name.trim() && outputs.length > 0);
+  const showBlueprintAdd =
+    !reconfigure && tab === "blueprints" && blueprints !== null && blueprints.length > 0;
 
   const dialog = (
     <div
@@ -535,15 +541,23 @@ export function ComfyWorkflowImportModal({
           >
             {inspection && !reconfigure ? "Back" : "Cancel"}
           </button>
-          {inspection && (
-            <button
-              type="button"
-              onClick={attach}
-              disabled={!canAttach}
-              className="px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
+          {inspection ? (
+            <button type="button" onClick={attach} disabled={!canAttach} className={PRIMARY_BUTTON}>
               {reconfigure ? "Save changes" : "Add to node"}
             </button>
+          ) : (
+            // The Blueprint list confirms from here too, so the dialog has one
+            // place where a choice is committed rather than one per step.
+            showBlueprintAdd && (
+              <button
+                type="button"
+                onClick={() => void importBlueprint(blueprintId)}
+                disabled={!blueprintId || busy}
+                className={PRIMARY_BUTTON}
+              >
+                {busy ? "Reading…" : "Add"}
+              </button>
+            )
           )}
         </div>
       </div>
@@ -724,78 +738,61 @@ function BlueprintPicker({
     : blueprints;
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-lg border border-neutral-700 bg-neutral-900 overflow-hidden">
-        {/* Header row: the list is long enough that scanning it is the slow way
-            to a known name. */}
-        <div className="flex items-center gap-2 px-3 border-b border-neutral-800">
-          <svg
-            className="w-3.5 h-3.5 shrink-0 text-neutral-600"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" />
-          </svg>
-          <input
-            type="text"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Search Blueprints…"
-            aria-label="Search Blueprints"
-            className="w-full bg-transparent py-2 text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none"
-          />
-        </div>
-        <div
-          role="listbox"
-          aria-label="Blueprints"
-          className="divide-y divide-neutral-800/80 max-h-[280px] overflow-y-auto"
+    <div className="rounded-lg border border-neutral-700 bg-neutral-900 overflow-hidden">
+      {/* Header row: the list is long enough that scanning it is the slow way
+          to a known name. */}
+      <div className="flex items-center gap-2 px-3 border-b border-neutral-800">
+        <svg
+          className="w-3.5 h-3.5 shrink-0 text-neutral-400"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
         >
-          {visible.map((blueprint) => {
-            const isSelected = blueprint.id === selected;
-            return (
-              <button
-                key={blueprint.id}
-                type="button"
-                role="option"
-                aria-selected={isSelected}
-                disabled={busy}
-                onClick={() => onSelect(blueprint.id)}
-                onDoubleClick={onAdd}
-                className={`w-full text-left px-3 py-2 text-sm truncate transition-colors disabled:cursor-not-allowed ${
-                  isSelected
-                    ? "bg-neutral-700 text-white"
-                    : "text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
-                }`}
-              >
-                {blueprint.name}
-              </button>
-            );
-          })}
-          {visible.length === 0 && (
-            <p className="px-3 py-6 text-xs text-neutral-600 text-center">
-              No Blueprints match that search.
-            </p>
-          )}
-        </div>
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search Blueprints…"
+          aria-label="Search Blueprints"
+          className="w-full bg-transparent py-2.5 text-sm text-neutral-100 placeholder:text-neutral-400 focus:outline-none"
+        />
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[10px] text-neutral-600">
-          {term
-            ? `${visible.length} of ${blueprints.length} Blueprints`
-            : `${blueprints.length} available on this ComfyUI`}
-        </span>
-        <button
-          type="button"
-          onClick={onAdd}
-          disabled={!selected || busy}
-          className="px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {busy ? "Reading…" : "Add"}
-        </button>
+      <div
+        role="listbox"
+        aria-label="Blueprints"
+        className="divide-y divide-neutral-800/80 max-h-[280px] overflow-y-auto"
+      >
+        {visible.map((blueprint) => {
+          const isSelected = blueprint.id === selected;
+          return (
+            <button
+              key={blueprint.id}
+              type="button"
+              role="option"
+              aria-selected={isSelected}
+              disabled={busy}
+              onClick={() => onSelect(blueprint.id)}
+              onDoubleClick={onAdd}
+              className={`w-full text-left px-3 py-3 text-sm truncate transition-colors disabled:cursor-not-allowed ${
+                isSelected
+                  ? "bg-neutral-700 text-white"
+                  : "text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
+              }`}
+            >
+              {blueprint.name}
+            </button>
+          );
+        })}
+        {visible.length === 0 && (
+          <p className="px-3 py-6 text-xs text-neutral-600 text-center">
+            No Blueprints match that search.
+          </p>
+        )}
       </div>
     </div>
   );
