@@ -12,12 +12,12 @@ import {
   type ComfyReconfigureTarget,
   type ComfyUpload,
 } from "@/components/modals/ComfyWorkflowImportModal";
+import { ComfyWordmark } from "@/components/icons/ComfyWordmark";
 import { useShowHandleLabels } from "@/hooks/useShowHandleLabels";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { outputsToNodeData } from "@/store/execution/comfyAppExecutor";
 import { appToInputSchema } from "@/lib/comfy/nodeSchema";
 import { mergeParamValues } from "@/lib/comfy/reconfigure";
-import { getComfySettings } from "@/lib/comfy/settings";
 import type {
   ComfyAppDefinition,
   ComfyInputType,
@@ -322,7 +322,13 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
 
         <div className="relative w-full h-full min-h-0 flex flex-col overflow-hidden">
           {!app ? (
-            <EmptyState onImport={() => setModal("replace")} />
+            <EmptyState
+              onImport={() => setModal("replace")}
+              onDropWorkflow={(upload) => {
+                setDropped(upload);
+                setModal("replace");
+              }}
+            />
           ) : (
             <>
               <ComfyAppHeader
@@ -358,39 +364,65 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   );
 }
 
-function EmptyState({ onImport }: { onImport: () => void }) {
-  const mode = getComfySettings().mode;
+/**
+ * A node with no workflow yet: a place to drop one.
+ *
+ * It takes a dropped file itself rather than leaving it to the canvas, which
+ * would answer by making a *second* node and leaving this one still empty.
+ */
+function EmptyState({
+  onImport,
+  onDropWorkflow,
+}: {
+  onImport: () => void;
+  onDropWorkflow: (upload: ComfyUpload) => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+
+  const jsonFrom = (transfer: DataTransfer): File | undefined =>
+    Array.from(transfer.files).find(
+      (file) => file.type === "application/json" || file.name.endsWith(".json")
+    );
+
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center px-4">
-      <svg
-        className="w-8 h-8 text-neutral-600"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <rect x="3" y="3" width="7" height="7" rx="1.5" />
-        <rect x="14" y="14" width="7" height="7" rx="1.5" />
-        <path d="M10 6.5h2.5a1.5 1.5 0 0 1 1.5 1.5v9.5" />
-      </svg>
-      <div>
-        <p className="text-sm text-neutral-300 font-medium">ComfyUI App</p>
-        <p className="text-[11px] text-neutral-500 mt-0.5">
-          Attach a ComfyUI workflow to turn it into a node
-        </p>
-      </div>
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        setDragOver(false);
+        const file = jsonFrom(e.dataTransfer);
+        // Anything else — an image, say — is the canvas's to deal with, so it
+        // is left to bubble.
+        if (!file) return;
+        e.preventDefault();
+        e.stopPropagation();
+        void file.text().then((text) => {
+          try {
+            onDropWorkflow({ workflow: JSON.parse(text), filename: file.name });
+          } catch {
+            // The dialog is where a bad file gets explained; it reports the
+            // same way whether the JSON or the workflow inside it is at fault.
+            onDropWorkflow({ workflow: text, filename: file.name });
+          }
+        });
+      }}
+      className={`nodrag nopan flex-1 flex flex-col items-center justify-center gap-4 my-2 rounded-xl border border-dashed transition-colors ${
+        dragOver
+          ? "border-blue-500 bg-blue-500/5"
+          : "border-neutral-600 hover:border-neutral-500 bg-neutral-900/40"
+      }`}
+    >
+      <ComfyWordmark className="h-5 w-auto text-neutral-500" />
       <button
         type="button"
         onClick={onImport}
         className="nodrag nopan px-3 py-1.5 text-xs rounded-lg bg-neutral-700 hover:bg-neutral-600 text-neutral-100 transition-colors"
       >
-        Choose a workflow
+        Load workflow
       </button>
-      <span className="text-[10px] text-neutral-600">
-        Running on {mode === "cloud" ? "Comfy Cloud" : mode === "local" ? "local ComfyUI" : "a remote ComfyUI"}
-      </span>
     </div>
   );
 }
