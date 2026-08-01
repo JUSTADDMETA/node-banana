@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { ComfyMark } from "@/components/icons/ComfyMark";
 import { buildComfyApp } from "@/lib/comfy/buildApp";
 import { loaderInputType } from "@/lib/comfy/graph";
 import { inputFromCandidate, inputFromLoader, paramFromCandidate } from "@/lib/comfy/inspect";
@@ -491,7 +492,7 @@ export function ComfyWorkflowImportModal({
       >
         <div className="px-8 pt-8 pb-0 shrink-0 animate-dialog-section">
           <div className="flex items-center gap-2 mb-1">
-            <ComfyGlyph />
+            <ComfyMark className="w-4 h-[19px] text-neutral-300 shrink-0" />
             <h2 id="comfy-import-title" className="text-xl font-medium text-neutral-100">
               {reconfigure
                 ? "Inputs, settings and outputs"
@@ -528,10 +529,14 @@ export function ComfyWorkflowImportModal({
           )}
         </div>
 
+        {/* The vertical padding lives on the inner wrapper, not here: a sticky
+            heading inside a padded scroller stops at the *content* edge, and
+            rows then scroll through the padding band above it in full view. */}
         <div
-          className="flex-1 min-h-0 overflow-y-auto px-8 py-5 animate-dialog-section"
+          className="flex-1 min-h-0 overflow-y-auto px-8 animate-dialog-section"
           style={{ animationDelay: "80ms" }}
         >
+          <div className="py-5">
           {configError && !inspection && (
             <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
               <p className="text-xs text-amber-300">{configError}</p>
@@ -593,6 +598,7 @@ export function ComfyWorkflowImportModal({
               onToggleMediaInput={toggleMediaInput}
             />
           )}
+          </div>
         </div>
 
         <div
@@ -1107,12 +1113,15 @@ function ConfirmStep({
                     // Grouped by node: the class name is the same on every row of a
                     // group, so saying it once leaves the widget's own name to read.
                     groups.map(([nodeId, group]) => (
-                      <div key={nodeId} className="border-b border-neutral-800/60 last:border-b-0">
-                        <div className="flex items-baseline gap-2 px-2.5 pt-2 pb-0.5 bg-neutral-950/40">
-                          <span className="text-[11px] font-medium text-neutral-400">
+                      <div key={nodeId}>
+                        {/* A band, not a row: the node a widget belongs to is a
+                            heading over the list, and at row weight the two
+                            were being read as the same kind of thing. */}
+                        <div className="flex items-baseline gap-2 px-2.5 py-1 bg-neutral-950/80 border-y border-neutral-800">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
                             {group.classType}
                           </span>
-                          <span className="text-[10px] text-neutral-600 font-mono">#{nodeId}</span>
+                          <span className="text-[10px] text-neutral-700 font-mono">#{nodeId}</span>
                         </div>
                         {group.items.map((candidate) => (
                           <SettingRow
@@ -1121,6 +1130,7 @@ function ConfirmStep({
                             label={widgetName(candidate)}
                             role={roles[bindingKey(candidate.nodeId, candidate.inputKey)] ?? "off"}
                             onRole={onRole}
+                            indented
                           />
                         ))}
                       </div>
@@ -1328,15 +1338,22 @@ function SettingRow({
   label,
   role,
   onRole,
+  indented = false,
 }: {
   candidate: ComfyWidgetCandidate;
   label: string;
   role: WidgetRole;
   onRole: (candidate: ComfyWidgetCandidate, role: WidgetRole) => void;
+  /** Set under a node heading, so the rows read as that node's. */
+  indented?: boolean;
 }) {
   const exposed = role !== "off";
   return (
-    <div className="flex items-center gap-2 min-h-11 px-2.5 hover:bg-neutral-800/40 transition-colors">
+    <div
+      className={`flex items-center gap-2 min-h-11 pr-2.5 hover:bg-neutral-800/40 transition-colors ${
+        indented ? "pl-5 border-b border-neutral-800/50 last:border-b-0" : "pl-2.5"
+      }`}
+    >
       <span
         className={`flex-1 min-w-0 text-xs truncate ${exposed ? "text-neutral-100" : "text-neutral-400"}`}
         title={`${candidate.label} — currently ${describeValue(candidate.currentValue)}`}
@@ -1405,20 +1422,3 @@ function outputTypeOf(inspection: Inspection, nodeId: string): ComfyOutputType {
   return suggested?.type ?? "image";
 }
 
-function ComfyGlyph() {
-  return (
-    <svg
-      className="w-5 h-5 text-neutral-300"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="3" y="3" width="7" height="7" rx="1.5" />
-      <rect x="14" y="14" width="7" height="7" rx="1.5" />
-      <path d="M10 6.5h2.5a1.5 1.5 0 0 1 1.5 1.5v9.5" />
-    </svg>
-  );
-}

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { NodeType } from "@/types";
+import { ComfyMark } from "./icons/ComfyMark";
 
 // Actions are special menu items that trigger behavior instead of creating a node
 export type MenuAction = "splitGridImmediate";
@@ -143,9 +144,7 @@ const IMAGE_TARGET_OPTIONS: MenuOption[] = [
     type: "comfyApp",
     label: "ComfyUI App",
     icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
-      </svg>
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -248,9 +247,7 @@ const TEXT_TARGET_OPTIONS: MenuOption[] = [
     type: "comfyApp",
     label: "ComfyUI App",
     icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
-      </svg>
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -357,9 +354,7 @@ const IMAGE_SOURCE_OPTIONS: MenuOption[] = [
     type: "comfyApp",
     label: "ComfyUI App",
     icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
-      </svg>
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -435,9 +430,7 @@ const TEXT_SOURCE_OPTIONS: MenuOption[] = [
     type: "comfyApp",
     label: "ComfyUI App",
     icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
-      </svg>
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -541,9 +534,7 @@ const VIDEO_TARGET_OPTIONS: MenuOption[] = [
     type: "comfyApp",
     label: "ComfyUI App",
     icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
-      </svg>
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -620,9 +611,7 @@ const VIDEO_SOURCE_OPTIONS: MenuOption[] = [
     type: "comfyApp",
     label: "ComfyUI App",
     icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
-      </svg>
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -690,9 +679,7 @@ const AUDIO_TARGET_OPTIONS: MenuOption[] = [
     type: "comfyApp",
     label: "ComfyUI App",
     icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
-      </svg>
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -742,9 +729,7 @@ const AUDIO_SOURCE_OPTIONS: MenuOption[] = [
     type: "comfyApp",
     label: "ComfyUI App",
     icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
-      </svg>
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -777,9 +762,7 @@ const THREE_D_SOURCE_OPTIONS: MenuOption[] = [
     type: "comfyApp",
     label: "ComfyUI App",
     icon: (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75V9a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 3.75 9V4.5Zm10.5 10.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75V15Zm-4.5-8.25h3a1.5 1.5 0 0 1 1.5 1.5v9.75" />
-      </svg>
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
