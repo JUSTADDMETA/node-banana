@@ -1356,11 +1356,15 @@ function widgetName(candidate: ComfyWidgetCandidate): string {
 function HelpPanel() {
   return (
     <div className="space-y-5">
-      <p className="text-sm text-neutral-200 leading-relaxed">
-        Drop a ComfyUI workflow onto the canvas, or start from a Blueprint. Select the inputs and
-        the outputs you want, and it becomes a node like any other. It runs on Comfy Cloud, or on
-        your own ComfyUI.
-      </p>
+      <div className="space-y-2">
+        <p className="text-sm text-neutral-200 leading-relaxed">
+          Drop a ComfyUI workflow onto the canvas, or start from a Blueprint. Select the inputs and
+          the outputs you want, and it becomes a node like any other.
+        </p>
+        <p className="text-sm text-neutral-200 leading-relaxed">
+          It runs on Comfy Cloud, or on your local ComfyUI.
+        </p>
+      </div>
 
       <section className="space-y-1.5">
         <h3 className="text-sm font-medium text-neutral-100">App Mode gives the best result</h3>
