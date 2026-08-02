@@ -136,9 +136,17 @@ export function ComfyWorkflowImportModal({
   const [blueprintError, setBlueprintError] = useState<string | null>(null);
   const [blueprintId, setBlueprintId] = useState("");
 
-  // Connection settings, reachable from here: a dialog that reports "no engine
-  // configured" and offers no way to configure one is a dead end.
-  const [showSettings, setShowSettings] = useState(false);
+  // The two panels that take over the body: how to prepare a workflow, and
+  // where it runs. Settings live here because this dialog is where a missing
+  // key first shows up, and reporting a problem it cannot fix is a dead end.
+  const [view, setView] = useState<"main" | "help" | "settings">("main");
+  const showSettings = view === "settings";
+  const showHelp = view === "help";
+  const isMain = view === "main";
+  const setShowSettings = (open: boolean | ((prev: boolean) => boolean)) =>
+    setView((prev) =>
+      (typeof open === "function" ? open(prev === "settings") : open) ? "settings" : "main"
+    );
   const [settingsDraft, setSettingsDraft] = useComfySettingsDraft(showSettings);
   const [settingsSaved, setSettingsSaved] = useState(0);
 
@@ -221,7 +229,7 @@ export function ComfyWorkflowImportModal({
   }, []);
 
   useEffect(() => {
-    if (!isOpen) setShowSettings(false);
+    if (!isOpen) setView("main");
   }, [isOpen]);
 
   useEffect(() => {
@@ -503,7 +511,9 @@ export function ComfyWorkflowImportModal({
 
   if (!isOpen) return null;
 
-  const subtitle = showSettings
+  const subtitle = showHelp
+    ? "What Node Banana reads from a ComfyUI workflow."
+    : showSettings
     ? "Where your workflows run, and what they run as."
     : inspection || reconfigure
       ? "These become the node's handles and settings."
@@ -543,7 +553,9 @@ export function ComfyWorkflowImportModal({
           <div className="flex items-center gap-2">
             <ComfyMark className="w-4 h-[19px] text-neutral-300 shrink-0" />
             <h2 id="comfy-import-title" className="text-xl font-medium text-neutral-100 truncate">
-              {showSettings
+              {showHelp
+                ? "Preparing a workflow"
+                : showSettings
                 ? "ComfyUI connection"
                 : reconfigure
                   ? "Inputs, settings and outputs"
@@ -552,7 +564,7 @@ export function ComfyWorkflowImportModal({
                     : "Add a ComfyUI workflow"}
             </h2>
             <div className="ml-auto shrink-0 flex items-center gap-1 -my-1">
-              {inspection?.hasAppMode && !showSettings && (
+              {inspection?.hasAppMode && isMain && (
                 <span
                   className="mr-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-300/90 border border-emerald-500/25"
                   title="This workflow ships an App Mode configuration — its author's inputs, settings and outputs are already selected."
@@ -560,13 +572,17 @@ export function ComfyWorkflowImportModal({
                   App Mode
                 </span>
               )}
-              <a
-                href={APP_MODE_DOCS}
-                target="_blank"
-                rel="noreferrer noopener"
-                title="How to set a workflow up for this — ComfyUI's App Mode guide"
-                aria-label="Read the App Mode guide"
-                className="w-10 h-10 flex items-center justify-center rounded-lg text-neutral-500 hover:text-neutral-200 hover:bg-neutral-700/50 transition-[background-color,color,scale] duration-150 active:scale-[0.96]"
+              <button
+                type="button"
+                onClick={() => setView((prev) => (prev === "help" ? "main" : "help"))}
+                title="How to prepare a workflow for this"
+                aria-label="How to prepare a workflow"
+                aria-pressed={showHelp}
+                className={`w-10 h-10 flex items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 active:scale-[0.96] ${
+                  showHelp
+                    ? "bg-neutral-700 text-neutral-100"
+                    : "text-neutral-500 hover:text-neutral-200 hover:bg-neutral-700/50"
+                }`}
               >
                 <svg
                   className="w-4 h-4"
@@ -577,10 +593,11 @@ export function ComfyWorkflowImportModal({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 >
-                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                  <circle cx="12" cy="12" r="9.5" />
+                  <path d="M9.2 9.2a2.9 2.9 0 0 1 5.6 1c0 1.9-2.8 2.4-2.8 4" />
+                  <path d="M12 17.6h.01" />
                 </svg>
-              </a>
+              </button>
               <button
                 type="button"
                 onClick={() => setShowSettings((open) => !open)}
@@ -610,7 +627,7 @@ export function ComfyWorkflowImportModal({
           </div>
           {subtitle && <p className="text-xs text-neutral-500 mt-1">{subtitle}</p>}
 
-          {!inspection && !reconfigure && !showSettings && (
+          {isMain && !inspection && !reconfigure && (
             <div className="flex gap-1.5 p-1 mt-4 bg-neutral-900/50 rounded-lg">
               <TabButton active={tab === "file"} onClick={() => setTab("file")}>
                 Workflow file
@@ -634,13 +651,15 @@ export function ComfyWorkflowImportModal({
             <ComfySettingsTab settings={settingsDraft} onChange={setSettingsDraft} />
           )}
 
-          {!showSettings && configError && !inspection && (
+          {showHelp && <HelpPanel />}
+
+          {isMain && configError && !inspection && (
             <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
               <p className="text-xs text-amber-300">{configError}</p>
             </div>
           )}
 
-          {!showSettings && error && (
+          {isMain && error && (
             <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
               <p className="text-xs text-red-300 whitespace-pre-wrap">{error}</p>
               {missingNodes.length > 0 && (
@@ -651,14 +670,14 @@ export function ComfyWorkflowImportModal({
             </div>
           )}
 
-          {!showSettings && reconfigure && !inspection && !error && (
+          {isMain && reconfigure && !inspection && !error && (
             <div className="py-12 flex flex-col items-center gap-2">
               <div className="w-5 h-5 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
               <span className="text-xs text-neutral-500">Reading this workflow…</span>
             </div>
           )}
 
-          {!showSettings && !reconfigure && !inspection && tab === "file" && (
+          {isMain && !reconfigure && !inspection && tab === "file" && (
             <FileDropZone
               busy={busy}
               dragOver={dragOver}
@@ -668,7 +687,7 @@ export function ComfyWorkflowImportModal({
             />
           )}
 
-          {!showSettings && !reconfigure && !inspection && tab === "blueprints" && (
+          {isMain && !reconfigure && !inspection && tab === "blueprints" && (
             <BlueprintPicker
               blueprints={blueprints}
               error={blueprintError}
@@ -680,7 +699,7 @@ export function ComfyWorkflowImportModal({
             />
           )}
 
-          {!showSettings && inspection && (
+          {isMain && inspection && (
             <ConfirmStep
               inspection={inspection}
               name={name}
@@ -707,22 +726,22 @@ export function ComfyWorkflowImportModal({
             // There is nothing behind the picks when they were opened directly,
             // so "Back" would strand the dialog on an empty file step.
             onClick={
-              showSettings
-                ? () => setShowSettings(false)
-                : inspection && !reconfigure
+              isMain
+                ? inspection && !reconfigure
                   ? reset
                   : onClose
+                : () => setView("main")
             }
             className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-[color,scale] duration-150 active:scale-[0.96]"
           >
-            {showSettings || (inspection && !reconfigure) ? "Back" : "Cancel"}
+            {!isMain || (inspection && !reconfigure) ? "Back" : "Cancel"}
           </button>
           {/* Why the button is dead, said where the button is — otherwise the
               reason is a section away, under two screens of settings. */}
-          {!showSettings && inspection && blockingReason && (
+          {isMain && inspection && blockingReason && (
             <span className="text-[11px] text-neutral-500 truncate">{blockingReason}</span>
           )}
-          {showSettings ? (
+          {showHelp ? null : showSettings ? (
             <button type="button" onClick={saveSettings} className={PRIMARY_BUTTON}>
               Save connection
             </button>
@@ -1326,6 +1345,60 @@ function Section({
 function widgetName(candidate: ComfyWidgetCandidate): string {
   const tail = candidate.label.split("·").pop()?.trim();
   return tail && tail.length > 0 ? tail : candidate.label;
+}
+
+/**
+ * What this dialog reads from a ComfyUI workflow.
+ *
+ * Written plainly and kept short: it is read once, by someone who came here
+ * because an import did not produce the node they expected.
+ */
+function HelpPanel() {
+  return (
+    <div className="space-y-5">
+      <section className="space-y-1.5">
+        <h3 className="text-sm font-medium text-neutral-100">Both ComfyUI files work</h3>
+        <p className="text-xs text-neutral-400 leading-relaxed">
+          Node Banana reads both files that ComfyUI writes. A normal save can carry App Mode, and
+          needs a connected ComfyUI to convert. An API export always runs, but it carries no App
+          Mode.
+        </p>
+      </section>
+
+      <section className="space-y-1.5">
+        <h3 className="text-sm font-medium text-neutral-100">App Mode gives the best result</h3>
+        <p className="text-xs text-neutral-400 leading-relaxed">
+          App Mode is part of the ComfyUI editor. In App Mode, you select the inputs and the outputs
+          of the graph. Node Banana turns those selections into the node&apos;s handles, and their
+          widgets into settings.
+        </p>
+        <p className="text-xs text-neutral-400 leading-relaxed">
+          Without App Mode, Node Banana finds the inputs and the outputs itself. You confirm them in
+          this dialog, and you can change them later.
+        </p>
+      </section>
+
+      <a
+        href={APP_MODE_DOCS}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+      >
+        Read the App Mode guide
+        <svg
+          className="w-3 h-3"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M7 17 17 7M9 7h8v8" />
+        </svg>
+      </a>
+    </div>
+  );
 }
 
 /** The recessed surface a list of rows sits on. */
