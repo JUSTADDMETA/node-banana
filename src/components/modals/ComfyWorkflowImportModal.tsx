@@ -512,7 +512,7 @@ export function ComfyWorkflowImportModal({
   if (!isOpen) return null;
 
   const subtitle = showHelp
-    ? "What Node Banana reads from a ComfyUI workflow."
+    ? null
     : showSettings
     ? "Where your workflows run, and what they run as."
     : inspection || reconfigure
@@ -1356,25 +1356,21 @@ function widgetName(candidate: ComfyWidgetCandidate): string {
 function HelpPanel() {
   return (
     <div className="space-y-5">
-      <section className="space-y-1.5">
-        <h3 className="text-sm font-medium text-neutral-100">Both ComfyUI files work</h3>
-        <p className="text-xs text-neutral-400 leading-relaxed">
-          Node Banana reads both files that ComfyUI writes. A normal save can carry App Mode, and
-          needs a connected ComfyUI to convert. An API export always runs, but it carries no App
-          Mode.
-        </p>
-      </section>
+      <p className="text-sm text-neutral-200 leading-relaxed">
+        Drop a ComfyUI workflow onto the canvas, or start from a Blueprint. Select the inputs and
+        the outputs you want, and it becomes a node like any other. It runs on Comfy Cloud, or on
+        your own ComfyUI.
+      </p>
 
       <section className="space-y-1.5">
         <h3 className="text-sm font-medium text-neutral-100">App Mode gives the best result</h3>
         <p className="text-xs text-neutral-400 leading-relaxed">
           App Mode is part of the ComfyUI editor. In App Mode, you select the inputs and the outputs
-          of the graph. Node Banana turns those selections into the node&apos;s handles, and their
-          widgets into settings.
+          of the graph. Node Banana keeps those selections, so the node arrives ready to run.
         </p>
         <p className="text-xs text-neutral-400 leading-relaxed">
-          Without App Mode, Node Banana finds the inputs and the outputs itself. You confirm them in
-          this dialog, and you can change them later.
+          Without App Mode, Node Banana finds the inputs and the outputs itself. You confirm them
+          here, and you can change them later.
         </p>
       </section>
 
