@@ -109,9 +109,32 @@ export interface ComfyEngine {
 /** An engine-reported failure that should be shown to the user verbatim. */
 export class ComfyEngineError extends Error {
   readonly status: number;
-  constructor(message: string, status = 502) {
+  /**
+   * True when the engine never answered — a dropped socket, a DNS blip.
+   *
+   * Nothing has been decided about the job in that case, so a caller waiting on
+   * a render can try again. An engine *verdict* is not transient, however bad.
+   */
+  readonly transient: boolean;
+  constructor(message: string, status = 502, options: { transient?: boolean } = {}) {
     super(message);
     this.name = "ComfyEngineError";
     this.status = status;
+    this.transient = options.transient ?? false;
   }
+}
+
+/**
+ * Whether a thrown error is the network failing rather than the engine talking.
+ *
+ * Node reports these as a bare `TypeError: fetch failed` and hides the real
+ * reason — ECONNRESET, EAI_AGAIN, a socket timeout — in `cause`.
+ */
+export function isNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "TypeError" && /fetch failed|network|load failed/i.test(error.message)) {
+    return true;
+  }
+  const code = (error as { cause?: { code?: string } }).cause?.code;
+  return typeof code === "string" && /^(ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EPIPE|UND_ERR)/.test(code);
 }

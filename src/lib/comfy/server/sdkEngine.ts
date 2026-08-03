@@ -26,6 +26,7 @@ import type { ComfyConnection, ComfyGraph, ComfyObjectInfo, ComfyOutputType } fr
 import { engineAuthHeaders } from "./connection";
 import {
   ComfyEngineError,
+  isNetworkFailure,
   type ComfyEngine,
   type ComfyJobState,
   type ComfyOutputAsset,
@@ -140,7 +141,7 @@ export class SdkComfyEngine implements ComfyEngine {
       });
       return (await asset.asReference(signal)) as unknown as Record<string, unknown>;
     } catch (error) {
-      throw toEngineError(error, `${this.label} rejected the upload of ${input.filename}`);
+      throw toEngineError(error, `${this.label} rejected the upload of ${input.filename}`, this.label);
     }
   }
 
@@ -153,7 +154,7 @@ export class SdkComfyEngine implements ComfyEngine {
       });
       return job.id;
     } catch (error) {
-      throw toEngineError(error, `${this.label} rejected the workflow`);
+      throw toEngineError(error, `${this.label} rejected the workflow`, this.label);
     }
   }
 
@@ -174,7 +175,7 @@ export class SdkComfyEngine implements ComfyEngine {
       }
       return { status: job.status, terminal: true, error: null, raw: { jobId } };
     } catch (error) {
-      throw toEngineError(error, `Could not read the job from ${this.label}`);
+      throw toEngineError(error, `Could not read the job from ${this.label}`, this.label);
     }
   }
 
@@ -216,7 +217,7 @@ export class SdkComfyEngine implements ComfyEngine {
 }
 
 /** Turn an SDK exception into a message worth showing the user. */
-function toEngineError(error: unknown, fallback: string): ComfyEngineError {
+function toEngineError(error: unknown, fallback: string, label = "the engine"): ComfyEngineError {
   if (error instanceof InsufficientCredits) {
     return new ComfyEngineError("Comfy Cloud: insufficient credits", 402);
   }
@@ -241,7 +242,12 @@ function toEngineError(error: unknown, fallback: string): ComfyEngineError {
     // Propagate cancellation untouched — the caller distinguishes it.
     throw error;
   }
-  return new ComfyEngineError(
-    `${fallback}: ${error instanceof Error ? error.message : String(error)}`
-  );
+  const detail = error instanceof Error ? error.message : String(error);
+  // The request never arrived, so the engine has not rejected anything and the
+  // job it was asked about is very likely still running. Said as a verdict, one
+  // dropped socket ends a render that was fine.
+  if (isNetworkFailure(error)) {
+    return new ComfyEngineError(`Could not reach ${label}: ${detail}`, 503, { transient: true });
+  }
+  return new ComfyEngineError(`${fallback}: ${detail}`);
 }

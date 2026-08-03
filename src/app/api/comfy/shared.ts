@@ -21,6 +21,11 @@ export interface ComfyErrorResponse {
   missingNodes?: string[];
   /** True when the user simply has not connected an engine yet. */
   notConfigured?: boolean;
+  /**
+   * True when the engine was never reached, so nothing about the job is
+   * settled. A caller waiting on a render can poll again instead of failing.
+   */
+  transient?: boolean;
 }
 
 /**
@@ -48,7 +53,7 @@ export function comfyErrorResponse(error: unknown): NextResponse<ComfyErrorRespo
   }
   if (error instanceof ComfyEngineError) {
     return NextResponse.json<ComfyErrorResponse>(
-      { success: false, error: error.message },
+      { success: false, error: error.message, ...(error.transient ? { transient: true } : {}) },
       { status: error.status }
     );
   }

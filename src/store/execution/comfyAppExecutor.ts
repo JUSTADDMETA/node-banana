@@ -41,6 +41,8 @@ interface ComfyFailure {
   error: string;
   notConfigured?: boolean;
   missingNodes?: string[];
+  /** The route could not reach the engine — nothing about the job is settled. */
+  transient?: boolean;
 }
 
 /**
@@ -51,7 +53,7 @@ interface ComfyFailure {
  * means the engine has spoken and the run is over, while a bare 502 from
  * something in between is a blip a long render should survive.
  */
-class ComfyRouteError extends Error {
+export class ComfyRouteError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ComfyRouteError";
@@ -59,11 +61,15 @@ class ComfyRouteError extends Error {
 }
 
 /** Read an error out of a response, distinguishing route errors from gateway ones. */
-async function readError(response: Response, fallback: string): Promise<Error> {
+export async function readError(response: Response, fallback: string): Promise<Error> {
   const text = await response.text();
   try {
     const body = JSON.parse(text) as ComfyFailure;
-    if (body?.error) return new ComfyRouteError(body.error);
+    // A route that says it could not reach the engine is reporting the network,
+    // not a verdict — the render it was asked about is probably still going.
+    if (body?.error) {
+      return body.transient ? new Error(body.error) : new ComfyRouteError(body.error);
+    }
   } catch {
     /* not a route-shaped response — treat as transient below */
   }

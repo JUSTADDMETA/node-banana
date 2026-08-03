@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { outputsToNodeData } from "../comfyAppExecutor";
+import { ComfyRouteError, outputsToNodeData, readError } from "../comfyAppExecutor";
 
 describe("outputsToNodeData", () => {
   const declared = [
@@ -54,5 +54,43 @@ describe("outputsToNodeData", () => {
     const data = outputsToNodeData(declared, []);
     expect(data.outputs).toEqual({});
     expect(data.outputImage).toBeNull();
+  });
+});
+
+describe("readError", () => {
+  const response = (body: unknown, status: number) =>
+    new Response(typeof body === "string" ? body : JSON.stringify(body), { status });
+
+  it("treats a route's own failure as the engine's verdict", async () => {
+    const error = await readError(
+      response({ success: false, error: "Comfy Cloud rejected the API key" }, 401),
+      "ComfyUI run failed"
+    );
+    expect(error).toBeInstanceOf(ComfyRouteError);
+    expect(error.message).toBe("Comfy Cloud rejected the API key");
+  });
+
+  it("treats an unreachable engine as worth another poll", async () => {
+    // The route answered, but only to say it could not ask — the render it was
+    // asked about is very likely still going.
+    const error = await readError(
+      response(
+        { success: false, error: "Could not reach Comfy Cloud: fetch failed", transient: true },
+        503
+      ),
+      "ComfyUI run failed"
+    );
+    expect(error).not.toBeInstanceOf(ComfyRouteError);
+    expect(error.message).toContain("Could not reach Comfy Cloud");
+  });
+
+  it("treats a gateway error with no route body as worth another poll", async () => {
+    const error = await readError(response("<html>502 Bad Gateway</html>", 502), "ComfyUI run failed");
+    expect(error).not.toBeInstanceOf(ComfyRouteError);
+  });
+
+  it("treats a 4xx with no route body as terminal", async () => {
+    const error = await readError(response("Payload too large", 413), "ComfyUI run failed");
+    expect(error).toBeInstanceOf(ComfyRouteError);
   });
 });
