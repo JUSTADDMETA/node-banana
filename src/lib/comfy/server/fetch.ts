@@ -11,6 +11,8 @@
  * timeout and the caller's cancel.
  */
 
+import { engineNeverAnswered, errorCode } from "./engine";
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Transient statuses worth retrying (rate limit, gateway, overloaded). */
@@ -88,4 +90,65 @@ export async function resilientFetch(
       signal?.removeEventListener("abort", onAbort);
     }
   }
+}
+
+/**
+ * Codes that prove the request never reached the engine.
+ *
+ * These are raised while opening the socket, so nothing was sent and nothing
+ * can have been acted on — which is what makes repeating the request safe even
+ * when it is a POST that would otherwise be dangerous to send twice.
+ *
+ * `ETIMEDOUT` inside an `AggregateError` is the common one in practice: Node
+ * tries every address a dual-stack host resolves to, and reports the whole
+ * batch failing this way when none of them answers in time.
+ */
+const CONNECT_FAILURE = /^(ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH)$/;
+
+export interface EngineFetchOptions {
+  /** Extra attempts after a connection that never opened. */
+  retries?: number;
+  /** Base backoff between attempts, in ms (grows exponentially). */
+  retryBaseMs?: number;
+}
+
+/**
+ * A `fetch` that survives a connection which never opened.
+ *
+ * `@comfyorg/sdk` performs its own HTTP and retries nothing below the API layer,
+ * so a single failed connect ends an upload, a submit, or a poll — and with it
+ * the whole render. It does accept a `fetch` implementation, which is the seam
+ * this fills: the SDK keeps its protocol handling and gains the same
+ * resilience {@link resilientFetch} already gives the legacy engine.
+ *
+ * Only connect-phase failures are repeated for a request that changes state.
+ * A GET may also be repeated on any unanswered request, because asking twice
+ * costs nothing. Anything the engine actually answered is passed straight back:
+ * a 4xx or 5xx is the engine talking, and this layer does not second-guess it.
+ */
+export function createEngineFetch(options: EngineFetchOptions = {}): typeof fetch {
+  const { retries = 2, retryBaseMs = 300 } = options;
+
+  return async function engineFetch(
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1]
+  ): Promise<Response> {
+    const method = (
+      init?.method ?? (input instanceof Request ? input.method : "GET")
+    ).toUpperCase();
+    const repeatable = method === "GET" || method === "HEAD";
+
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await fetch(input, init);
+      } catch (error) {
+        const code = errorCode(error);
+        const neverConnected = code !== null && CONNECT_FAILURE.test(code);
+        const worthRetrying = neverConnected || (repeatable && engineNeverAnswered(error));
+        // A caller who cancelled is not waiting for another attempt.
+        if (!worthRetrying || attempt >= retries || init?.signal?.aborted) throw error;
+        await sleep(retryBaseMs * 2 ** attempt);
+      }
+    }
+  };
 }

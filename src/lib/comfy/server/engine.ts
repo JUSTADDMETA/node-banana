@@ -125,16 +125,47 @@ export class ComfyEngineError extends Error {
 }
 
 /**
- * Whether a thrown error is the network failing rather than the engine talking.
+ * Whether a thrown error means the engine never gave an answer, as opposed to
+ * giving one we did not like.
  *
- * Node reports these as a bare `TypeError: fetch failed` and hides the real
- * reason — ECONNRESET, EAI_AGAIN, a socket timeout — in `cause`.
+ * Three shapes mean the same thing. Node reports a failed connection as a bare
+ * `TypeError: fetch failed`, hiding the real reason — ECONNRESET, EAI_AGAIN, a
+ * dual-stack connect timeout — in `cause`. A request we stopped waiting for
+ * surfaces either as a `TimeoutError` (from `AbortSignal.timeout`, which the
+ * Comfy SDK arms on every call) or as the plain Error {@link
+ * import("./fetch").resilientFetch} raises. None of them settles anything about
+ * the job that was asked about.
  */
-export function isNetworkFailure(error: unknown): boolean {
+export function engineNeverAnswered(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (error.name === "TimeoutError") return true;
+  if (/timed out after \d+ms/i.test(error.message)) return true;
   if (error.name === "TypeError" && /fetch failed|network|load failed/i.test(error.message)) {
     return true;
   }
-  const code = (error as { cause?: { code?: string } }).cause?.code;
-  return typeof code === "string" && /^(ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EPIPE|UND_ERR)/.test(code);
+  const code = errorCode(error);
+  return code !== null && /^(ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EPIPE|EHOSTUNREACH|ENETUNREACH|UND_ERR)/.test(code);
+}
+
+/**
+ * The OS-level code behind a failed `fetch`, wherever it is buried.
+ *
+ * undici puts a single failure in `cause.code`, but a dual-stack host that
+ * could not be reached on any address yields an `AggregateError` whose own
+ * `code` is set and whose `errors` hold one entry per address tried.
+ */
+export function errorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+  const self = (error as { code?: unknown }).code;
+  if (typeof self === "string") return self;
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause) return errorCode(cause);
+  const nested = (error as { errors?: unknown }).errors;
+  if (Array.isArray(nested)) {
+    for (const inner of nested) {
+      const code = errorCode(inner);
+      if (code) return code;
+    }
+  }
+  return null;
 }

@@ -26,7 +26,7 @@ import type { ComfyConnection, ComfyGraph, ComfyObjectInfo, ComfyOutputType } fr
 import { engineAuthHeaders } from "./connection";
 import {
   ComfyEngineError,
-  isNetworkFailure,
+  engineNeverAnswered,
   type ComfyEngine,
   type ComfyJobState,
   type ComfyOutputAsset,
@@ -34,7 +34,16 @@ import {
   type ComfyUploadInput,
   type ComfyUploadRef,
 } from "./engine";
-import { resilientFetch } from "./fetch";
+import { createEngineFetch, resilientFetch } from "./fetch";
+
+/**
+ * How long one SDK request may take.
+ *
+ * The SDK's own default is 30 s, which is generous for a poll and far too short
+ * for the request that matters most: collecting a finished job downloads every
+ * output it produced, and a minute of video is tens of megabytes.
+ */
+const SDK_TIMEOUT_MS = 300_000;
 
 /**
  * Terminal states. `canceling` is deliberately excluded — cancellation takes
@@ -73,6 +82,11 @@ export class SdkComfyEngine implements ComfyEngine {
       this.client = new Comfy(this.connection.baseUrl, {
         ...(this.connection.apiKey ? { apiKey: this.connection.apiKey } : {}),
         clientInfo: "node-banana",
+        timeoutMs: SDK_TIMEOUT_MS,
+        // The SDK retries nothing below its API layer, so one connection that
+        // never opened would end an upload, a submit or a poll — and with it a
+        // render that was fine.
+        fetch: createEngineFetch(),
       });
     }
     return this.client;
@@ -180,6 +194,24 @@ export class SdkComfyEngine implements ComfyEngine {
   }
 
   async collect(state: ComfyJobState): Promise<ComfyOutputAsset[]> {
+    try {
+      return await this.download(state);
+    } catch (error) {
+      // Downloading is where the biggest payloads move, so it is the likeliest
+      // place to be cut off. Left unmapped it surfaced as a bare 500, which the
+      // client reads as a verdict and stops polling for — losing a render that
+      // had already finished and been paid for.
+      throw toEngineError(error, `Could not download the results from ${this.label}`, this.label);
+    }
+  }
+
+  /**
+   * The download itself. Split out so {@link collect} is nothing but the error
+   * mapping, and so the SDK's lack of a cancellation hook here — neither
+   * `jobs.get` nor `toBytes` accepts a signal — is stated in one place rather
+   * than implied by a missing argument.
+   */
+  private async download(state: ComfyJobState): Promise<ComfyOutputAsset[]> {
     const jobId = (state.raw as { jobId?: string } | null)?.jobId;
     if (!jobId) return [];
     const job = await this.sdk.jobs.get(jobId);
@@ -243,10 +275,10 @@ function toEngineError(error: unknown, fallback: string, label = "the engine"): 
     throw error;
   }
   const detail = error instanceof Error ? error.message : String(error);
-  // The request never arrived, so the engine has not rejected anything and the
-  // job it was asked about is very likely still running. Said as a verdict, one
-  // dropped socket ends a render that was fine.
-  if (isNetworkFailure(error)) {
+  // Nothing came back, so the engine has not rejected anything and the job it
+  // was asked about is very likely still running. Said as a verdict, one dropped
+  // socket or one slow reply ends a render that was fine.
+  if (engineNeverAnswered(error)) {
     return new ComfyEngineError(`Could not reach ${label}: ${detail}`, 503, { transient: true });
   }
   return new ComfyEngineError(`${fallback}: ${detail}`);

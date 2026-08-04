@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
-import { ComfyEngineError, isNetworkFailure } from "../server/engine";
+import { ComfyEngineError, engineNeverAnswered, errorCode } from "../server/engine";
+import { createEngineFetch } from "../server/fetch";
 import { SdkComfyEngine } from "../server/sdkEngine";
 import type { ComfyConnection } from "../types";
 
@@ -10,6 +11,10 @@ const fetchFailed = (code?: string) => {
   if (code) (error as { cause?: unknown }).cause = { code };
   return error;
 };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const connection: ComfyConnection = {
   mode: "cloud",
@@ -26,19 +31,133 @@ function engineWith(jobsGet: () => unknown): SdkComfyEngine {
   return engine;
 }
 
-describe("isNetworkFailure", () => {
+/** What a dual-stack host that answered on no address looks like. */
+const noAddressAnswered = () => {
+  const inner = new Error("connect ETIMEDOUT");
+  (inner as { code?: string }).code = "ETIMEDOUT";
+  const aggregate = new AggregateError([inner], "");
+  (aggregate as { code?: string }).code = "ETIMEDOUT";
+  const outer = new TypeError("fetch failed");
+  (outer as { cause?: unknown }).cause = aggregate;
+  return outer;
+};
+
+/** What `AbortSignal.timeout()` throws — the Comfy SDK arms one per request. */
+const timedOut = () => {
+  const error = new Error("The operation was aborted due to timeout");
+  error.name = "TimeoutError";
+  return error;
+};
+
+describe("engineNeverAnswered", () => {
   it("recognises a request that never arrived", () => {
-    expect(isNetworkFailure(fetchFailed())).toBe(true);
-    expect(isNetworkFailure(fetchFailed("ECONNRESET"))).toBe(true);
-    expect(isNetworkFailure(fetchFailed("EAI_AGAIN"))).toBe(true);
-    expect(isNetworkFailure(fetchFailed("UND_ERR_SOCKET"))).toBe(true);
+    expect(engineNeverAnswered(fetchFailed())).toBe(true);
+    expect(engineNeverAnswered(fetchFailed("ECONNRESET"))).toBe(true);
+    expect(engineNeverAnswered(fetchFailed("EAI_AGAIN"))).toBe(true);
+    expect(engineNeverAnswered(fetchFailed("UND_ERR_SOCKET"))).toBe(true);
+    expect(engineNeverAnswered(noAddressAnswered())).toBe(true);
+  });
+
+  it("recognises a request we stopped waiting for", () => {
+    // Both timeout shapes: the SDK's AbortSignal.timeout, and resilientFetch's.
+    expect(engineNeverAnswered(timedOut())).toBe(true);
+    expect(
+      engineNeverAnswered(new Error("Request to https://cloud.comfy.org timed out after 30000ms"))
+    ).toBe(true);
   });
 
   it("does not claim an answer the engine actually gave", () => {
     // A rejected key, a failed node, an out-of-credit account: all verdicts.
-    expect(isNetworkFailure(new Error("Comfy Cloud rejected the API key"))).toBe(false);
-    expect(isNetworkFailure(new Error("KSampler: CUDA out of memory"))).toBe(false);
-    expect(isNetworkFailure("not an error")).toBe(false);
+    expect(engineNeverAnswered(new Error("Comfy Cloud rejected the API key"))).toBe(false);
+    expect(engineNeverAnswered(new Error("KSampler: CUDA out of memory"))).toBe(false);
+    expect(engineNeverAnswered("not an error")).toBe(false);
+  });
+});
+
+describe("errorCode", () => {
+  it("digs the code out of an AggregateError over every address tried", () => {
+    expect(errorCode(noAddressAnswered())).toBe("ETIMEDOUT");
+  });
+
+  it("reads the ordinary single-cause shape too", () => {
+    expect(errorCode(fetchFailed("ECONNRESET"))).toBe("ECONNRESET");
+    expect(errorCode(new Error("plain"))).toBe(null);
+  });
+});
+
+describe("createEngineFetch", () => {
+  const okResponse = () => new Response("{}", { status: 200 });
+
+  it("repeats a POST whose connection never opened", async () => {
+    // The observed failure: uploading an input to Comfy Cloud failed on roughly
+    // half of attempts with this exact shape, and nothing retried it.
+    let calls = 0;
+    const inner = vi.fn(async () => {
+      calls += 1;
+      if (calls < 3) throw noAddressAnswered();
+      return okResponse();
+    });
+    vi.stubGlobal("fetch", inner);
+
+    const engineFetch = createEngineFetch({ retryBaseMs: 0 });
+    const res = await engineFetch("https://cloud.comfy.org/api/v2/jobs", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(calls).toBe(3);
+  });
+
+  it("does not repeat a POST the engine may already have acted on", async () => {
+    // A socket that opened and then broke could have delivered the request, so
+    // sending it again risks a second job on the user's bill.
+    const inner = vi.fn(async () => {
+      throw fetchFailed("ECONNRESET");
+    });
+    vi.stubGlobal("fetch", inner);
+
+    const engineFetch = createEngineFetch({ retryBaseMs: 0 });
+    await expect(
+      engineFetch("https://cloud.comfy.org/api/v2/jobs", { method: "POST" })
+    ).rejects.toThrow("fetch failed");
+    expect(inner).toHaveBeenCalledTimes(1);
+  });
+
+  it("repeats a GET on any unanswered request, since asking twice costs nothing", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      if (calls < 2) throw fetchFailed("ECONNRESET");
+      return okResponse();
+    });
+
+    const engineFetch = createEngineFetch({ retryBaseMs: 0 });
+    expect((await engineFetch("https://cloud.comfy.org/api/queue")).status).toBe(200);
+    expect(calls).toBe(2);
+  });
+
+  it("hands back an answer the engine gave, however bad", async () => {
+    // A 500 is the engine talking. Retrying it here would hide it and bill twice.
+    const inner = vi.fn(async () => new Response("nope", { status: 500 }));
+    vi.stubGlobal("fetch", inner);
+
+    const engineFetch = createEngineFetch({ retryBaseMs: 0 });
+    expect((await engineFetch("https://cloud.comfy.org/api/v2/jobs", { method: "POST" })).status).toBe(500);
+    expect(inner).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops when the caller cancels", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", async () => {
+      controller.abort();
+      throw noAddressAnswered();
+    });
+
+    const engineFetch = createEngineFetch({ retryBaseMs: 0 });
+    await expect(
+      engineFetch("https://cloud.comfy.org/api/v2/jobs", {
+        method: "POST",
+        signal: controller.signal,
+      })
+    ).rejects.toThrow();
   });
 });
 
