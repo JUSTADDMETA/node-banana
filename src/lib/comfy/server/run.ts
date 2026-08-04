@@ -157,6 +157,14 @@ export async function uploadInputs(
  * routed the file through a different node) the remaining assets are assigned
  * to the remaining handles of the same type, in order — better a result on a
  * slightly different handle than a silent empty run.
+ *
+ * A sink fed a *batch* writes one file per image, but a handle carries a single
+ * value, so only the first can be shown. The rest are not thrown away: they
+ * stay unclaimed and fill any same-typed handle that its own node did not
+ * produce — which is how a workflow that saves a batch and its members
+ * separately still lights up every handle. Where nothing is left to fill, the
+ * extra images are dropped, and a node offering both a batch and its members
+ * will show the batch handle carrying the batch's first image.
  */
 export function resolveOutputs(
   app: ComfyAppDefinition,

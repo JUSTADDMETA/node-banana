@@ -668,6 +668,31 @@ describe("blueprints", () => {
       // The slot's own name, which the author chose and which is unique across
       // the boundary — unlike the derived "CLIPTextEncode · Text".
       label: "prompt",
+      // A STRING boundary slot is the author saying "feed this from outside",
+      // so it becomes a handle rather than only a text box.
+      connectAs: "text",
+    });
+  });
+
+  it("makes a string boundary input connectable even when proxied from an inner node", () => {
+    // The author can promote a widget either way. Proxying the inner node
+    // directly left us blind to the fact that it was a declared *input*: a
+    // blueprint whose whole job is picking a line out of an incoming list
+    // offered no way to receive that list, only a box to paste it into.
+    const file = blueprintFile();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (file.nodes[0] as any).properties = { proxyWidgets: [["45", "text"]] };
+    const def = file.definitions!.subgraphs![0]!;
+    def.inputs = [{ name: "text_per_line", type: "STRING", linkIds: [900] }];
+    def.nodes = [{ id: 45, type: "RegexExtract", widgets_values: [""], inputs: [{ name: "text" }] }];
+    def.links = [[900, -1, 0, 45, 0, "STRING"]];
+
+    const appMode = blueprintAppMode(file, "3b5ed000", "135");
+    expect(appMode?.inputs[0]).toEqual({
+      nodeId: "135:45",
+      widget: "text",
+      label: "text_per_line",
+      connectAs: "text",
     });
   });
 

@@ -18,6 +18,7 @@ import {
   humanizeKey,
   isCurveValue,
   isExposableWidget,
+  isPlaceholderMedia,
   isPromptWidget,
   isSeedKey,
   leafKey,
@@ -294,8 +295,11 @@ export function inspectWorkflow(
       const candidate = found;
       // Prompt-shaped strings become connectable handles so they can be driven
       // by a Prompt or LLM node; everything else stays an inline control.
-      if (candidate.connectableAs) {
-        inputs.push(inputFromCandidate(candidate, candidate.connectableAs, taken));
+      // The author declaring this a boundary input outranks the name-shaped
+      // guess, which only ever recognises prompts.
+      const connectAs = entry.connectAs ?? candidate.connectableAs;
+      if (connectAs) {
+        inputs.push(inputFromCandidate(candidate, connectAs, taken));
       } else {
         const param = paramFromCandidate(candidate);
         // One boundary slot can drive several inner widgets. The author exposed
@@ -310,16 +314,25 @@ export function inspectWorkflow(
     // A media loader the curated list does not mention is still a real entry
     // point — App Mode curates *widgets*, and a blueprint's boundary inputs are
     // not widgets at all. Leaving them out would produce a node with no way to
-    // feed it an image. They are optional, so an unconnected one just runs with
-    // whatever the workflow was saved with.
+    // feed it an image.
+    //
+    // Such a loader is optional only when running without it means something:
+    // an uploaded workflow carries the author's own image, and reproducing
+    // their example is a reasonable thing to do. A blueprint's loader is one
+    // this importer invented, holding a stand-in filename nobody chose — and
+    // because both stock ComfyUI and Comfy Cloud really do have an
+    // `example.png`, an unwired node did not fail. It succeeded, charged for
+    // the run, and returned a picture of ComfyUI's own sample image.
     const claimed = new Set(inputs.map((i) => i.nodeId));
     for (const candidate of [...imageInputCandidates, ...mediaInputCandidates]) {
       if (claimed.has(candidate.nodeId)) continue;
       const type = loaderInputType(candidate.classType);
       if (!type) continue;
+      const node = graph[candidate.nodeId];
+      const saved = node?.inputs[loaderWidgetKey(candidate.classType, node)];
       inputs.push({
-        ...inputFromLoader(candidate, type, taken, graph[candidate.nodeId]),
-        required: false,
+        ...inputFromLoader(candidate, type, taken, node),
+        required: isPlaceholderMedia(saved),
       });
     }
 
@@ -377,13 +390,34 @@ export function inspectWorkflow(
     appModeOutputNodeIds: appMode?.outputNodeIds ?? [],
     suggested: {
       name: defaultName || "ComfyUI App",
-      inputs,
-      params,
-      outputs,
+      inputs: disambiguate(inputs),
+      params: disambiguate(params),
+      outputs: disambiguate(outputs),
     },
     blueprints,
     warnings,
   };
+}
+
+/**
+ * Make every label in one list nameable out loud.
+ *
+ * Labels are derived from the node — "CLIPLoader · Clip Name" — which collides
+ * the moment a workflow loads two of anything. A blueprint that loads a
+ * high-noise and a low-noise model showed two identical dropdowns, and one that
+ * takes three prompts showed three identical handles: choosing the wrong one
+ * still ran, and still returned a result, just not the one asked for.
+ *
+ * The node id is appended only to the ones that actually clash, so the common
+ * case keeps its clean label. It is the same `(#id)` form {@link nodeLabel}
+ * already falls back to, and it locates the widget in the original workflow.
+ */
+function disambiguate<T extends { label: string; nodeId: string }>(items: T[]): T[] {
+  const seen = new Map<string, number>();
+  for (const item of items) seen.set(item.label, (seen.get(item.label) ?? 0) + 1);
+  return items.map((item) =>
+    (seen.get(item.label) ?? 0) > 1 ? { ...item, label: `${item.label} (#${item.nodeId})` } : item
+  );
 }
 
 /**

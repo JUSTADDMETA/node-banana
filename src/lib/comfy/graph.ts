@@ -95,6 +95,29 @@ const WIDGET_SKIP_KEYS = new Set([
   "extra_pnginfo",
 ]);
 
+/**
+ * Filenames the Blueprint importer writes into a loader it materialised.
+ *
+ * A blueprint's media arrives through a boundary slot, so a loader node has to
+ * be invented to carry it — and invented with *some* filename. These are that
+ * filename: a stand-in, never a value anyone chose.
+ *
+ * Which makes them the signal for "this input has no real default". A stock
+ * ComfyUI ships an `example.png`, and so does Comfy Cloud, so running an
+ * unwired node did not fail — it succeeded and returned a picture of ComfyUI's
+ * own sample image, billed and plausible-looking.
+ */
+export const PLACEHOLDER_IMAGE = "example.png";
+export const PLACEHOLDER_VIDEO = "example.mp4";
+export const PLACEHOLDER_AUDIO = "example.mp3";
+
+const PLACEHOLDER_MEDIA = new Set([PLACEHOLDER_IMAGE, PLACEHOLDER_VIDEO, PLACEHOLDER_AUDIO]);
+
+/** Whether a loader still holds the stand-in filename the importer gave it. */
+export function isPlaceholderMedia(value: unknown): boolean {
+  return typeof value === "string" && PLACEHOLDER_MEDIA.has(value);
+}
+
 /** Widget names that read as a prompt — promotable to a text handle. */
 const PROMPT_KEY = /(^|_)(prompt|text|caption|description|instruction)(_|$)/i;
 

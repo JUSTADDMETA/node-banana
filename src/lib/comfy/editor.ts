@@ -12,10 +12,12 @@
  * namespaced as `instance:inner` — matching ComfyUI's own API export.
  */
 
+import { PLACEHOLDER_IMAGE, PLACEHOLDER_AUDIO, PLACEHOLDER_VIDEO } from "./graph";
 import type {
   ComfyBlueprintSummary,
   ComfyGraph,
   ComfyGraphNode,
+  ComfyInputType,
   ComfyObjectInfo,
 } from "./types";
 
@@ -585,6 +587,15 @@ export interface AppModeData {
      * change the model and leave its VAE behind.
      */
     alsoBind?: Array<{ nodeId: string; widget: string }>;
+    /**
+     * Force this widget onto a connectable handle of the given type.
+     *
+     * Set when the author declared it as a boundary *input* of the blueprint,
+     * which says outright that it is meant to be fed from outside — a stronger
+     * signal than the name-shaped guess {@link import("./graph").isPromptWidget}
+     * makes, which only recognises prompts.
+     */
+    connectAs?: ComfyInputType;
   }>;
   /** Author-exposed output node ids, in order. */
   outputNodeIds: string[];
@@ -847,7 +858,7 @@ interface BoundaryLoader {
 }
 
 const LOADER_FOR_SLOT_TYPE: Record<string, BoundaryLoader> = {
-  IMAGE: { classType: "LoadImage", widget: ["example.png", "image"] },
+  IMAGE: { classType: "LoadImage", widget: [PLACEHOLDER_IMAGE, "image"] },
   // Not `LoadImageMask`, though it exists and would be the obvious choice.
   // Comfy Cloud stages an uploaded asset into the worker's input directory only
   // for the loader classes its asset layer knows — LoadImage, LoadVideo,
@@ -857,7 +868,7 @@ const LOADER_FOR_SLOT_TYPE: Record<string, BoundaryLoader> = {
   // converting it is what a user would do by hand, and it works on both engines.
   MASK: {
     classType: "LoadImage",
-    widget: ["example.png", "image"],
+    widget: [PLACEHOLDER_IMAGE, "image"],
     adapter: {
       classType: "ImageToMask",
       inputName: "image",
@@ -865,8 +876,8 @@ const LOADER_FOR_SLOT_TYPE: Record<string, BoundaryLoader> = {
       widgets: ["red"],
     },
   },
-  AUDIO: { classType: "LoadAudio", widget: ["example.mp3", null, "audio"] },
-  VIDEO: { classType: "LoadVideo", widget: ["example.mp4", "video"] },
+  AUDIO: { classType: "LoadAudio", widget: [PLACEHOLDER_AUDIO, null, "audio"] },
+  VIDEO: { classType: "LoadVideo", widget: [PLACEHOLDER_VIDEO, "video"] },
 };
 
 /**
@@ -1138,6 +1149,21 @@ export function blueprintAppMode(
   const def = (file.definitions?.subgraphs ?? []).find((d) => String(d.id) === blueprintId);
   const innerById = new Map((def?.nodes ?? []).map((n) => [String(n.id), n]));
 
+  // Which boundary input slot, if any, each inner widget belongs to.
+  //
+  // An author can promote a widget two ways: onto the boundary (`-1`) or by
+  // proxying the inner node directly. Both mean the same thing, and the second
+  // form left us with no idea the widget was a declared *input* at all — so a
+  // blueprint whose whole job is picking a line out of an incoming list offered
+  // no way to feed it that list, only a text box to paste it into.
+  const slotForWidget = new Map<string, { name?: string; label?: string; type?: string }>();
+  for (const slot of def?.inputs ?? []) {
+    if (!slot.name) continue;
+    for (const binding of boundarySlotBindings(def, slot.name)) {
+      slotForWidget.set(`${binding.innerId}|${binding.widget}`, slot);
+    }
+  }
+
   const inputs: AppModeData["inputs"] = [];
   for (const entry of proxied) {
     if (!Array.isArray(entry) || entry.length < 2) continue;
@@ -1164,6 +1190,7 @@ export function blueprintAppMode(
         // unlike the derived "CLIPLoader · Clip Name", which collides whenever
         // a blueprint loads two of anything.
         label: slotLabel(slot, widget),
+        ...(slot?.type === "STRING" ? { connectAs: "text" as const } : {}),
         ...(rest.length > 0
           ? { alsoBind: rest.map((b) => ({ nodeId: `${instanceNodeId}:${b.innerId}`, widget: b.widget })) }
           : {}),
@@ -1173,6 +1200,21 @@ export function blueprintAppMode(
 
     const nodeId = `${instanceNodeId}:${innerId}`;
     if (inputs.some((i) => i.nodeId === nodeId && i.widget === widget)) continue;
+
+    // Proxied straight from an inner node, but still one of the blueprint's
+    // declared inputs — so it gets the author's slot name and, for a STRING
+    // slot, a handle rather than only a text box.
+    const slot = slotForWidget.get(`${innerId}|${widget}`);
+    if (slot) {
+      inputs.push({
+        nodeId,
+        widget,
+        label: slotLabel(slot, widget),
+        ...(slot.type === "STRING" ? { connectAs: "text" as const } : {}),
+      });
+      continue;
+    }
+
     // The author's rename lives on the inner node's own input entry. Without
     // it, two proxied `PrimitiveFloat.value` widgets both label as
     // "PrimitiveFloat · Value" and the node's settings are unusable.
