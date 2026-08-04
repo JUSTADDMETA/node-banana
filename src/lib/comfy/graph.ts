@@ -72,7 +72,17 @@ const PREVIEW_TO_SAVE: Record<string, string> = {
   SaveImageWebsocket: "SaveImage",
 };
 
-/** Widgets that are plumbing, never a user-facing parameter. */
+/**
+ * Widgets that are plumbing, never a user-facing parameter.
+ *
+ * `prompt` deliberately is NOT here. ComfyUI does have a hidden input by that
+ * name, but hidden inputs are declared outside `required`/`optional` and are
+ * never serialised into a graph, so skipping the name could only ever hit a
+ * real one — and 167 node types declare a genuine required `prompt` widget,
+ * every image-edit encoder among them. Blacklisting it meant an "image edit"
+ * node imported with no prompt at all and ran a paid job on an empty edit
+ * instruction: a silently wrong result rather than a visible failure.
+ */
 const WIDGET_SKIP_KEYS = new Set([
   "image",
   "audio",
@@ -82,7 +92,6 @@ const WIDGET_SKIP_KEYS = new Set([
   "upload",
   "control_after_generate",
   "unique_id",
-  "prompt",
   "extra_pnginfo",
 ]);
 

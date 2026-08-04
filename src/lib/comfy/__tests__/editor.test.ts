@@ -454,8 +454,35 @@ describe("blueprints", () => {
     file.nodes[0]!.inputs = [{ name: "input", type: "LATENT,MASK", link: null }];
 
     const { workflow } = blueprintToWorkflowFile(file, "3b5ed000");
-    // LATENT has no loader, so the MASK alternative is what gets built.
-    expect(workflow.nodes.some((n) => n.type === "LoadImageMask")).toBe(true);
+    // LATENT has no loader, so the MASK alternative is what gets built — as a
+    // LoadImage feeding an ImageToMask, not a LoadImageMask.
+    expect(workflow.nodes.some((n) => n.type === "LoadImage")).toBe(true);
+    expect(workflow.nodes.some((n) => n.type === "ImageToMask")).toBe(true);
+  });
+
+  it("loads a mask as an image and converts it, never as LoadImageMask", () => {
+    // Comfy Cloud stages uploads only for the loader classes its asset layer
+    // knows. LoadImageMask is not one, so it rejected every mask we uploaded
+    // with "Invalid image file" before a single step ran.
+    const file = blueprintFile();
+    file.definitions!.subgraphs![0]!.inputs = [{ name: "mask", type: "MASK", linkIds: [] }];
+    file.nodes[0]!.inputs = [{ name: "mask", type: "MASK", link: null }];
+
+    const { workflow, unsupportedInputs } = blueprintToWorkflowFile(file, "3b5ed000");
+    expect(unsupportedInputs).toEqual([]);
+    expect(workflow.nodes.some((n) => n.type === "LoadImageMask")).toBe(false);
+
+    const loader = workflow.nodes.find((n) => n.type === "LoadImage");
+    const adapter = workflow.nodes.find((n) => n.type === "ImageToMask");
+    expect(loader).toBeDefined();
+    expect(adapter?.widgets_values).toEqual(["red"]);
+    // The chain must be loader → adapter → boundary. The adapter reads the
+    // loader's link; the instance socket reads the adapter's — swapping them
+    // would hand the instance an image where it expects a mask.
+    const socketLink = workflow.nodes.find((n) => String(n.id) === "135")?.inputs?.[0]?.link;
+    expect(adapter?.inputs?.[0]?.link).toBe(loader && findLinkBetween(workflow, loader, adapter!));
+    expect(socketLink).toBe(findLinkBetween(workflow, adapter!, { id: 135 }));
+    expect(socketLink).not.toBe(adapter?.inputs?.[0]?.link);
   });
 
   it("still reports a union no member of which can be supplied", () => {
@@ -479,6 +506,24 @@ describe("blueprints", () => {
     expect(skippedOutputs).toEqual([]);
     expect(workflow.nodes.some((n) => n.type === "SaveImage")).toBe(true);
   });
+
+  /**
+   * The id of the link running from `from` to `to`.
+   *
+   * Editor links are positional tuples `[id, originId, originSlot, targetId,
+   * targetSlot, type]`, so they are read by index rather than by name.
+   */
+  const findLinkBetween = (
+    workflow: { links?: unknown[] },
+    from: { id: string | number },
+    to: { id: string | number }
+  ): unknown => {
+    const links = (workflow.links ?? []) as unknown[][];
+    const hit = links.find(
+      (l) => String(l[1]) === String(from.id) && String(l[3]) === String(to.id)
+    );
+    return hit?.[0];
+  };
 
   /** Point the blueprint's single output at `type` and lift it. */
   const liftWithOutput = (type: string) => {
@@ -522,11 +567,9 @@ describe("blueprints", () => {
     expect(sink).toBeDefined();
     // The chain must be slot -> adapter -> sink: the sink reads the adapter's
     // link, not the boundary's, or the mask would reach SaveImage unconverted.
-    const adapterOutLink = workflow.links.find(
-      (l) => String(l[1]) === String(adapter!.id) && String(l[3]) === String(sink!.id)
-    );
+    const adapterOutLink = findLinkBetween(workflow, adapter!, sink!);
     expect(adapterOutLink).toBeDefined();
-    expect(sink!.inputs?.[0]?.link).toBe(adapterOutLink![0]);
+    expect(sink!.inputs?.[0]?.link).toBe(adapterOutLink);
     expect(adapter!.inputs?.[0]?.link).not.toBe(sink!.inputs?.[0]?.link);
   });
 

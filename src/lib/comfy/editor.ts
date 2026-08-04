@@ -88,8 +88,18 @@ export function isEditorFormat(raw: unknown): raw is EditorWorkflowFile {
 
 /* ── widget-value mapping ──────────────────────────────────────── */
 
-/** Nodes that exist only for the editor canvas — never part of execution. */
-const COSMETIC_TYPES = new Set(["Note", "MarkdownNote", "Reroute"]);
+/**
+ * Nodes that exist only for the editor canvas — never part of execution.
+ *
+ * `PrimitiveNode` is the classic frontend-*virtual* node: it has no backend
+ * implementation and never appears in `/api/object_info`, because the frontend
+ * resolves it at prompt time by pushing its widget value into the input it
+ * feeds. Treating its absence from the catalog as a missing custom node made us
+ * refuse whole workflows. Note this is the bare `PrimitiveNode` only — the
+ * typed `PrimitiveInt` / `PrimitiveString` / `PrimitiveFloat` / `PrimitiveBoolean`
+ * nodes are real, execute on the backend, and must keep being emitted.
+ */
+const COSMETIC_TYPES = new Set(["Note", "MarkdownNote", "Reroute", "PrimitiveNode"]);
 
 const SEED_CONTROL_VALUES = new Set(["fixed", "increment", "decrement", "randomize"]);
 
@@ -111,6 +121,17 @@ function widgetDefault(spec: unknown[]): unknown {
   if (type === "COMBO") {
     const options = Array.isArray(opts.options) ? opts.options : [];
     return options[0];
+  }
+  // A V3 dynamic combo's value is the selected option's *key*, and no such
+  // input in the catalog declares a `default` — so the frontend's initial
+  // selection, the first option, is the only default there is. Omitting one is
+  // not caught by validation: the engine binds required inputs positionally, so
+  // the job is accepted, the model runs, and the save step then dies with
+  // "missing 1 required positional argument".
+  if (typeof type === "string" && type.startsWith("COMFY_DYNAMICCOMBO_")) {
+    const options = Array.isArray(opts.options) ? opts.options : [];
+    const first = options[0];
+    return first !== null && typeof first === "object" ? (first as { key?: unknown }).key : first;
   }
   if (type === "INT" || type === "FLOAT") return 0;
   if (type === "STRING") return "";
@@ -372,6 +393,13 @@ function resolveOrigin(
   if (node.type === "Reroute") {
     const upstream = node.inputs?.[0]?.link;
     return upstream == null ? null : resolveLinkId(scope, upstream, depth + 1);
+  }
+  if (node.type === "PrimitiveNode") {
+    // A primitive holds a literal, not a result: the frontend writes its value
+    // straight into the widget it feeds. Emitting a link here would point at a
+    // node the engine has never heard of.
+    const value = Array.isArray(node.widgets_values) ? node.widgets_values[0] : undefined;
+    return value === undefined ? null : { kind: "value", value };
   }
   if (node.mode === 4) {
     // Bypassed: route through, mirroring the frontend's slot matching —
@@ -791,10 +819,43 @@ const SINK_FOR_SLOT_TYPE: Record<string, BoundarySink> = {
   },
 };
 
-/** Loader node class that supplies a value of a given boundary-input type. */
-const LOADER_FOR_SLOT_TYPE: Record<string, { classType: string; widget: unknown[] }> = {
+/**
+ * Loader node class that supplies a value of a given boundary-input type.
+ *
+ * `adapter` mirrors {@link BoundarySink}: a node placed between the loader and
+ * the boundary when the loader cannot emit the slot's type directly.
+ */
+interface BoundaryLoader {
+  classType: string;
+  widget: unknown[];
+  adapter?: {
+    classType: string;
+    inputName: string;
+    /** The type the adapter emits, i.e. what the boundary slot receives. */
+    outputType: string;
+    widgets: unknown[];
+  };
+}
+
+const LOADER_FOR_SLOT_TYPE: Record<string, BoundaryLoader> = {
   IMAGE: { classType: "LoadImage", widget: ["example.png", "image"] },
-  MASK: { classType: "LoadImageMask", widget: ["example.png", "red", "image"] },
+  // Not `LoadImageMask`, though it exists and would be the obvious choice.
+  // Comfy Cloud stages an uploaded asset into the worker's input directory only
+  // for the loader classes its asset layer knows — LoadImage, LoadVideo,
+  // LoadAudio — so LoadImageMask never finds the file and rejects the prompt
+  // with "Invalid image file" before a single step runs. Proven with two
+  // minimal graphs differing only in the loader class. Loading the image and
+  // converting it is what a user would do by hand, and it works on both engines.
+  MASK: {
+    classType: "LoadImage",
+    widget: ["example.png", "image"],
+    adapter: {
+      classType: "ImageToMask",
+      inputName: "image",
+      outputType: "MASK",
+      widgets: ["red"],
+    },
+  },
   AUDIO: { classType: "LoadAudio", widget: ["example.mp3", null, "audio"] },
   VIDEO: { classType: "LoadVideo", widget: ["example.mp4", "video"] },
 };
@@ -893,17 +954,39 @@ export function blueprintToWorkflowFile(
 
     const loaderId = nextNodeId++;
     const linkId = nextLinkId++;
-    socket.link = linkId;
-    links.push([linkId, loaderId, 0, instance.id, index, type]);
     // The title becomes `_meta.title` on conversion, which is what inspection
     // reads for the handle's label — no separate mapping needed.
     const label = slotLabel(slot, `input_${index}`);
+
+    // With an adapter the chain is loader → adapter → slot, so the loader's
+    // output feeds the adapter and the adapter's feeds the boundary socket.
+    if (loader.adapter) {
+      const adapterId = nextNodeId++;
+      const boundaryLinkId = nextLinkId++;
+      socket.link = boundaryLinkId;
+      links.push([linkId, loaderId, 0, adapterId, 0, loader.adapter.outputType]);
+      links.push([boundaryLinkId, adapterId, 0, instance.id, index, type]);
+      nodes.push({
+        id: adapterId,
+        type: loader.adapter.classType,
+        inputs: [{ name: loader.adapter.inputName, type: "IMAGE", link: linkId }],
+        outputs: [{ name: loader.adapter.outputType, type: loader.adapter.outputType }],
+        widgets_values: loader.adapter.widgets,
+      });
+    } else {
+      socket.link = linkId;
+      links.push([linkId, loaderId, 0, instance.id, index, type]);
+    }
+
+    // Without an adapter the loader emits the slot's own type; with one it
+    // emits whatever the adapter consumes, and the adapter converts.
+    const loaderOutput = loader.adapter ? "IMAGE" : type;
     nodes.push({
       id: loaderId,
       type: loader.classType,
       title: label,
       inputs: [],
-      outputs: [{ name: type, type }],
+      outputs: [{ name: loaderOutput, type: loaderOutput }],
       widgets_values: loader.widget,
     });
   });
