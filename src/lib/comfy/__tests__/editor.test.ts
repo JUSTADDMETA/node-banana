@@ -480,6 +480,63 @@ describe("blueprints", () => {
     expect(workflow.nodes.some((n) => n.type === "SaveImage")).toBe(true);
   });
 
+  /** Point the blueprint's single output at `type` and lift it. */
+  const liftWithOutput = (type: string) => {
+    const file = blueprintFile();
+    file.definitions!.subgraphs![0]!.outputs = [{ name: "out", type, linkIds: [] }];
+    return blueprintToWorkflowFile(file, "3b5ed000");
+  };
+
+  it("gives a video sink every widget the engine demands", () => {
+    // SaveVideo requires filename_prefix, format AND codec. codec is a
+    // COMFY_DYNAMICCOMBO_V3 with no declared default, so leaving it off did not
+    // fall back to anything — it vanished from the submitted graph, and every
+    // video blueprint died on "SaveVideo.execute() missing 1 required
+    // positional argument: 'codec'" after the render had already been paid for.
+    const { workflow } = liftWithOutput("VIDEO");
+    const sink = workflow.nodes.find((n) => n.type === "SaveVideo");
+    expect(sink?.widgets_values).toEqual(["node-banana", "auto", "auto"]);
+  });
+
+  it("writes text to a file rather than previewing it", () => {
+    // PreviewAny renders in ComfyUI's own web client and writes nothing, so a
+    // captioning blueprint ran to success and then reported no output at all.
+    const { workflow } = liftWithOutput("STRING");
+    expect(workflow.nodes.some((n) => n.type === "PreviewAny")).toBe(false);
+    const sink = workflow.nodes.find((n) => n.type === "SaveText");
+    expect(sink?.widgets_values).toEqual(["node-banana", "txt"]);
+  });
+
+  it("saves a mesh boundary output", () => {
+    const { workflow, skippedOutputs } = liftWithOutput("MESH");
+    expect(skippedOutputs).toEqual([]);
+    expect(workflow.nodes.some((n) => n.type === "SaveGLB")).toBe(true);
+  });
+
+  it("routes a mask through an adapter, because no sink takes one directly", () => {
+    const { workflow, skippedOutputs } = liftWithOutput("MASK");
+    expect(skippedOutputs).toEqual([]);
+    const adapter = workflow.nodes.find((n) => n.type === "MaskToImage");
+    const sink = workflow.nodes.find((n) => n.type === "SaveImage");
+    expect(adapter).toBeDefined();
+    expect(sink).toBeDefined();
+    // The chain must be slot -> adapter -> sink: the sink reads the adapter's
+    // link, not the boundary's, or the mask would reach SaveImage unconverted.
+    const adapterOutLink = workflow.links.find(
+      (l) => String(l[1]) === String(adapter!.id) && String(l[3]) === String(sink!.id)
+    );
+    expect(adapterOutLink).toBeDefined();
+    expect(sink!.inputs?.[0]?.link).toBe(adapterOutLink![0]);
+    expect(adapter!.inputs?.[0]?.link).not.toBe(sink!.inputs?.[0]?.link);
+  });
+
+  it("serialises a gaussian splat to a file before saving it", () => {
+    const { workflow, skippedOutputs } = liftWithOutput("SPLAT");
+    expect(skippedOutputs).toEqual([]);
+    expect(workflow.nodes.find((n) => n.type === "SplatToFile3D")?.widgets_values).toEqual(["ply"]);
+    expect(workflow.nodes.some((n) => n.type === "SaveGLB")).toBe(true);
+  });
+
   it("leaves the caller's file untouched so a second blueprint still converts", () => {
     const file = blueprintFile();
     blueprintToWorkflowFile(file, "3b5ed000");

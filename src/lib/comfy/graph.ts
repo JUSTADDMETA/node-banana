@@ -134,6 +134,7 @@ const FRIENDLY_CLASS_LABEL: Record<string, string> = {
   SaveGLB: "3D Model",
   PreviewAny: "Text",
   ShowText: "Text",
+  SaveText: "Text",
 };
 
 /**

@@ -733,12 +733,62 @@ export function extractBlueprints(file: EditorWorkflowFile): ComfyBlueprintSumma
   });
 }
 
-/** Sink node class + input name that persists a value of a given slot type. */
-const SINK_FOR_SLOT_TYPE: Record<string, { classType: string; inputName: string }> = {
-  IMAGE: { classType: "SaveImage", inputName: "images" },
-  VIDEO: { classType: "SaveVideo", inputName: "video" },
-  AUDIO: { classType: "SaveAudio", inputName: "audio" },
-  STRING: { classType: "PreviewAny", inputName: "source" },
+/**
+ * How to persist a value of a given boundary-slot type.
+ *
+ * `widgets` are the sink's own positional widget values *after* the connected
+ * input, in the order the engine declares them. They are spelled out rather
+ * than left to defaults because a required widget with no declared default —
+ * `SaveVideo.codec`, a `COMFY_DYNAMICCOMBO_V3` — is simply absent from the
+ * submitted graph, and the engine rejects the job with a missing-argument
+ * TypeError once the render is already done.
+ *
+ * `adapter` covers a slot whose type no sink accepts directly: a mask is saved
+ * by turning it into an image first, exactly as a user would wire it by hand.
+ */
+interface BoundarySink {
+  classType: string;
+  inputName: string;
+  widgets: unknown[];
+  adapter?: {
+    classType: string;
+    inputName: string;
+    /** The type the adapter emits, i.e. what the sink receives. */
+    outputType: string;
+    widgets: unknown[];
+  };
+}
+
+const SINK_FOR_SLOT_TYPE: Record<string, BoundarySink> = {
+  IMAGE: { classType: "SaveImage", inputName: "images", widgets: ["node-banana"] },
+  // filename_prefix, format, codec.
+  VIDEO: { classType: "SaveVideo", inputName: "video", widgets: ["node-banana", "auto", "auto"] },
+  AUDIO: { classType: "SaveAudio", inputName: "audio", widgets: ["node-banana"] },
+  // `PreviewAny` renders in the ComfyUI web client and writes nothing, so a
+  // text-producing blueprint ran and then reported that it had produced no
+  // output. `SaveText` writes a file the run can actually collect.
+  STRING: { classType: "SaveText", inputName: "text", widgets: ["node-banana", "txt"] },
+  MESH: { classType: "SaveGLB", inputName: "mesh", widgets: ["node-banana"] },
+  MASK: {
+    classType: "SaveImage",
+    inputName: "images",
+    widgets: ["node-banana"],
+    adapter: { classType: "MaskToImage", inputName: "mask", outputType: "IMAGE", widgets: [] },
+  },
+  // A gaussian splat is a scene, not a mesh, and no sink takes one directly.
+  // `SaveGLB` does accept the 3D *file* a splat serialises to, so the file is
+  // written as `.ply` — the one splat format a viewer is most likely to open.
+  SPLAT: {
+    classType: "SaveGLB",
+    inputName: "mesh",
+    widgets: ["node-banana"],
+    adapter: {
+      classType: "SplatToFile3D",
+      inputName: "splat",
+      outputType: "FILE_3D_SPLAT_ANY",
+      widgets: ["ply"],
+    },
+  },
 };
 
 /** Loader node class that supplies a value of a given boundary-input type. */
@@ -868,14 +918,35 @@ export function blueprintToWorkflowFile(
     }
     const sinkId = nextNodeId++;
     const linkId = nextLinkId++;
-    links.push([linkId, instance.id, index, sinkId, 0, type]);
+
+    // With an adapter the chain is slot → adapter → sink, so the boundary link
+    // lands on the adapter and a second link carries its output to the sink.
+    let sinkInputType = type;
+    let sinkLinkId = linkId;
+    if (sink.adapter) {
+      const adapterId = nextNodeId++;
+      links.push([linkId, instance.id, index, adapterId, 0, type]);
+      sinkLinkId = nextLinkId++;
+      links.push([sinkLinkId, adapterId, 0, sinkId, 0, sink.adapter.outputType]);
+      sinkInputType = sink.adapter.outputType;
+      nodes.push({
+        id: adapterId,
+        type: sink.adapter.classType,
+        inputs: [{ name: sink.adapter.inputName, type, link: linkId }],
+        outputs: [{ name: sink.adapter.outputType, type: sink.adapter.outputType }],
+        widgets_values: sink.adapter.widgets,
+      });
+    } else {
+      links.push([linkId, instance.id, index, sinkId, 0, type]);
+    }
+
     nodes.push({
       id: sinkId,
       type: sink.classType,
       title: label,
-      inputs: [{ name: sink.inputName, type, link: linkId }],
+      inputs: [{ name: sink.inputName, type: sinkInputType, link: sinkLinkId }],
       outputs: [],
-      widgets_values: sink.classType === "PreviewAny" ? [] : ["node-banana"],
+      widgets_values: sink.widgets,
     });
   });
 
