@@ -127,7 +127,11 @@ export interface EngineFetchOptions {
  * a 4xx or 5xx is the engine talking, and this layer does not second-guess it.
  */
 export function createEngineFetch(options: EngineFetchOptions = {}): typeof fetch {
-  const { retries = 2, retryBaseMs = 300 } = options;
+  // Four, not one or two: the failure this exists for was measured at roughly
+  // two attempts in five against Comfy Cloud, which still leaves about one run
+  // in twenty dying after three tries. Each extra attempt costs a few hundred
+  // milliseconds of backoff and only ever happens when no socket opened.
+  const { retries = 4, retryBaseMs = 300 } = options;
 
   return async function engineFetch(
     input: Parameters<typeof fetch>[0],
