@@ -131,7 +131,7 @@ export class SdkComfyEngine implements ComfyEngine {
     const res = await resilientFetch(`${this.connection.baseUrl}/api/object_info`, {
       headers,
       timeoutMs: 30_000,
-      retries: 1,
+      retries: 4,
       signal,
     });
     if (res.status === 401 || res.status === 403) {

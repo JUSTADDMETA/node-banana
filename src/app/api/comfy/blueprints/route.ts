@@ -62,7 +62,7 @@ async function fetchCatalog(
   const res = await resilientFetch(`${connection.baseUrl}/api/global_subgraphs`, {
     headers: engineAuthHeaders(connection),
     timeoutMs: 20_000,
-    retries: 1,
+    retries: 4,
     ...(signal ? { signal } : {}),
   });
   if (res.status === 404) {
@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
       {
         headers: engineAuthHeaders(connection),
         timeoutMs: 30_000,
-        retries: 1,
+        retries: 4,
         signal: request.signal,
       }
     );

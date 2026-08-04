@@ -130,7 +130,7 @@ export class LegacyComfyEngine implements ComfyEngine {
     const res = await resilientFetch(`${this.base}/api/object_info`, {
       headers: this.headers(),
       timeoutMs: 30_000,
-      retries: 1,
+      retries: 4,
       signal,
     });
     if (res.status === 401 || res.status === 403) {
