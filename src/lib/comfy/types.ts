@@ -101,6 +101,15 @@ export interface ComfyAppParam {
   description?: string;
   /** True for `seed`-like inputs, which are re-randomised per run by default. */
   isSeed?: boolean;
+  /**
+   * Extra graph bindings this one setting also writes.
+   *
+   * A Blueprint boundary slot can feed several inner nodes — one `ckpt_name`
+   * reaching a checkpoint loader, a VAE loader and a text-encoder loader. The
+   * author exposed one control, so one control it stays; without this the user
+   * could change the model and silently leave its VAE on the old one.
+   */
+  alsoBind?: Array<{ nodeId: string; inputKey: string }>;
   /** Multi-line text (prompt boxes) render as a textarea. */
   multiline?: boolean;
 }

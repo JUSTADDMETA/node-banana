@@ -576,6 +576,15 @@ export interface AppModeData {
     widget: string;
     /** The author's display rename, when the format carries one. */
     label?: string;
+    /**
+     * Further widgets this one control also sets.
+     *
+     * A blueprint boundary slot may feed several inner nodes — one `ckpt_name`
+     * into a checkpoint loader, a VAE loader and a text-encoder loader. They are
+     * one choice to the author and must stay one choice here, or the user can
+     * change the model and leave its VAE behind.
+     */
+    alsoBind?: Array<{ nodeId: string; widget: string }>;
   }>;
   /** Author-exposed output node ids, in order. */
   outputNodeIds: string[];
@@ -1048,6 +1057,68 @@ export function blueprintToWorkflowFile(
 }
 
 /**
+ * `proxyWidgets` node id meaning "the subgraph's own boundary input slot",
+ * rather than a node inside it.
+ *
+ * The author promoted a widget all the way onto the blueprint's edge instead of
+ * proxying it from one inner node. Namespacing it like an ordinary id produced
+ * `instance:-1`, a node no graph contains, and inspection dropped it in silence
+ * — which is how a text-to-video app arrived with no prompt, no resolution and
+ * no length. 22 of the 93 published Blueprints use this form, for 113 controls
+ * between them.
+ */
+const BOUNDARY_SLOT_ID = "-1";
+
+/** Where one inner link ends: the node it feeds and which of its inputs. */
+function linkTargets(links: EditorLink[] | undefined): Map<number, { target: string; slot: number }> {
+  const map = new Map<number, { target: string; slot: number }>();
+  for (const link of links ?? []) {
+    if (Array.isArray(link)) {
+      map.set(link[0], { target: String(link[3]), slot: link[4] });
+    } else if (link && typeof link === "object") {
+      map.set(link.id, { target: String(link.target_id), slot: link.target_slot });
+    }
+  }
+  return map;
+}
+
+/** One inner widget a boundary slot drives. */
+interface BoundaryBinding {
+  innerId: string;
+  widget: string;
+}
+
+/**
+ * The inner widgets a boundary input slot feeds, in the author's link order.
+ *
+ * A slot usually drives exactly one, but not always: an LTX blueprint routes a
+ * single `ckpt_name` into three loaders, and exposing only the first would let
+ * the user desynchronise the checkpoint from its VAE and text encoder.
+ */
+function boundarySlotBindings(def: SubgraphDef | undefined, slotName: string): BoundaryBinding[] {
+  const slot = (def?.inputs ?? []).find((s) => s.name === slotName);
+  if (!slot) return [];
+  const targets = linkTargets(def?.links);
+  const nodes = new Map((def?.nodes ?? []).map((n) => [String(n.id), n]));
+  const bindings: BoundaryBinding[] = [];
+  const seen = new Set<string>();
+
+  for (const linkId of slot.linkIds ?? []) {
+    const target = targets.get(linkId);
+    if (!target) continue;
+    // The slot addresses the input positionally; its name is what the graph
+    // will be keyed by once the widget is inlined again.
+    const widget = nodes.get(target.target)?.inputs?.[target.slot]?.name;
+    if (!widget) continue;
+    const key = `${target.target} ${widget}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    bindings.push({ innerId: target.target, widget });
+  }
+  return bindings;
+}
+
+/**
  * The App-Mode-equivalent surface of a blueprint.
  *
  * Blueprints carry no `linearData`, but `proxyWidgets` is the same idea: the
@@ -1075,6 +1146,31 @@ export function blueprintAppMode(
     // affordance, not an input the engine reads.
     if (widget === "control_after_generate") continue;
     const innerId = String(entry[0]);
+
+    if (innerId === BOUNDARY_SLOT_ID) {
+      // A media slot is materialised as a real loader node instead, so binding
+      // it here as a widget would either miss or duplicate that input.
+      const slot = (def?.inputs ?? []).find((s) => s.name === widget);
+      if (materializableType(slot?.type, LOADER_FOR_SLOT_TYPE)) continue;
+
+      const [primary, ...rest] = boundarySlotBindings(def, widget);
+      if (!primary) continue;
+      const nodeId = `${instanceNodeId}:${primary.innerId}`;
+      if (inputs.some((i) => i.nodeId === nodeId && i.widget === primary.widget)) continue;
+      inputs.push({
+        nodeId,
+        widget: primary.widget,
+        // The slot's own name is the author's, and unique across the boundary —
+        // unlike the derived "CLIPLoader · Clip Name", which collides whenever
+        // a blueprint loads two of anything.
+        label: slotLabel(slot, widget),
+        ...(rest.length > 0
+          ? { alsoBind: rest.map((b) => ({ nodeId: `${instanceNodeId}:${b.innerId}`, widget: b.widget })) }
+          : {}),
+      });
+      continue;
+    }
+
     const nodeId = `${instanceNodeId}:${innerId}`;
     if (inputs.some((i) => i.nodeId === nodeId && i.widget === widget)) continue;
     // The author's rename lives on the inner node's own input entry. Without

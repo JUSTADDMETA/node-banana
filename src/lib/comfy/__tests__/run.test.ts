@@ -275,3 +275,58 @@ describe("resolveOutputs", () => {
     expect(resolveOutputs(videoApp, [media("77")])).toEqual([]);
   });
 });
+
+describe("a setting the author tied to several nodes", () => {
+  it("writes every binding, not just the first", () => {
+    // A Blueprint boundary slot can feed a checkpoint loader, a VAE loader and
+    // a text encoder at once. The author exposed one control; writing only the
+    // first would leave the model beside the VAE it did not ship with.
+    const graph = buildRunGraph({
+      app: app({
+        params: [
+          {
+            id: "5:ckpt_name",
+            label: "ckpt_name",
+            nodeId: "5",
+            inputKey: "ckpt_name",
+            type: "string",
+            alsoBind: [{ nodeId: "98", inputKey: "image" }],
+          },
+        ],
+      }),
+      text: {},
+      uploads: {},
+      params: { "5:ckpt_name": "flux.safetensors" },
+    });
+
+    expect(graph["5"]?.inputs.ckpt_name).toBe("flux.safetensors");
+    expect(graph["98"]?.inputs.image).toBe("flux.safetensors");
+  });
+
+  it("keeps an extra-bound node out of the prune", () => {
+    // Pruning keeps only what a bound output, input or param reaches. A node
+    // reachable solely through an extra binding must survive too, or patching
+    // it would write into a node that is no longer in the graph.
+    const graph = buildRunGraph({
+      app: app({
+        outputs: [{ id: "9", label: "Image", type: "image", nodeId: "9", classType: "SaveImage" }],
+        params: [
+          {
+            id: "5:ckpt_name",
+            label: "ckpt_name",
+            nodeId: "5",
+            inputKey: "ckpt_name",
+            type: "string",
+            alsoBind: [{ nodeId: "99", inputKey: "filename_prefix" }],
+          },
+        ],
+      }),
+      text: {},
+      uploads: {},
+      params: { "5:ckpt_name": "flux.safetensors" },
+    });
+
+    expect(graph["99"]).toBeDefined();
+    expect(graph["99"]?.inputs.filename_prefix).toBe("flux.safetensors");
+  });
+});

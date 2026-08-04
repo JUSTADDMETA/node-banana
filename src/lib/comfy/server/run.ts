@@ -96,6 +96,12 @@ export function buildRunGraph(options: BuildRunGraphOptions): ComfyGraph {
     const value = params[param.id];
     if (value === undefined || value === null || value === "") continue;
     assignments.push({ nodeId: param.nodeId, inputKey: param.inputKey, value });
+    // One control, every binding the author tied to it. A blueprint boundary
+    // slot feeding a checkpoint loader, a VAE loader and a text encoder is one
+    // choice; writing only the first would leave a model beside the wrong VAE.
+    for (const extra of param.alsoBind ?? []) {
+      assignments.push({ nodeId: extra.nodeId, inputKey: extra.inputKey, value });
+    }
     // A seed the user typed is a deliberate choice — never overwrite it.
     if (param.isSeed) pinnedSeeds.push({ nodeId: param.nodeId, inputKey: param.inputKey });
   }
@@ -113,6 +119,7 @@ export function buildRunGraph(options: BuildRunGraphOptions): ComfyGraph {
     ...outputNodeIds,
     ...app.inputs.map((i) => i.nodeId),
     ...app.params.map((p) => p.nodeId),
+    ...app.params.flatMap((p) => (p.alsoBind ?? []).map((b) => b.nodeId)),
   ];
   const pruned = outputNodeIds.length > 0 ? pruneToOutputs(app.graph, keepRoots) : app.graph;
 

@@ -297,7 +297,14 @@ export function inspectWorkflow(
       if (candidate.connectableAs) {
         inputs.push(inputFromCandidate(candidate, candidate.connectableAs, taken));
       } else {
-        params.push(paramFromCandidate(candidate));
+        const param = paramFromCandidate(candidate);
+        // One boundary slot can drive several inner widgets. The author exposed
+        // one control, so the run must write all of them from it.
+        const alsoBind = entry.alsoBind?.map((b) => ({
+          nodeId: b.nodeId,
+          inputKey: b.widget,
+        }));
+        params.push(alsoBind?.length ? { ...param, alsoBind } : param);
       }
     }
     // A media loader the curated list does not mention is still a real entry

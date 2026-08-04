@@ -620,6 +620,73 @@ describe("blueprints", () => {
     expect(appMode?.inputs.some((i) => i.widget === "control_after_generate")).toBe(false);
   });
 
+  /**
+   * A blueprint whose author promoted widgets onto the boundary itself.
+   * `-1` addresses the subgraph's own input slot rather than an inner node.
+   */
+  const boundaryPromotedFile = (): EditorWorkflowFile => {
+    const file = blueprintFile();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (file.nodes[0] as any).properties = {
+      proxyWidgets: [
+        ["-1", "prompt"],
+        ["-1", "ckpt_name"],
+        ["-1", "image"],
+      ],
+    };
+    const def = file.definitions!.subgraphs![0]!;
+    def.inputs = [
+      { name: "prompt", type: "STRING", linkIds: [900] },
+      // One slot feeding two loaders — the author's single choice.
+      { name: "ckpt_name", type: "COMBO", linkIds: [901, 902] },
+      // Media slots become real loader nodes, never widgets.
+      { name: "image", type: "IMAGE", linkIds: [903] },
+    ];
+    def.nodes = [
+      { id: 45, type: "CLIPTextEncode", widgets_values: ["a cat"], inputs: [{ name: "text" }] },
+      { id: 31, type: "CheckpointLoaderSimple", widgets_values: [], inputs: [{ name: "ckpt_name" }] },
+      { id: 32, type: "VAELoader", widgets_values: [], inputs: [{ name: "vae_name" }] },
+      { id: 33, type: "PreviewImage", widgets_values: [], inputs: [{ name: "images" }] },
+    ];
+    def.links = [
+      [900, -1, 0, 45, 0, "STRING"],
+      [901, -1, 1, 31, 0, "COMBO"],
+      [902, -1, 1, 32, 0, "COMBO"],
+      [903, -1, 2, 33, 0, "IMAGE"],
+    ];
+    return file;
+  };
+
+  it("resolves a widget the author promoted onto the blueprint's own boundary", () => {
+    // `-1` means the subgraph's input slot, not a node. Namespacing it blindly
+    // produced `135:-1`, which matches nothing, so inspection dropped it in
+    // silence — a text-to-video app arrived with no prompt, width or length.
+    const appMode = blueprintAppMode(boundaryPromotedFile(), "3b5ed000", "135");
+    expect(appMode?.inputs.find((i) => i.widget === "text")).toEqual({
+      nodeId: "135:45",
+      widget: "text",
+      // The slot's own name, which the author chose and which is unique across
+      // the boundary — unlike the derived "CLIPTextEncode · Text".
+      label: "prompt",
+    });
+  });
+
+  it("keeps one boundary slot that drives several loaders as one control", () => {
+    const appMode = blueprintAppMode(boundaryPromotedFile(), "3b5ed000", "135");
+    const ckpt = appMode?.inputs.find((i) => i.label === "ckpt_name");
+    expect(ckpt).toMatchObject({ nodeId: "135:31", widget: "ckpt_name" });
+    // Exposing only the first would let the user change the checkpoint and
+    // leave its VAE pointing at the old one.
+    expect(ckpt?.alsoBind).toEqual([{ nodeId: "135:32", widget: "vae_name" }]);
+  });
+
+  it("leaves a media boundary slot to its materialised loader", () => {
+    // An IMAGE slot becomes a LoadImage node; binding it here as a widget too
+    // would either miss the upload or duplicate the input handle.
+    const appMode = blueprintAppMode(boundaryPromotedFile(), "3b5ed000", "135");
+    expect(appMode?.inputs.some((i) => i.widget === "images")).toBe(false);
+  });
+
   it("reports a boundary input it cannot supply instead of building a broken app", () => {
     const file = blueprintFile();
     file.definitions!.subgraphs![0]!.inputs = [
