@@ -579,7 +579,7 @@ export function pruneToOutputs(graph: ComfyGraph, keepNodeIds: string[]): ComfyG
 
 const VIDEO_EXT = /\.(mp4|webm|mov|m4v|mkv|avi)$/i;
 const AUDIO_EXT = /\.(mp3|wav|flac|ogg|opus|m4a)$/i;
-const MODEL_EXT = /\.(glb|gltf|usdz|obj|ply)$/i;
+const MODEL_EXT = /\.(glb|gltf|usdz|obj|ply|stl|splat|spz)$/i;
 
 /** Best-effort media type for a produced file, from its extension. */
 export function mediaTypeForFilename(filename: string): ComfyOutputType {
@@ -610,6 +610,16 @@ export function mimeForFilename(filename: string, fallback = "image/png"): strin
     glb: "model/gltf-binary",
     gltf: "model/gltf+json",
     usdz: "model/vnd.usdz+zip",
+    // A gaussian splat is saved as one of these. Missing, they fell through to
+    // the image fallback, and a 23MB splat arrived labelled `image/png` — the
+    // node would try to render a point cloud as a picture.
+    obj: "model/obj",
+    stl: "model/stl",
+    ply: "model/ply",
+    splat: "application/octet-stream",
+    spz: "application/octet-stream",
+    txt: "text/plain",
+    json: "application/json",
   };
   return table[ext] ?? fallback;
 }

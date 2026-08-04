@@ -10,6 +10,7 @@ import {
   loaderInputType,
   loaderWidgetKey,
   mediaTypeForFilename,
+  mimeForFilename,
   outputTypeFor,
   parseApiGraph,
   patchGraph,
@@ -387,5 +388,20 @@ describe("graphClassTypes", () => {
       "LoadImage",
       "SaveImage",
     ]);
+  });
+});
+
+describe("3D and text file typing", () => {
+  it("types a gaussian splat as 3D, not as a picture", () => {
+    // A 23MB .ply came back labelled image/png because the extension was
+    // missing from the table and fell through to the image fallback.
+    expect(mimeForFilename("scene.ply")).toBe("model/ply");
+    expect(mediaTypeForFilename("scene.ply")).toBe("3d");
+    expect(mediaTypeForFilename("scene.splat")).toBe("3d");
+    expect(mediaTypeForFilename("scene.spz")).toBe("3d");
+  });
+
+  it("types a saved caption as text", () => {
+    expect(mimeForFilename("caption.txt")).toBe("text/plain");
   });
 });
