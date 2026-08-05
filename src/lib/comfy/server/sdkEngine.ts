@@ -179,11 +179,13 @@ export class SdkComfyEngine implements ComfyEngine {
       if (!terminal) return { status: job.status, terminal: false, error: null, raw: null };
       if (job.status !== SUCCESS) {
         const detail = job.error?.message ?? null;
-        const node = job.error?.node_id ? ` (node ${job.error.node_id})` : "";
+        const nodeId = job.error?.node_id ? String(job.error.node_id) : undefined;
+        const node = nodeId ? ` (node ${nodeId})` : "";
         return {
           status: job.status,
           terminal: true,
           error: `${this.label} job ${job.status}${detail ? `: ${detail}${node}` : ""}`,
+          ...(nodeId ? { errorNodeId: nodeId } : {}),
           raw: null,
         };
       }

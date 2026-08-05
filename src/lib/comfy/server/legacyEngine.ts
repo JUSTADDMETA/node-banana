@@ -274,10 +274,12 @@ export class LegacyComfyEngine implements ComfyEngine {
       };
     }
     if (entry.status?.status_str === "error") {
+      const detail = historyErrorDetail(entry.status);
       return {
         status: "error",
         terminal: true,
-        error: historyErrorDetail(entry.status) ?? "ComfyUI reported an execution error",
+        error: detail?.message ?? "ComfyUI reported an execution error",
+        ...(detail?.nodeId ? { errorNodeId: detail.nodeId } : {}),
         raw: null,
       };
     }
@@ -444,7 +446,9 @@ function cloudErrorDetail(status: string, raw: string | null | undefined): strin
 }
 
 /** Pull the node-level message out of a `/history` error entry. */
-function historyErrorDetail(status: { messages?: unknown } | undefined): string | null {
+function historyErrorDetail(
+  status: { messages?: unknown } | undefined
+): { message: string; nodeId?: string } | null {
   const messages = status?.messages;
   if (!Array.isArray(messages)) return null;
   for (const message of messages) {
@@ -454,7 +458,11 @@ function historyErrorDetail(status: { messages?: unknown } | undefined): string 
     const nodeType = typeof payload.node_type === "string" ? payload.node_type : "a node";
     const detail =
       typeof payload.exception_message === "string" ? payload.exception_message : "execution failed";
-    return `${nodeType}: ${detail}`;
+    const nodeId =
+      typeof payload.node_id === "string" || typeof payload.node_id === "number"
+        ? String(payload.node_id)
+        : undefined;
+    return { message: `${nodeType}: ${detail}`, ...(nodeId ? { nodeId } : {}) };
   }
   return null;
 }

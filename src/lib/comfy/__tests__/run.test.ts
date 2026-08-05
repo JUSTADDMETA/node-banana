@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { buildRunGraph, hashSeed, newRunTag, resolveOutputs } from "../server/run";
+import { buildRunGraph, hashSeed, nameFailedOutput, newRunTag, resolveOutputs } from "../server/run";
 import type { ComfyAppDefinition } from "../types";
 
 const app = (overrides: Partial<ComfyAppDefinition> = {}): ComfyAppDefinition => ({
@@ -328,5 +328,44 @@ describe("a setting the author tied to several nodes", () => {
 
     expect(graph["99"]).toBeDefined();
     expect(graph["99"]?.inputs.filename_prefix).toBe("flux.safetensors");
+  });
+});
+
+describe("nameFailedOutput", () => {
+  const twoOutputs = app({
+    outputs: [
+      { id: "9", label: "Result", type: "image", nodeId: "9", classType: "SaveImage" },
+      { id: "1000002", label: "Audio", type: "audio", nodeId: "1000002", classType: "SaveAudio" },
+    ],
+  });
+
+  it("names the handle a failing sink belongs to", () => {
+    // What this is for: a Blueprint that hands back a video's audio alongside
+    // the picture loses the picture too when the clip is silent, and says so
+    // only as "node 1000002" — a node the importer invented, which the user has
+    // never seen.
+    const message = nameFailedOutput(
+      { error: "Comfy Cloud job failed: SaveAudio: input audio is None.", errorNodeId: "1000002" },
+      twoOutputs
+    );
+    expect(message).toContain('"Audio" output');
+    expect(message).toContain("Inputs, settings and outputs");
+  });
+
+  it("stays quiet when the failure is not an output of this node", () => {
+    const message = nameFailedOutput(
+      { error: "Comfy Cloud job failed: KSampler: out of memory", errorNodeId: "31" },
+      twoOutputs
+    );
+    expect(message).toBe("Comfy Cloud job failed: KSampler: out of memory");
+  });
+
+  it("does not offer to drop the only output there is", () => {
+    // Turning it off would leave nothing to run for, and the dialog refuses it.
+    const message = nameFailedOutput(
+      { error: "Comfy Cloud job failed: SaveImage exploded", errorNodeId: "9" },
+      app()
+    );
+    expect(message).toBe("Comfy Cloud job failed: SaveImage exploded");
   });
 });

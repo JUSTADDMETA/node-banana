@@ -206,6 +206,30 @@ function assetValue(asset: ComfyOutputAsset): string | null {
 }
 
 /**
+ * Say which output a failed node belongs to, and that it can be dropped.
+ *
+ * ComfyUI fails the whole prompt when any output node raises, so one unusable
+ * result costs the entire render. Three published Blueprints hand a video's
+ * audio back alongside the picture, and a clip with no audio track takes the
+ * picture down with it — `SaveAudio: input audio is None (node 1000002)`, an id
+ * that appears nowhere the user has ever been, because this importer invented
+ * the node. Naming the handle turns a dead end into one unchecked box.
+ *
+ * Said only when there is another output to keep: dropping the sole output
+ * leaves nothing to run for.
+ */
+export function nameFailedOutput(
+  state: { error: string | null; errorNodeId?: string },
+  app: ComfyAppDefinition | undefined
+): string {
+  const error = state.error ?? "The run failed";
+  const outputs = app?.outputs ?? [];
+  const failed = outputs.find((output) => output.nodeId === state.errorNodeId);
+  if (!failed || outputs.length < 2) return error;
+  return `${error} That is the "${failed.label}" output — turn it off under "Inputs, settings and outputs" to run without it.`;
+}
+
+/**
  * Collect a finished job and map it onto the app's handles.
  *
  * A job that reports success but surfaces nothing is treated as a failure: it

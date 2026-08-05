@@ -50,6 +50,14 @@ export interface ComfyJobState {
   terminal: boolean;
   /** Set when the job ended in anything other than success. */
   error: string | null;
+  /**
+   * Graph node the engine blamed, when it named one.
+   *
+   * Kept apart from {@link error} because the caller can say more about it than
+   * the engine can: a node this importer invented has an id the user has never
+   * seen anywhere.
+   */
+  errorNodeId?: string;
   /** 0–1 when the engine reports progress. */
   progress?: number;
   /** Opaque payload the same engine consumes in {@link ComfyEngine.collect}. */

@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { engineFromRequest } from "@/lib/comfy/server";
-import { collectRun } from "@/lib/comfy/server/run";
+import { collectRun, nameFailedOutput } from "@/lib/comfy/server/run";
 import type { ComfyAppDefinition, ComfyResolvedOutput } from "@/lib/comfy/types";
 import { comfyErrorResponse } from "../shared";
 
@@ -63,7 +63,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (state.error) {
-      return NextResponse.json({ success: false, error: state.error }, { status: 502 });
+      return NextResponse.json(
+        { success: false, error: nameFailedOutput(state, body.app) },
+        { status: 502 }
+      );
     }
 
     const outputs = await collectRun(engine, body.app, state, request.signal);
