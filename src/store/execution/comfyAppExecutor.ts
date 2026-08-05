@@ -30,6 +30,18 @@ const MAX_CONSECUTIVE_ERRORS = 8;
  * what makes both the retry budget and the deadline mean anything.
  */
 const POLL_REQUEST_TIMEOUT_MS = 45_000;
+/**
+ * How long the request that *downloads* the results may take.
+ *
+ * Asking whether a job is done and fetching what it produced are the same route
+ * but not the same request: a status poll is a few hundred bytes, while
+ * collecting moves every output — a minute of video is tens of megabytes, and
+ * one measured at 73 seconds against Comfy Cloud. Holding both to the poll's
+ * limit cut off a render that had already succeeded and been paid for, and the
+ * retry started the download again from nothing, forever. Matches the route's
+ * own `maxDuration`, so the client gives up no sooner than the server does.
+ */
+const COLLECT_REQUEST_TIMEOUT_MS = 300_000;
 
 interface ComfyRunAccepted {
   success: true;
@@ -44,6 +56,8 @@ interface ComfyPollUpdate {
   status: string;
   progress?: number;
   outputs?: ComfyResolvedOutput[];
+  /** The job is done and the results are waiting to be fetched. */
+  ready?: boolean;
 }
 
 interface ComfyFailure {
@@ -243,6 +257,11 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
 
     let interval = INITIAL_INTERVAL;
     let consecutiveErrors = 0;
+    // The job is finished and only the download is left. Tracked separately
+    // because the two requests want very different patience — see
+    // COLLECT_REQUEST_TIMEOUT_MS — and because a failed download must be
+    // retried as a download, not as another question.
+    let collecting = false;
     const deadline = Date.now() + settings.jobTimeoutMs;
 
     for (;;) {
@@ -254,18 +273,23 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
           `Timed out after ${Math.round(settings.jobTimeoutMs / 60_000)} min waiting for ComfyUI. Raise the job timeout in Settings → ComfyUI for long renders.`
         );
       }
-      await delay(interval, signal);
-      interval = Math.min(MAX_INTERVAL, interval + INTERVAL_STEP);
+      // Nothing to wait for once the job is done — the results are sitting
+      // there. The pause belongs between questions, not before the answer.
+      if (!collecting) {
+        await delay(interval, signal);
+        interval = Math.min(MAX_INTERVAL, interval + INTERVAL_STEP);
+      }
 
       let update: ComfyPollUpdate;
       try {
+        const limit = collecting ? COLLECT_REQUEST_TIMEOUT_MS : POLL_REQUEST_TIMEOUT_MS;
         const pollRes = await fetch("/api/comfy/poll", {
           method: "POST",
           headers,
-          body: JSON.stringify({ jobId, app }),
+          body: JSON.stringify({ jobId, app, collect: collecting }),
           signal: signal
-            ? AbortSignal.any([signal, AbortSignal.timeout(POLL_REQUEST_TIMEOUT_MS)])
-            : AbortSignal.timeout(POLL_REQUEST_TIMEOUT_MS),
+            ? AbortSignal.any([signal, AbortSignal.timeout(limit)])
+            : AbortSignal.timeout(limit),
         });
         if (!pollRes.ok) throw await readError(pollRes, "ComfyUI run failed");
         update = (await pollRes.json()) as ComfyPollUpdate;
@@ -277,12 +301,21 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
         // retrying: the render itself is very likely still going.
         if (error instanceof ComfyRouteError) throw error;
         consecutiveErrors += 1;
-        if (consecutiveErrors < MAX_CONSECUTIVE_ERRORS) continue;
-        throw error;
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) throw error;
+        // A retried download would otherwise start again immediately, and a
+        // failing one would spin.
+        if (collecting) await delay(interval, signal);
+        continue;
       }
 
       if (update.polling) {
         updateNodeData(node.id, { runStatus: update.status });
+        continue;
+      }
+
+      // Done asking. Come back for the results themselves, patiently.
+      if (update.ready) {
+        collecting = true;
         continue;
       }
 
