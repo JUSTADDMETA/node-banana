@@ -1269,7 +1269,33 @@ export function blueprintAppMode(
       continue;
     }
 
-    const [primary, ...rest] = resolveProxied(file, def, instanceNodeId, innerId, widget);
+    // Everything the slot drives, not merely the one input the author named.
+    //
+    // An author can promote a slot's control by naming any one of the inputs it
+    // reaches, and the editor happily wires a slot to several at once. Where a
+    // widget left unwritten simply keeps the author's own value, some of those
+    // inputs are plain *sockets* — a maths node's `values.b`, a preview's
+    // `source` — and there an unwritten input is a missing argument. Two
+    // Blueprints had the prompt rejected outright for it; two more passed
+    // validation and died mid-render on "'b' is not defined for expression
+    // '(b - c) * (a - 1)'", after the model had run and been paid for.
+    //
+    // A materialisable slot is excluded because a real loader node supplies it.
+    const named = [{ innerId, widget }];
+    const targets =
+      innerId !== BOUNDARY_SLOT_ID && slot?.name && !materializableType(slot.type, LOADER_FOR_SLOT_TYPE)
+        ? [...named, ...boundarySlotBindings(def, slot.name)]
+        : named;
+
+    const seen = new Set<string>();
+    const [primary, ...rest] = targets
+      .flatMap((t) => resolveProxied(file, def, instanceNodeId, t.innerId, t.widget))
+      .filter((b) => {
+        const key = `${b.nodeId}|${b.widget}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     if (!primary) continue;
     if (inputs.some((i) => i.nodeId === primary.nodeId && i.widget === primary.widget)) continue;
 

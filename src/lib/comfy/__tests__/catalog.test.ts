@@ -92,6 +92,45 @@ function isSocketGroup(spec: unknown): boolean {
   );
 }
 
+/**
+ * Whether the catalog lets this input go unfed.
+ *
+ * A dynamic group's members (`values.b`, `resize_type.width`) are addressed
+ * through the group, so the group's own declaration is what decides.
+ */
+function isOptionalInput(classType: string, inputKey: string): boolean {
+  const entry = objectInfo[classType]?.input;
+  const group = inputKey.split(".")[0];
+  const optional = entry?.optional ?? {};
+  return inputKey in optional || group in optional;
+}
+
+/** Every inner input a Blueprint's boundary slots feed, as converted graph ids. */
+function boundaryFedInputs(
+  file: EditorWorkflowFile,
+  blueprintId: string,
+  instanceNodeId: string
+): Array<{ nodeId: string; inputKey: string }> {
+  const def = (file.definitions?.subgraphs ?? []).find((d) => String(d.id) === blueprintId);
+  const nodes = new Map((def?.nodes ?? []).map((n) => [String(n.id), n]));
+  const targets = new Map<number, { id: string; slot: number }>();
+  for (const link of def?.links ?? []) {
+    if (Array.isArray(link)) targets.set(link[0], { id: String(link[3]), slot: link[4] });
+    else targets.set(link.id, { id: String(link.target_id), slot: link.target_slot });
+  }
+
+  const fed: Array<{ nodeId: string; inputKey: string }> = [];
+  for (const slot of def?.inputs ?? []) {
+    for (const linkId of slot.linkIds ?? []) {
+      const target = targets.get(linkId);
+      if (!target) continue;
+      const inputKey = nodes.get(target.id)?.inputs?.[target.slot]?.name;
+      if (inputKey) fed.push({ nodeId: `${instanceNodeId}:${target.id}`, inputKey });
+    }
+  }
+  return fed;
+}
+
 describe("recorded Blueprint corpus", () => {
   it("records a corpus to check", () => {
     // A silently empty fixture directory would make every test below vacuous.
@@ -186,13 +225,46 @@ describe("recorded Blueprint corpus", () => {
     }
   );
 
-  // A COMFY_AUTOGROW_V3 socket group's links are not emitted, so
-  // character_replacement_scail_2_base renders with only `a` bound and the
-  // engine reports "'b' is not defined for expression '(b - c) * (a - 1)'".
-  // Confirmed against Comfy Cloud and unfixed. It leaves no trace in the
-  // contract — the graph is well-formed, just under-connected — so nothing
-  // above can see it; `comfy-smoke.mjs run` is what catches it today.
-  it.todo("emits the links feeding an autogrow socket group");
+  it.each(corpus.map((c) => [c.id, c] as const))(
+    "%s: nothing a boundary slot feeds is left unwritten",
+    (_id, entry) => {
+      // A boundary slot is one thing the user sets, but the author may have
+      // wired it to several inner inputs at once — and not every one of those
+      // is a widget. A widget left unwritten merely keeps the author's own
+      // value; a plain *socket* left unwritten is a missing argument. Two
+      // Blueprints had their prompt rejected outright for it, and two more got
+      // through validation and failed mid-render with "'b' is not defined for
+      // expression '(b - c) * (a - 1)'" — after the model had run and billed.
+      const blueprintId = blueprintIdOf(entry.workflow);
+      const { workflow, instanceNodeId } = blueprintToWorkflowFile(entry.workflow, blueprintId);
+      const graph = convertEditorGraph(workflow, objectInfo);
+      const appMode = blueprintAppMode(entry.workflow, blueprintId, instanceNodeId);
+      const { suggested } = inspectWorkflow(graph, { objectInfo, appMode, defaultName: entry.name });
+
+      // Every binding the run will write: connected handles, settings, and the
+      // extra targets a single setting carries with it.
+      const written = new Set([
+        ...suggested.inputs.map((i) => `${i.nodeId}:${i.inputKey}`),
+        ...suggested.params.flatMap((p) => [
+          `${p.nodeId}:${p.inputKey}`,
+          ...(p.alsoBind ?? []).map((b) => `${b.nodeId}:${b.inputKey}`),
+        ]),
+      ]);
+
+      const unwritten = boundaryFedInputs(entry.workflow, blueprintId, instanceNodeId).filter(
+        ({ nodeId, inputKey }) => {
+          const node = graph[nodeId];
+          if (!node) return false; // pruned, muted, or resolved away
+          if (inputKey in node.inputs) return false;
+          if (written.has(`${nodeId}:${inputKey}`)) return false;
+          // An input the schema marks optional may legitimately go unfed — a
+          // SAM3 detection takes bounding boxes only when you have some.
+          return !isOptionalInput(node.class_type, inputKey);
+        }
+      );
+      expect(unwritten.map((u) => `${u.nodeId}.${u.inputKey}`)).toEqual([]);
+    }
+  );
 
   it.each(corpus.map((c) => [c.id, c] as const))(
     "%s: every control the author exposed survives import",
