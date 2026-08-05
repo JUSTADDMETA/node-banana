@@ -9,11 +9,14 @@
     "lint": "next lint",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "comfy:record": "node scripts/comfy-smoke.mjs record",
+    "comfy:smoke": "node scripts/comfy-smoke.mjs run"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.13",
     "@ai-sdk/react": "^3.0.51",
+    "@comfyorg/sdk": "^0.1.4",
     "@google/genai": "^1.30.0",
     "@imgly/background-removal": "^1.7.0",
     "@react-three/drei": "^10.7.7",

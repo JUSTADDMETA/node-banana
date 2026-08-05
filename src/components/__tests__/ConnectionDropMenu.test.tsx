@@ -212,14 +212,17 @@ describe("ConnectionDropMenu", () => {
     });
 
     it("should navigate up with ArrowUp key", () => {
-      render(<ConnectionDropMenu {...defaultProps} handleType="image" connectionType="source" />);
+      const { container } = render(
+        <ConnectionDropMenu {...defaultProps} handleType="image" connectionType="source" />
+      );
 
       // Press ArrowUp to go to last item (wrapping)
       fireEvent.keyDown(document, { key: "ArrowUp" });
 
-      // Last item should now be highlighted
-      const lastButton = screen.getByText("Switch").closest("button");
-      expect(lastButton).toHaveClass("bg-neutral-700");
+      // Whichever option is last — asserting on a name would break every time
+      // a node type is added to the menu.
+      const buttons = container.querySelectorAll("button");
+      expect(buttons[buttons.length - 1]).toHaveClass("bg-neutral-700");
     });
 
     it("should select item with Enter key", () => {
@@ -243,11 +246,14 @@ describe("ConnectionDropMenu", () => {
     });
 
     it("should wrap around when navigating past last item", () => {
-      render(<ConnectionDropMenu {...defaultProps} handleType="text" connectionType="source" />);
+      const { container } = render(
+        <ConnectionDropMenu {...defaultProps} handleType="text" connectionType="source" />
+      );
 
-      // Text source labels: Prompt, Prompt Constructor, Array, Generate Image, Generate Video, Generate Audio, LLM Generate, Router, Switch, Conditional Switch (10 items)
-      // Navigate down 10 times to wrap to first
-      for (let i = 0; i < 10; i++) {
+      // One ArrowDown per option lands back on the first — derived from the
+      // rendered count so adding a node type does not break this.
+      const optionCount = container.querySelectorAll("button").length;
+      for (let i = 0; i < optionCount; i++) {
         fireEvent.keyDown(document, { key: "ArrowDown" });
       }
 

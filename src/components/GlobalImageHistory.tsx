@@ -6,6 +6,21 @@ import { useWorkflowStore } from "@/store/workflowStore";
 import { ImageHistoryItem } from "@/types";
 
 // Helper function for relative time display
+/**
+ * What produced an image, for the history row.
+ *
+ * `model` is a Gemini model id for the built-in generator, but a free-form
+ * producer name for anything else (a ComfyUI app, say) — so anything
+ * unrecognised is shown as-is rather than mislabelled "Standard".
+ */
+function describeProducer(model: string): string {
+  if (model === "nano-banana-pro") return "Pro";
+  if (model === "nano-banana" || model === "nano-banana-2" || model === "nano-banana-2-lite") {
+    return "Standard";
+  }
+  return model;
+}
+
 function formatRelativeTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
   const seconds = Math.floor(diff / 1000);
@@ -185,7 +200,7 @@ function HistorySidebar({
                 {item.prompt?.substring(0, 60) || "No prompt"}
               </p>
               <p className="text-[10px] text-neutral-500 mt-0.5">
-                {formatRelativeTime(item.timestamp)} · {item.model === "nano-banana-pro" ? "Pro" : "Standard"}
+                {formatRelativeTime(item.timestamp)} · {describeProducer(item.model)}
               </p>
             </div>
           </div>

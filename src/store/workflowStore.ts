@@ -103,6 +103,7 @@ import {
   executeRouter,
   executeSwitch,
   executeConditionalSwitch,
+  executeComfyApp,
   runBatchIfApplicable,
 } from "./execution";
 import type { NodeExecutionContext } from "./execution";
@@ -1821,6 +1822,9 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           case "conditionalSwitch":
             await evaluateAndExecuteConditionalSwitch(node, executionCtx, get().getConnectedInputs, get().updateNodeData);
             break;
+          case "comfyApp":
+            await executeComfyApp(executionCtx);
+            break;
         }
     }; // End of executeSingleNode helper
 
@@ -2186,6 +2190,8 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         set({ isRunning: false, currentNodeIds: [], _abortController: null });
         await logger.endSession();
         return;
+      } else if (node.type === "comfyApp") {
+        await executeComfyApp(executionCtx);
       } else if (node.type === "output") {
         await executeOutput(executionCtx);
         set({ isRunning: false, currentNodeIds: [], _abortController: null });
@@ -2389,6 +2395,9 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           break;
         case "conditionalSwitch":
           await evaluateAndExecuteConditionalSwitch(node, executionCtx, get().getConnectedInputs, get().updateNodeData);
+          break;
+        case "comfyApp":
+          await executeComfyApp(executionCtx);
           break;
       }
     };

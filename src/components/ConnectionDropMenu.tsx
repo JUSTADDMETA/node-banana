@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { NodeType } from "@/types";
+import { ComfyMark } from "./icons/ComfyMark";
 
 // Actions are special menu items that trigger behavior instead of creating a node
 export type MenuAction = "splitGridImmediate";
@@ -139,6 +140,13 @@ const IMAGE_TARGET_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 const TEXT_TARGET_OPTIONS: MenuOption[] = [
@@ -233,6 +241,13 @@ const TEXT_TARGET_OPTIONS: MenuOption[] = [
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
       </svg>
+    ),
+  },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -335,6 +350,13 @@ const IMAGE_SOURCE_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 const TEXT_SOURCE_OPTIONS: MenuOption[] = [
@@ -402,6 +424,13 @@ const TEXT_SOURCE_OPTIONS: MenuOption[] = [
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
       </svg>
+    ),
+  },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -501,6 +530,13 @@ const VIDEO_TARGET_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 // GenerateVideo, VideoStitch, and VideoInput nodes produce video output
@@ -571,6 +607,13 @@ const VIDEO_SOURCE_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 // Audio target options (nodes that accept audio input)
@@ -632,6 +675,13 @@ const AUDIO_TARGET_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 // Audio source options (nodes that produce audio output)
@@ -675,6 +725,13 @@ const AUDIO_SOURCE_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 // 3D target options (nodes that accept 3D input)
@@ -699,6 +756,13 @@ const THREE_D_SOURCE_OPTIONS: MenuOption[] = [
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-2.25-1.313M21 7.5v2.25m0-2.25l-2.25 1.313M3 7.5l2.25-1.313M3 7.5l2.25 1.313M3 7.5v2.25m9 3l2.25-1.313M12 12.75l-2.25-1.313M12 12.75V15m0 6.75l2.25-1.313M12 21.75V19.5m0 2.25l-2.25-1.313m0-16.875L12 2.25l2.25 1.313M21 14.25v2.25l-2.25 1.313m-13.5 0L3 16.5v-2.25" />
       </svg>
+    ),
+  },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];

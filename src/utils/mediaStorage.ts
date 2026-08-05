@@ -578,6 +578,39 @@ async function externalizeNodeMedia(
       break;
     }
 
+    case "comfyApp": {
+      const d = data as import("@/types").ComfyAppNodeData;
+      // A Comfy app can produce several outputs at once, so each is
+      // externalized under its own handle id. Text outputs stay inline —
+      // they are small, and a text file per run would be wasteful.
+      const outputs = d.outputs ?? {};
+      const textHandles = new Set(
+        (d.app?.outputs ?? []).filter((o) => o.type === "text").map((o) => o.id)
+      );
+      const refs: Record<string, string> = { ...(d.outputRefs ?? {}) };
+      const remaining: Record<string, string> = {};
+      for (const [handleId, value] of Object.entries(outputs)) {
+        if (textHandles.has(handleId) || !isDataUrl(value)) {
+          remaining[handleId] = value;
+          continue;
+        }
+        if (!refs[handleId]) {
+          refs[handleId] = await saveImageAndGetId(value, workflowPath, savedImageIds, "generations");
+        }
+      }
+      newData = {
+        ...d,
+        outputs: remaining,
+        outputRefs: refs,
+        // The typed mirrors are rebuilt from `outputs` on hydration.
+        outputImage: null,
+        outputVideo: null,
+        outputAudio: null,
+        output3dUrl: null,
+      };
+      break;
+    }
+
     case "splitGrid": {
       const d = data as import("@/types").SplitGridNodeData;
       // SplitGrid source is input content, save to inputs
@@ -1172,6 +1205,40 @@ async function hydrateNodeMedia(
       } else {
         newData = d;
       }
+      break;
+    }
+
+    case "comfyApp": {
+      const d = data as import("@/types").ComfyAppNodeData;
+      const refs = d.outputRefs ?? {};
+      const outputs: Record<string, string> = { ...(d.outputs ?? {}) };
+      for (const [handleId, ref] of Object.entries(refs)) {
+        if (outputs[handleId]) continue;
+        const declared = d.app?.outputs.find((o) => o.id === handleId);
+        const mediaType =
+          declared?.type === "video" ? "video" : declared?.type === "audio" ? "audio" : "image";
+        outputs[handleId] = await loadMediaById(ref, workflowPath, loadedMedia, mediaType);
+      }
+      // Rebuild the typed mirrors from the restored outputs, in the same
+      // declared order the executor uses, so downstream nodes see the same
+      // value they did before the save.
+      const firstOfType = (type: string): string | null => {
+        for (const declared of d.app?.outputs ?? []) {
+          if (declared.type !== type) continue;
+          const value = outputs[declared.id];
+          if (value) return value;
+        }
+        return null;
+      };
+      newData = {
+        ...d,
+        outputs,
+        outputImage: firstOfType("image"),
+        outputVideo: firstOfType("video"),
+        outputAudio: firstOfType("audio"),
+        outputText: firstOfType("text"),
+        output3dUrl: firstOfType("3d"),
+      };
       break;
     }
 

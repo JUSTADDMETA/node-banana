@@ -26,6 +26,7 @@ import { executeVideoStitch, executeEaseCurve, executeVideoTrim, executeVideoFra
 import { executeRemoveBackground } from "./removeBackgroundExecutor";
 import { executeImageResize, executeGifEncoder } from "./imageProcessingExecutors";
 import { executeGenerateAudio } from "./generateAudioExecutor";
+import { executeComfyApp } from "./comfyAppExecutor";
 
 export interface ExecuteNodeOptions {
   /** When true, executors that support it will fall back to stored inputs. */
@@ -125,6 +126,9 @@ export async function executeNode(
       break;
     case "gifEncoder":
       await executeGifEncoder(ctx);
+      break;
+    case "comfyApp":
+      await executeComfyApp(ctx);
       break;
   }
 }
