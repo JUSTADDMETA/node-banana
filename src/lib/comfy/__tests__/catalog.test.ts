@@ -105,6 +105,23 @@ function isOptionalInput(classType: string, inputKey: string): boolean {
   return inputKey in optional || group in optional;
 }
 
+/**
+ * Bindings the run fills in: connected handles, settings, and the extra targets
+ * a single setting carries with it.
+ *
+ * These are why a saved graph may legitimately arrive without a required input.
+ */
+function writtenAtRunTime(inspection: ComfyWorkflowInspection): Set<string> {
+  const { inputs, params } = inspection.suggested;
+  return new Set([
+    ...inputs.map((i) => `${i.nodeId}:${i.inputKey}`),
+    ...params.flatMap((p) => [
+      `${p.nodeId}:${p.inputKey}`,
+      ...(p.alsoBind ?? []).map((b) => `${b.nodeId}:${b.inputKey}`),
+    ]),
+  ]);
+}
+
 /** Every inner input a Blueprint's boundary slots feed, as converted graph ids. */
 function boundaryFedInputs(
   file: EditorWorkflowFile,
@@ -164,13 +181,18 @@ describe("recorded Blueprint corpus", () => {
       // engine binds required inputs positionally, so one omitted is not a
       // validation error but a TypeError raised *after* the model has run and
       // been paid for. `SaveVideo.codec` was the first instance found.
-      const { graph } = importBlueprint(entry);
+      const { graph, inspection } = importBlueprint(entry);
+      const written = writtenAtRunTime(inspection);
       const missing: string[] = [];
       for (const [nodeId, node] of Object.entries(graph)) {
         const required = objectInfo[node.class_type]?.input?.required ?? {};
         for (const [key, spec] of Object.entries(required)) {
           if (isSocketGroup(spec)) continue;
-          if (!(key in node.inputs)) missing.push(`${node.class_type}#${nodeId}.${key}`);
+          if (key in node.inputs) continue;
+          // A handle or a setting fills its own binding on every run, so the
+          // saved graph is allowed to arrive without it.
+          if (written.has(`${nodeId}:${key}`)) continue;
+          missing.push(`${node.class_type}#${nodeId}.${key}`);
         }
       }
       expect(missing).toEqual([]);
@@ -239,17 +261,9 @@ describe("recorded Blueprint corpus", () => {
       const { workflow, instanceNodeId } = blueprintToWorkflowFile(entry.workflow, blueprintId);
       const graph = convertEditorGraph(workflow, objectInfo);
       const appMode = blueprintAppMode(entry.workflow, blueprintId, instanceNodeId);
-      const { suggested } = inspectWorkflow(graph, { objectInfo, appMode, defaultName: entry.name });
-
-      // Every binding the run will write: connected handles, settings, and the
-      // extra targets a single setting carries with it.
-      const written = new Set([
-        ...suggested.inputs.map((i) => `${i.nodeId}:${i.inputKey}`),
-        ...suggested.params.flatMap((p) => [
-          `${p.nodeId}:${p.inputKey}`,
-          ...(p.alsoBind ?? []).map((b) => `${b.nodeId}:${b.inputKey}`),
-        ]),
-      ]);
+      const written = writtenAtRunTime(
+        inspectWorkflow(graph, { objectInfo, appMode, defaultName: entry.name })
+      );
 
       const unwritten = boundaryFedInputs(entry.workflow, blueprintId, instanceNodeId).filter(
         ({ nodeId, inputKey }) => {

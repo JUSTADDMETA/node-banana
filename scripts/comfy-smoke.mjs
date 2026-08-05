@@ -59,6 +59,7 @@ const CORPUS = [
   { id: "image_outpainting_qwen_image", why: "pad amounts on the boundary; placeholder image input" },
   { id: "select_per_line_text_by_index", why: "a STRING boundary input proxied from an inner node" },
   { id: "character_replacement_scail_2_base", why: "repeated labels, and an autogrow socket group" },
+  { id: "text_to_image_ernie_image", why: "a boundary slot feeding a widget and a socket at once" },
   { id: "crop_images_3x3", why: "ten outputs, one of them a batch" },
   { id: "color_curves", why: "CURVE widgets" },
   { id: "merge_videos", why: "two booleans that used to share one label" },

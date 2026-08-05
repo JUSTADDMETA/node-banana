@@ -63,6 +63,11 @@
       "why": "repeated labels, and an autogrow socket group"
     },
     {
+      "id": "text_to_image_ernie_image",
+      "name": "Text to Image (Ernie Image)",
+      "why": "a boundary slot feeding a widget and a socket at once"
+    },
+    {
       "id": "crop_images_3x3",
       "name": "Crop Images 3x3",
       "why": "ten outputs, one of them a batch"
@@ -78,5 +83,5 @@
       "why": "two booleans that used to share one label"
     }
   ],
-  "catalogTypes": 108
+  "catalogTypes": 110
 }
