@@ -20,6 +20,16 @@ const INITIAL_INTERVAL = 1500;
 const MAX_INTERVAL = 6000;
 const INTERVAL_STEP = 500;
 const MAX_CONSECUTIVE_ERRORS = 8;
+/**
+ * How long one poll may take before it is abandoned and retried.
+ *
+ * The deadline below is only checked *between* polls, so a request that hangs
+ * spends the run's whole budget without the loop ever getting a turn — an 8
+ * second video once failed with "timed out after 15 min" having been asked
+ * about exactly once. Bounding each request keeps the loop turning, which is
+ * what makes both the retry budget and the deadline mean anything.
+ */
+const POLL_REQUEST_TIMEOUT_MS = 45_000;
 
 interface ComfyRunAccepted {
   success: true;
@@ -253,7 +263,9 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
           method: "POST",
           headers,
           body: JSON.stringify({ jobId, app }),
-          ...(signal ? { signal } : {}),
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(POLL_REQUEST_TIMEOUT_MS)])
+            : AbortSignal.timeout(POLL_REQUEST_TIMEOUT_MS),
         });
         if (!pollRes.ok) throw await readError(pollRes, "ComfyUI run failed");
         update = (await pollRes.json()) as ComfyPollUpdate;

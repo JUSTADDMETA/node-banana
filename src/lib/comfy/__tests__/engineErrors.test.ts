@@ -144,6 +144,58 @@ describe("createEngineFetch", () => {
     expect(inner).toHaveBeenCalledTimes(1);
   });
 
+  /** A fetch that never answers, so only the armed timeout ends it. */
+  const stubStalledFetch = (starts: number[]) =>
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      starts.push(Date.now());
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    });
+
+  it("does not let one stalled request outlast the caller's whole budget", async () => {
+    // The failure this prevents: a poll inherited the timeout meant for
+    // downloading a finished video, and was then retried four times. One
+    // request could occupy 25 minutes, so an 8-second video reported "timed out
+    // after 15 min" having been asked about exactly once.
+    const starts: number[] = [];
+    stubStalledFetch(starts);
+
+    const engineFetch = createEngineFetch({ retryBaseMs: 0, requestTimeoutMs: 40 });
+    const began = Date.now();
+    await expect(engineFetch("https://cloud.comfy.org/api/v2/jobs/job-1")).rejects.toThrow();
+
+    // Bounded by elapsed time, not by the retry count: four retries of one
+    // timeout would be five times the wait, and the caller checks its own
+    // deadline only between requests.
+    expect(Date.now() - began).toBeLessThan(40 * 4);
+    expect(starts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("gives an asset transfer longer than a poll", async () => {
+    // Same client and same code path — only the URL differs. A poll is a few
+    // hundred bytes; collecting a finished job can be a whole video.
+    const starts: number[] = [];
+    stubStalledFetch(starts);
+    const engineFetch = createEngineFetch({
+      retryBaseMs: 0,
+      requestTimeoutMs: 30,
+      downloadTimeoutMs: 400,
+    });
+
+    const pollBegan = Date.now();
+    await expect(engineFetch("https://cloud.comfy.org/api/v2/jobs/job-1")).rejects.toThrow();
+    const pollTook = Date.now() - pollBegan;
+
+    const assetBegan = Date.now();
+    await expect(
+      engineFetch("https://cloud.comfy.org/api/v2/assets/abc/content")
+    ).rejects.toThrow();
+    const assetTook = Date.now() - assetBegan;
+
+    expect(assetTook).toBeGreaterThan(pollTook * 2);
+  }, 20_000);
+
   it("stops when the caller cancels", async () => {
     const controller = new AbortController();
     vi.stubGlobal("fetch", async () => {

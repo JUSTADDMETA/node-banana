@@ -105,11 +105,38 @@ export async function resilientFetch(
  */
 const CONNECT_FAILURE = /^(ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH)$/;
 
+/**
+ * How long one attempt may take, by what the request is for.
+ *
+ * These cannot be one number. Collecting a finished job downloads every output
+ * it produced, and a minute of video is tens of megabytes — but a *poll* is a
+ * few hundred bytes, and letting one wait as long as a download is what turns a
+ * stalled connection into a dead render: the caller's own deadline is only
+ * checked between polls, so a single request that hangs for minutes spends the
+ * whole budget without the loop ever getting a turn.
+ */
+const DOWNLOAD_TIMEOUT_MS = 300_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/** Asset routes move the bytes; everything else is small and should fail fast. */
+const isAssetRoute = (url: string): boolean => /\/assets(\/|$|\?)/.test(url);
+
+/** The URL of a fetch argument, whatever shape it arrived in. */
+function urlOf(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
 export interface EngineFetchOptions {
   /** Extra attempts after a connection that never opened. */
   retries?: number;
   /** Base backoff between attempts, in ms (grows exponentially). */
   retryBaseMs?: number;
+  /** Cap on one small request — a submit, a poll, a cancel. */
+  requestTimeoutMs?: number;
+  /** Cap on one asset transfer, which may be a whole video. */
+  downloadTimeoutMs?: number;
 }
 
 /**
@@ -125,13 +152,23 @@ export interface EngineFetchOptions {
  * A GET may also be repeated on any unanswered request, because asking twice
  * costs nothing. Anything the engine actually answered is passed straight back:
  * a 4xx or 5xx is the engine talking, and this layer does not second-guess it.
+ *
+ * Retries are bounded in *time*, not just in count. A connect failure costs
+ * about half a second, so four of them are cheap and worth having; a timeout
+ * costs the whole timeout, and repeating that four times would take longer than
+ * any caller is prepared to wait.
  */
 export function createEngineFetch(options: EngineFetchOptions = {}): typeof fetch {
   // Four, not one or two: the failure this exists for was measured at roughly
   // two attempts in five against Comfy Cloud, which still leaves about one run
   // in twenty dying after three tries. Each extra attempt costs a few hundred
   // milliseconds of backoff and only ever happens when no socket opened.
-  const { retries = 4, retryBaseMs = 300 } = options;
+  const {
+    retries = 4,
+    retryBaseMs = 300,
+    requestTimeoutMs = REQUEST_TIMEOUT_MS,
+    downloadTimeoutMs = DOWNLOAD_TIMEOUT_MS,
+  } = options;
 
   return async function engineFetch(
     input: Parameters<typeof fetch>[0],
@@ -141,17 +178,28 @@ export function createEngineFetch(options: EngineFetchOptions = {}): typeof fetc
       init?.method ?? (input instanceof Request ? input.method : "GET")
     ).toUpperCase();
     const repeatable = method === "GET" || method === "HEAD";
+    const timeoutMs = isAssetRoute(urlOf(input)) ? downloadTimeoutMs : requestTimeoutMs;
+    // One stalled attempt may not cost more than one timeout; the whole call may
+    // not cost more than two. Past that the caller is better served by an error
+    // it can act on than by another wait.
+    const deadline = Date.now() + timeoutMs * 2;
 
     for (let attempt = 0; ; attempt += 1) {
+      const caller = init?.signal ?? undefined;
+      const signal = caller
+        ? AbortSignal.any([caller, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs);
       try {
-        return await fetch(input, init);
+        return await fetch(input, { ...init, signal });
       } catch (error) {
+        // The caller cancelling is not a failure to retry past.
+        if (caller?.aborted) throw error;
         const code = errorCode(error);
         const neverConnected = code !== null && CONNECT_FAILURE.test(code);
         const worthRetrying = neverConnected || (repeatable && engineNeverAnswered(error));
-        // A caller who cancelled is not waiting for another attempt.
-        if (!worthRetrying || attempt >= retries || init?.signal?.aborted) throw error;
-        await sleep(retryBaseMs * 2 ** attempt);
+        const budgetLeft = neverConnected ? attempt < retries : Date.now() < deadline;
+        if (!worthRetrying || !budgetLeft) throw error;
+        await sleep(retryBaseMs * 2 ** Math.min(attempt, 4));
       }
     }
   };
