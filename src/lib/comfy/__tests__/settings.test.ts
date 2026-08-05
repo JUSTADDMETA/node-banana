@@ -65,7 +65,7 @@ describe("normalizeComfySettings", () => {
   it("clamps the job timeout to a sane range", () => {
     expect(normalizeComfySettings({ jobTimeoutMs: 5 }).jobTimeoutMs).toBe(60_000);
     expect(normalizeComfySettings({ jobTimeoutMs: 99_999_999 }).jobTimeoutMs).toBe(3_600_000);
-    expect(normalizeComfySettings({ jobTimeoutMs: NaN }).jobTimeoutMs).toBe(900_000);
+    expect(normalizeComfySettings({ jobTimeoutMs: NaN }).jobTimeoutMs).toBe(1_800_000);
   });
 });
 

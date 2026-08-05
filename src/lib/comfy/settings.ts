@@ -18,7 +18,17 @@ export const COMFY_CLOUD_URL = "https://cloud.comfy.org";
 /** ComfyUI's default local port. */
 export const COMFY_LOCAL_URL = "http://127.0.0.1:8188";
 
-export const COMFY_DEFAULT_JOB_TIMEOUT_MS = 900_000; // 15 minutes
+/**
+ * How long to wait for one render before giving up.
+ *
+ * Thirty minutes, not fifteen, because video is the case that decides it.
+ * Frame interpolation runs a model per pair of frames: a 2-second clip measured
+ * 128-197s on Comfy Cloud, and an 8-second one — four times the frames — lands
+ * either side of fifteen minutes before queue time is counted. The old default
+ * cut those off mid-render, and cutting off is expensive: the job is cancelled,
+ * so the GPU time is spent and nothing comes back.
+ */
+export const COMFY_DEFAULT_JOB_TIMEOUT_MS = 1_800_000; // 30 minutes
 const MIN_JOB_TIMEOUT_MS = 60_000;
 const MAX_JOB_TIMEOUT_MS = 3_600_000;
 
