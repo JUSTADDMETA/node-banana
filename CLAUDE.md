@@ -254,6 +254,20 @@ detected heuristically and confirmed in the dialog.
 on Cloud and local alike). Their data enters and leaves through boundary slots,
 so importing one materialises a loader per media input and a sink per output.
 
+### Smoke tests
+
+The Blueprint corpus is the regression net for this integration — every entry
+is a real published Blueprint that once broke it in a different way.
+
+| Command | Cost | What it covers |
+|---------|------|----------------|
+| `npx vitest run src/lib/comfy/__tests__/catalog.test.ts` | none | Hermetic. Runs the real conversion over recorded workflows and a recorded node catalog. Runs in CI. |
+| `npm run comfy:smoke` | credits | Real renders end to end, through Node Banana's own routes. Needs a dev server and `COMFY_SMOKE_KEY`. |
+| `npm run comfy:record` | none | Re-record the corpus when Comfy Cloud's catalog moves. |
+
+Point the live tier at a local ComfyUI with
+`node scripts/comfy-smoke.mjs run --mode local --url http://127.0.0.1:8188`.
+
 ## API Routes
 
 All routes in `src/app/api/`:

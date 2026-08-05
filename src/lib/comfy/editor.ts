@@ -1137,6 +1137,90 @@ function boundarySlotBindings(def: SubgraphDef | undefined, slotName: string): B
  * rewritten to the namespaced form the converter emits, so the result drops
  * straight into the normal inspection path.
  */
+/**
+ * The widgets a node's output feeds — the other direction from
+ * {@link boundarySlotBindings}.
+ *
+ * Needed for `PrimitiveNode`, which holds a literal rather than producing one:
+ * conversion resolves it away entirely, so a widget the author exposed *on* a
+ * primitive has to be re-pointed at whatever the primitive was feeding, or the
+ * control disappears. One published Blueprint loses its seed that way.
+ */
+function consumersOf(def: SubgraphDef | undefined, nodeId: string): BoundaryBinding[] {
+  const nodes = new Map((def?.nodes ?? []).map((n) => [String(n.id), n]));
+  const bindings: BoundaryBinding[] = [];
+  const seen = new Set<string>();
+
+  for (const link of def?.links ?? []) {
+    const origin = Array.isArray(link) ? String(link[1]) : String(link.origin_id);
+    if (origin !== nodeId) continue;
+    const targetId = Array.isArray(link) ? String(link[3]) : String(link.target_id);
+    const slot = Array.isArray(link) ? link[4] : link.target_slot;
+    const widget = nodes.get(targetId)?.inputs?.[slot]?.name;
+    if (!widget) continue;
+    const key = `${targetId} ${widget}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    bindings.push({ innerId: targetId, widget });
+  }
+  return bindings;
+}
+
+/** Blueprints nest, so following a proxied widget can recurse. Bound to stop. */
+const MAX_PROXY_DEPTH = 6;
+
+/**
+ * Where a proxied widget actually lands in the converted graph.
+ *
+ * `proxyWidgets` names a widget by (node, name), but three of those names point
+ * at something that will not exist by the time the graph is built, and each one
+ * silently cost a published Blueprint a control:
+ *
+ * - `-1` is the subgraph's own boundary slot, not a node.
+ * - a `PrimitiveNode` is resolved away, its value inlined into what it feeds.
+ * - a nested Blueprint instance is expanded, so the widget belongs to *its*
+ *   boundary and ends up one namespace deeper.
+ *
+ * Returns fully-namespaced bindings, usually one, occasionally several — a
+ * single slot can drive three loaders at once.
+ */
+function resolveProxied(
+  file: EditorWorkflowFile,
+  def: SubgraphDef | undefined,
+  prefix: string,
+  innerId: string,
+  widget: string,
+  depth = 0
+): Array<{ nodeId: string; widget: string }> {
+  if (!def || depth > MAX_PROXY_DEPTH) return [];
+
+  if (innerId === BOUNDARY_SLOT_ID) {
+    return boundarySlotBindings(def, widget).flatMap((b) =>
+      resolveProxied(file, def, prefix, b.innerId, b.widget, depth + 1)
+    );
+  }
+
+  const node = (def.nodes ?? []).find((n) => String(n.id) === innerId);
+  if (!node) return [];
+
+  if (node.type === "PrimitiveNode") {
+    return consumersOf(def, innerId).flatMap((b) =>
+      resolveProxied(file, def, prefix, b.innerId, b.widget, depth + 1)
+    );
+  }
+
+  const nested = (file.definitions?.subgraphs ?? []).find(
+    (d) => String(d.id) === String(node.type)
+  );
+  if (nested) {
+    return boundarySlotBindings(nested, widget).flatMap((b) =>
+      resolveProxied(file, nested, `${prefix}:${innerId}`, b.innerId, b.widget, depth + 1)
+    );
+  }
+
+  return [{ nodeId: `${prefix}:${innerId}`, widget }];
+}
+
 export function blueprintAppMode(
   file: EditorWorkflowFile,
   blueprintId: string,
@@ -1169,63 +1253,46 @@ export function blueprintAppMode(
     if (!Array.isArray(entry) || entry.length < 2) continue;
     const widget = String(entry[1]);
     // `control_after_generate` is proxied alongside a seed but is a frontend
-    // affordance, not an input the engine reads.
-    if (widget === "control_after_generate") continue;
+    // affordance, not an input the engine reads. `$$`-prefixed names are the
+    // same kind of thing — canvas furniture such as `$$canvas-image-preview`,
+    // which ComfyUI's own editor uses and the engine has never heard of.
+    if (widget === "control_after_generate" || widget.startsWith("$$")) continue;
     const innerId = String(entry[0]);
 
-    if (innerId === BOUNDARY_SLOT_ID) {
-      // A media slot is materialised as a real loader node instead, so binding
-      // it here as a widget would either miss or duplicate that input.
-      const slot = (def?.inputs ?? []).find((s) => s.name === widget);
-      if (materializableType(slot?.type, LOADER_FOR_SLOT_TYPE)) continue;
-
-      const [primary, ...rest] = boundarySlotBindings(def, widget);
-      if (!primary) continue;
-      const nodeId = `${instanceNodeId}:${primary.innerId}`;
-      if (inputs.some((i) => i.nodeId === nodeId && i.widget === primary.widget)) continue;
-      inputs.push({
-        nodeId,
-        widget: primary.widget,
-        // The slot's own name is the author's, and unique across the boundary —
-        // unlike the derived "CLIPLoader · Clip Name", which collides whenever
-        // a blueprint loads two of anything.
-        label: slotLabel(slot, widget),
-        ...(slot?.type === "STRING" ? { connectAs: "text" as const } : {}),
-        ...(rest.length > 0
-          ? { alsoBind: rest.map((b) => ({ nodeId: `${instanceNodeId}:${b.innerId}`, widget: b.widget })) }
-          : {}),
-      });
+    // A media slot is materialised as a real loader node instead, so binding it
+    // here as a widget would either miss or duplicate that input.
+    const slot =
+      innerId === BOUNDARY_SLOT_ID
+        ? (def?.inputs ?? []).find((s) => s.name === widget)
+        : slotForWidget.get(`${innerId}|${widget}`);
+    if (innerId === BOUNDARY_SLOT_ID && materializableType(slot?.type, LOADER_FOR_SLOT_TYPE)) {
       continue;
     }
 
-    const nodeId = `${instanceNodeId}:${innerId}`;
-    if (inputs.some((i) => i.nodeId === nodeId && i.widget === widget)) continue;
+    const [primary, ...rest] = resolveProxied(file, def, instanceNodeId, innerId, widget);
+    if (!primary) continue;
+    if (inputs.some((i) => i.nodeId === primary.nodeId && i.widget === primary.widget)) continue;
 
-    // Proxied straight from an inner node, but still one of the blueprint's
-    // declared inputs — so it gets the author's slot name and, for a STRING
-    // slot, a handle rather than only a text box.
-    const slot = slotForWidget.get(`${innerId}|${widget}`);
-    if (slot) {
-      inputs.push({
-        nodeId,
-        widget,
-        label: slotLabel(slot, widget),
-        ...(slot.type === "STRING" ? { connectAs: "text" as const } : {}),
-      });
-      continue;
-    }
+    // A slot's own name is the author's, and unique across the boundary —
+    // unlike the derived "CLIPLoader · Clip Name", which collides whenever a
+    // blueprint loads two of anything. Failing that, the author's rename lives
+    // on the inner node's own input entry; ComfyUI defaults that to the input's
+    // own name, and such a label carries nothing, so only a genuine rename is
+    // taken.
+    const renamed = innerById.get(innerId)?.inputs?.find((i) => i.name === widget)?.label?.trim();
+    const label = slot
+      ? slotLabel(slot, widget)
+      : renamed && renamed.toLowerCase() !== widget.toLowerCase()
+        ? renamed
+        : undefined;
 
-    // The author's rename lives on the inner node's own input entry. Without
-    // it, two proxied `PrimitiveFloat.value` widgets both label as
-    // "PrimitiveFloat · Value" and the node's settings are unusable.
-    //
-    // ComfyUI defaults that `label` to the input's own name, though, and such a
-    // label carries nothing: four proxied `CurveEditor.curve` widgets would all
-    // read "curve" while their node titles say RGB Master, Red, Green and Blue.
-    // Only a genuine rename is taken.
-    const raw = innerById.get(innerId)?.inputs?.find((i) => i.name === widget)?.label?.trim();
-    const label = raw && raw.toLowerCase() !== widget.toLowerCase() ? raw : undefined;
-    inputs.push({ nodeId, widget, ...(label ? { label } : {}) });
+    inputs.push({
+      nodeId: primary.nodeId,
+      widget: primary.widget,
+      ...(label ? { label } : {}),
+      ...(slot?.type === "STRING" ? { connectAs: "text" as const } : {}),
+      ...(rest.length > 0 ? { alsoBind: rest } : {}),
+    });
   }
   return inputs.length > 0 ? { inputs, outputNodeIds: [] } : null;
 }
