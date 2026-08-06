@@ -296,11 +296,16 @@ export function BaseNode({
         // body. Selection already did this; the running outline did not, and
         // stopped short of the settings — the same node looked like two
         // different shapes depending on why it was highlighted.
+        // The running outline lives here, at full opacity and 1px, because this
+        // is the only element that encloses the settings panel as well as the
+        // body. It has to be the *only* blue line: the body drops its own
+        // border below, or the node wears two of them down its sides and one
+        // down the settings.
         ? `relative flex flex-col w-full h-full overflow-visible bg-neutral-800 rounded-lg ${
             selected
               ? "ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/25"
               : running
-                ? "ring-1 ring-blue-500/20"
+                ? "ring-1 ring-blue-500"
                 : ""
           }`
         : "contents"}
@@ -324,10 +329,11 @@ export function BaseNode({
           ${fullBleed
             ? ""
             : running
-              // The wrapper above carries the ring when it exists, so drawing
-              // one here too would trace the body's edge through the middle of
-              // the node. Mirrors what selection does two lines down.
-              ? (hasExpandedSettings ? "border-blue-500" : "border-blue-500 ring-1 ring-blue-500/20")
+              // Transparent, not neutral, when the wrapper is outlining the
+              // whole node: a dark hairline just inside the blue one reads as
+              // a gap, and a blue one reads as a second outline that stops
+              // where the settings start.
+              ? (hasExpandedSettings ? "border-transparent" : "border-blue-500 ring-1 ring-blue-500/20")
               : "border-neutral-700/60"}
           ${fullBleed ? "" : (hasError ? "border-red-500" : "")}
           ${fullBleed && selected && !settingsExpanded ? "ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/25" : ""}
