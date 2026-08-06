@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ConnectionDropMenu } from "@/components/ConnectionDropMenu";
+import { invalidateSavedComfyNodes } from "@/hooks/useSavedComfyNodes";
+import { saveComfyNode } from "@/lib/comfy/library";
+import type { ComfyAppDefinition } from "@/lib/comfy/types";
 
 describe("ConnectionDropMenu", () => {
   const mockOnSelect = vi.fn();
@@ -260,6 +263,83 @@ describe("ConnectionDropMenu", () => {
       // Should be back on first item (Prompt)
       const firstButton = screen.getByText("Prompt").closest("button");
       expect(firstButton).toHaveClass("bg-neutral-700");
+    });
+  });
+
+  describe("Saved Comfy nodes", () => {
+    // A saved node has to behave like a built-in one: offered when the wire it
+    // would carry matches, absent when it does not, and attachable in one click.
+    beforeEach(() => {
+      window.localStorage.clear();
+      invalidateSavedComfyNodes();
+    });
+
+    const savedApp = (over: Partial<ComfyAppDefinition> = {}): ComfyAppDefinition => ({
+      id: "comfy_1",
+      name: "Upscale 2x",
+      description: "",
+      source: "upload",
+      graph: {},
+      inputs: [
+        {
+          id: "1:image",
+          name: "image",
+          label: "Photo",
+          type: "image",
+          nodeId: "1",
+          inputKey: "image",
+          required: true,
+        },
+      ],
+      params: [],
+      outputs: [{ id: "9", label: "Result", type: "image", nodeId: "9", classType: "SaveImage" }],
+      classTypes: [],
+      nodeCount: 2,
+      createdAt: 1,
+      ...over,
+    });
+
+    it("offers a saved node that can take the wire being dragged", () => {
+      saveComfyNode({ name: "Upscale 2x", app: savedApp() });
+      render(<ConnectionDropMenu {...defaultProps} handleType="image" connectionType="source" />);
+
+      expect(screen.getByText("Upscale 2x")).toBeInTheDocument();
+    });
+
+    it("leaves it out when it has no input of that type", () => {
+      saveComfyNode({ name: "Upscale 2x", app: savedApp() });
+      render(<ConnectionDropMenu {...defaultProps} handleType="text" connectionType="source" />);
+
+      expect(screen.queryByText("Upscale 2x")).not.toBeInTheDocument();
+    });
+
+    it("matches on outputs when the drag started at an input", () => {
+      saveComfyNode({
+        name: "Caption",
+        app: savedApp({
+          inputs: [],
+          outputs: [
+            { id: "9", label: "Text", type: "text", nodeId: "9", classType: "SaveText" },
+          ],
+        }),
+      });
+      render(<ConnectionDropMenu {...defaultProps} handleType="text" connectionType="target" />);
+
+      expect(screen.getByText("Caption")).toBeInTheDocument();
+    });
+
+    it("names which saved node was picked", () => {
+      // Without this the canvas would add an empty Comfy node — the type alone
+      // does not say which workflow was meant.
+      const entry = saveComfyNode({ name: "Upscale 2x", app: savedApp() });
+      render(<ConnectionDropMenu {...defaultProps} handleType="image" connectionType="source" />);
+
+      fireEvent.click(screen.getByText("Upscale 2x"));
+      expect(mockOnSelect).toHaveBeenCalledWith({
+        type: "comfyApp",
+        isAction: false,
+        savedNodeId: entry.id,
+      });
     });
   });
 

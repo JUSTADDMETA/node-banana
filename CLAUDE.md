@@ -237,6 +237,24 @@ routes, which is why the legacy engine is the default there.
 | Import/confirm dialog | `src/components/modals/ComfyWorkflowImportModal.tsx` |
 | Settings tab | `src/components/settings/ComfySettingsTab.tsx` |
 | Executor | `src/store/execution/comfyAppExecutor.ts` |
+| Saved-node library | `src/lib/comfy/library.ts` |
+
+### Saved nodes
+
+A confirmed node can be kept — "Save as node" in the confirm step of the import
+and edit dialog. An entry holds the workflow, the contract *and* the values the
+node was running (seeds excluded, since they are re-randomised per run), so it
+comes back set up rather than merely attached.
+
+Saved nodes then appear as ordinary nodes: in the canvas double-click search
+under "Saved nodes", in the connection-drop menus for any handle type their
+contract matches, and in the dialog's own "Saved nodes" tab. All three create a
+plain `comfyApp` node seeded via `seedFromSavedComfyNode`; there is no new node
+type.
+
+Saving is a **snapshot**. A node created from an entry records `savedNodeId`, so
+the dialog can offer "Update saved node" as well as "Save as new"; attaching a
+different workflow clears it.
 
 ### Formats
 
@@ -253,6 +271,26 @@ detected heuristically and confirmed in the dialog.
 **Blueprints** are saved subgraphs, listed from `/api/global_subgraphs` (public,
 on Cloud and local alike). Their data enters and leaves through boundary slots,
 so importing one materialises a loader per media input and a sink per output.
+
+### Live previews
+
+While a run is going, a v2 engine streams partial images over
+`GET /api/v2/jobs/{id}/events`. `/api/comfy/preview` relays those to the node,
+which shows the latent forming instead of a spinner. Two things to know:
+
+- The payload is **not** the bare JPEG the SDK's types describe. ComfyUI wraps
+  it: `[uint32 kind][uint32 jsonLength][JSON metadata][image bytes]`, and the
+  frame's own `node_id` arrives empty — the real one is in the metadata. See
+  `previewImage` in `src/lib/comfy/server/sdkEngine.ts`.
+- The same stream carries `progress`, and it is deliberately **not** used.
+  Measured against a live Cloud render it reports no node name, no step counts,
+  and a fraction computed against a node total that grows as the graph expands
+  — so it reaches 100% several times before the job ends. The job record's
+  `progress` field is `null` on Cloud throughout, despite the spec.
+
+Previews live in component state (`useComfyPreview`), never in the workflow
+store: they are 50–80KB JPEGs belonging to a run, and node data gets written
+into saved workflow files.
 
 ### Smoke tests
 
@@ -284,6 +322,7 @@ All routes in `src/app/api/`:
 | `/api/comfy/blueprints` | 2 min | List/import ComfyUI Blueprints |
 | `/api/comfy/run` | 5 min | Submit a Comfy app run |
 | `/api/comfy/poll` | 5 min | Poll a run and collect its outputs |
+| `/api/comfy/preview` | 5 min | Stream a running job's preview images (NDJSON) |
 
 ## localStorage Keys
 
@@ -291,6 +330,7 @@ All routes in `src/app/api/`:
 - `node-banana-workflow-costs` - Cost tracking per workflow
 - `node-banana-nanoBanana-defaults` - Sticky generation settings
 - `node-banana-comfy-settings` - ComfyUI backend (cloud/local/remote), keys, job timeout
+- `node-banana-comfy-apps` - Saved Comfy nodes (workflow + contract + settings)
 
 ## Git Workflow
 

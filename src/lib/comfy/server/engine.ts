@@ -64,6 +64,19 @@ export interface ComfyJobState {
   raw: unknown;
 }
 
+/**
+ * A partial image an engine emitted mid-run — the latent as it forms.
+ *
+ * Throttled and lossy by design: it is a glimpse of work in progress, never a
+ * result, and is deliberately kept out of anything that persists.
+ */
+export interface ComfyPreviewFrame {
+  /** Graph node that produced it. */
+  nodeId: string;
+  /** Data URL, ready to put in an `<img>`. */
+  dataUrl: string;
+}
+
 /** One finished output, already downloaded. */
 export interface ComfyOutputAsset {
   /** Graph node that produced it. */
@@ -112,6 +125,15 @@ export interface ComfyEngine {
 
   /** Best-effort stop. Must never throw. */
   cancel(jobId: string, signal?: AbortSignal): Promise<void>;
+
+  /**
+   * Partial images while the job runs, if this engine can produce them.
+   *
+   * Optional because only the v2 surface has an event stream: a stock ComfyUI
+   * says nothing at all until `/history` fills in, so there is no honest
+   * implementation to give it. Callers must treat its absence as normal.
+   */
+  previews?(jobId: string, signal?: AbortSignal): AsyncGenerator<ComfyPreviewFrame, void, void>;
 }
 
 /** An engine-reported failure that should be shown to the user verbatim. */
@@ -167,7 +189,13 @@ export function errorCode(error: unknown): string | null {
   const self = (error as { code?: unknown }).code;
   if (typeof self === "string") return self;
   const cause = (error as { cause?: unknown }).cause;
-  if (cause) return errorCode(cause);
+  if (cause) {
+    // A cause that carries no code is not an answer — an AggregateError can
+    // hold both a bare cause and one coded entry per address tried, and
+    // stopping here would report no code at all for it.
+    const fromCause = errorCode(cause);
+    if (fromCause) return fromCause;
+  }
   const nested = (error as { errors?: unknown }).errors;
   if (Array.isArray(nested)) {
     for (const inner of nested) {

@@ -9,7 +9,7 @@
  */
 
 import type { ModelInputDef } from "@/types/nodes";
-import type { ComfyAppDefinition } from "./types";
+import type { ComfyAppDefinition, ComfyAppInput } from "./types";
 
 /**
  * The `inputSchema` a Comfy app node should carry.
@@ -26,4 +26,22 @@ export function appToInputSchema(app: ComfyAppDefinition): ModelInputDef[] {
     label: input.label,
     ...(input.description ? { description: input.description } : {}),
   }));
+}
+
+/**
+ * Each input paired with the handle id it is rendered as.
+ *
+ * Ids are indexed per type — `image-0`, `image-1`, `text-0` — which the store
+ * relies on to map a handle back to its slot. Anything that needs to name one
+ * of these handles has to count the same way, so they all count here.
+ */
+export function appInputHandles(
+  app: ComfyAppDefinition
+): Array<ComfyAppInput & { handleId: string }> {
+  const counters: Record<string, number> = {};
+  return app.inputs.map((input) => {
+    const index = counters[input.type] ?? 0;
+    counters[input.type] = index + 1;
+    return { ...input, handleId: `${input.type}-${index}` };
+  });
 }

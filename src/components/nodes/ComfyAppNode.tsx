@@ -13,10 +13,11 @@ import {
   type ComfyUpload,
 } from "@/components/modals/ComfyWorkflowImportModal";
 import { ComfyWordmark } from "@/components/icons/ComfyWordmark";
+import { useComfyPreview } from "@/hooks/useComfyPreview";
 import { useShowHandleLabels } from "@/hooks/useShowHandleLabels";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { outputsToNodeData } from "@/store/execution/comfyAppExecutor";
-import { appToInputSchema } from "@/lib/comfy/nodeSchema";
+import { appInputHandles, appToInputSchema } from "@/lib/comfy/nodeSchema";
 import { mergeParamValues } from "@/lib/comfy/reconfigure";
 import type {
   ComfyAppDefinition,
@@ -42,10 +43,6 @@ function handleTop(index: number, total: number): string {
   return `${((index + 1) / (total + 1)) * 100}%`;
 }
 
-/** Handle id for a connectable input — indexed per type, as the store expects. */
-function inputHandleId(type: ComfyInputType, indexWithinType: number): string {
-  return `${type}-${indexWithinType}`;
-}
 
 export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>) {
   const nodeData = data;
@@ -93,15 +90,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   }, [app, id, nodeData.inputSchema, updateNodeData]);
 
   /** Input handles, grouped by type so ids stay `image-0`, `text-0`, … */
-  const inputHandles = useMemo(() => {
-    if (!app) return [];
-    const counters: Record<string, number> = {};
-    return app.inputs.map((input) => {
-      const index = counters[input.type] ?? 0;
-      counters[input.type] = index + 1;
-      return { ...input, handleId: inputHandleId(input.type, index) };
-    });
-  }, [app]);
+  const inputHandles = useMemo(() => (app ? appInputHandles(app) : []), [app]);
 
   const outputHandles = useMemo(() => app?.outputs ?? [], [app]);
 
@@ -132,16 +121,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
    */
   const pruneStaleEdges = useCallback(
     (attached: ComfyAppDefinition) => {
-      const inputHandleIds = new Set(
-        (() => {
-          const counters: Record<string, number> = {};
-          return attached.inputs.map((input) => {
-            const index = counters[input.type] ?? 0;
-            counters[input.type] = index + 1;
-            return inputHandleId(input.type, index);
-          });
-        })()
-      );
+      const inputHandleIds = new Set(appInputHandles(attached).map((input) => input.handleId));
       const outputHandleIds = new Set(attached.outputs.map((o) => o.id));
       for (const edge of edges) {
         if (edge.target === id && edge.targetHandle && !inputHandleIds.has(edge.targetHandle)) {
@@ -155,11 +135,19 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   );
 
   const handleAttach = useCallback(
-    (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection) => {
+    (
+      attached: ComfyAppDefinition,
+      inspection: ComfyWorkflowInspection | undefined,
+      meta?: { savedNodeId?: string }
+    ) => {
       pruneStaleEdges(attached);
       updateNodeData(id, {
         app: attached,
         inspection,
+        // Cleared unless this came from the library: a node that has been given
+        // a different workflow is no longer the saved one, and offering to
+        // "update" that entry with it would overwrite something else entirely.
+        savedNodeId: meta?.savedNodeId,
         inputSchema: appToInputSchema(attached),
         // A new contract invalidates the previous run entirely — old parameter
         // ids point at nodes the new graph may not even have.
@@ -193,7 +181,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
    * on a setting they kept must survive being shown the list again.
    */
   const handleReconfigure = useCallback(
-    (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection) => {
+    (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection | undefined) => {
       pruneStaleEdges(attached);
       const paramValues = mergeParamValues(attached.params, nodeData.paramValues ?? {});
       // Results are keyed by output handle id, so a dropped output's value has
@@ -256,6 +244,9 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
     ) : undefined;
 
   const isRunning = nodeData.status === "loading";
+  // The latent as it forms. Only the v2 engines emit these, so it stays null
+  // on a stock ComfyUI and the node keeps its spinner.
+  const livePreview = useComfyPreview(nodeData.jobId, isRunning);
 
   return (
     <>
@@ -345,6 +336,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
                 <Preview
                   preview={primaryPreview}
                   isRunning={isRunning}
+                  livePreview={livePreview}
                   error={nodeData.status === "error" ? nodeData.error : null}
                 />
               </div>
@@ -361,6 +353,8 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
         }}
         onAttach={modal === "edit" ? handleReconfigure : handleAttach}
         {...(app ? { existingName: app.name } : {})}
+        {...(nodeData.savedNodeId ? { savedNodeId: nodeData.savedNodeId } : {})}
+        paramValues={nodeData.paramValues ?? {}}
         {...(reconfigureTarget ? { reconfigure: reconfigureTarget } : {})}
         {...(dropped && modal === "replace" ? { upload: dropped } : {})}
       />
@@ -403,15 +397,22 @@ function EmptyState({
         if (!file) return;
         e.preventDefault();
         e.stopPropagation();
-        void file.text().then((text) => {
-          try {
-            onDropWorkflow({ workflow: JSON.parse(text), filename: file.name });
-          } catch {
-            // The dialog is where a bad file gets explained; it reports the
-            // same way whether the JSON or the workflow inside it is at fault.
-            onDropWorkflow({ workflow: text, filename: file.name });
-          }
-        });
+        void file
+          .text()
+          .then((text) => {
+            try {
+              onDropWorkflow({ workflow: JSON.parse(text), filename: file.name });
+            } catch {
+              // The dialog is where a bad file gets explained; it reports the
+              // same way whether the JSON or the workflow inside it is at fault.
+              onDropWorkflow({ workflow: text, filename: file.name });
+            }
+          })
+          .catch(() => {
+            // A file the browser could not read at all. Still the dialog's to
+            // report — without this the drop does nothing and says nothing.
+            onDropWorkflow({ workflow: null, filename: file.name });
+          });
       }}
       className={`nodrag nopan flex-1 flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed transition-colors ${
         dragOver
@@ -505,16 +506,19 @@ function HeaderButton({
   );
 }
 
-function Preview({
-  preview,
-  isRunning,
-  error,
-}: {
-  preview: { type: ComfyOutputType; value: string; label: string } | null;
-  isRunning: boolean;
-  error: string | null;
-}) {
-  if (isRunning) {
+/**
+ * A node mid-render.
+ *
+ * Where the engine sends previews, the latent itself — which says more about
+ * what is happening than any number Comfy Cloud currently reports, since its
+ * progress carries no node name, no step counts, and a fraction that reaches
+ * 100% several times before the job ends.
+ *
+ * The spinner stays for everything else: the first seconds of any run, and
+ * every run on a stock ComfyUI, which has no event stream at all.
+ */
+function Rendering({ livePreview }: { livePreview: string | null }) {
+  if (!livePreview) {
     return (
       <div className="flex flex-col items-center gap-2 text-neutral-500">
         <div className="w-5 h-5 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
@@ -522,6 +526,39 @@ function Preview({
       </div>
     );
   }
+
+  return (
+    <div className="relative w-full h-full">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={livePreview}
+        alt="Rendering"
+        // Each frame replaces the last; a fade would cross-blend two states of
+        // the same image into something neither of them looked like.
+        className="w-full h-full object-contain"
+      />
+      {/* Over the image, not beside it: the preview fills the node, and this
+          has to stay legible on whatever the latent happens to look like. */}
+      <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/60 backdrop-blur-sm">
+        <div className="w-2.5 h-2.5 border-2 border-neutral-500 border-t-blue-400 rounded-full animate-spin" />
+        <span className="text-[9px] text-neutral-200">Rendering…</span>
+      </div>
+    </div>
+  );
+}
+
+function Preview({
+  preview,
+  isRunning,
+  livePreview,
+  error,
+}: {
+  preview: { type: ComfyOutputType; value: string; label: string } | null;
+  isRunning: boolean;
+  livePreview: string | null;
+  error: string | null;
+}) {
+  if (isRunning) return <Rendering livePreview={livePreview} />;
   if (error) {
     return (
       <div className="px-3 py-2 max-h-full overflow-y-auto nowheel">

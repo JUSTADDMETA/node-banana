@@ -8,7 +8,14 @@
 
 import type { ComfyAppDefinition, ComfyAppParam, ComfyWidgetCandidate } from "./types";
 
-const bindingKey = (nodeId: string, inputKey: string): string => `${nodeId}:${inputKey}`;
+/**
+ * The key both this module and the import dialog address a binding by.
+ *
+ * Exported because they must agree exactly: {@link withAppLabels} writes it and
+ * the dialog's `roles` map reads it, so two copies that drift would silently
+ * stop matching each other's entries.
+ */
+export const bindingKey = (nodeId: string, inputKey: string): string => `${nodeId}:${inputKey}`;
 
 /**
  * Carry the node's own names onto a candidate list.

@@ -24,6 +24,22 @@ import type { ComfyInspectResponse } from "../inspect/route";
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
+/**
+ * The retry budget has to fit inside {@link maxDuration}.
+ *
+ * `resilientFetch` retries a timeout as readily as a refused connection, so the
+ * worst case is `(retries + 1) × timeoutMs` plus backoff. Left at five attempts
+ * of thirty seconds that is 150 s against a 120 s invocation: the platform kills
+ * the function first and the caller gets a bare platform timeout instead of the
+ * curated `ComfyImportError` this route works to produce.
+ *
+ * `POST` leaves the larger share for the inspection that follows the fetch.
+ */
+const LIST_TIMEOUT_MS = 15_000;
+const LIST_RETRIES = 3; // ≈63 s worst case
+const IMPORT_TIMEOUT_MS = 15_000;
+const IMPORT_RETRIES = 2; // ≈46 s worst case, leaving ~70 s to inspect
+
 /** One entry of the engine's `/api/global_subgraphs` map. */
 interface GlobalSubgraphEntry {
   name?: string;
@@ -61,8 +77,8 @@ async function fetchCatalog(
 ): Promise<Record<string, GlobalSubgraphEntry>> {
   const res = await resilientFetch(`${connection.baseUrl}/api/global_subgraphs`, {
     headers: engineAuthHeaders(connection),
-    timeoutMs: 20_000,
-    retries: 4,
+    timeoutMs: LIST_TIMEOUT_MS,
+    retries: LIST_RETRIES,
     ...(signal ? { signal } : {}),
   });
   if (res.status === 404) {
@@ -118,8 +134,8 @@ export async function POST(request: NextRequest) {
       `${connection.baseUrl}/api/global_subgraphs/${encodeURIComponent(body.id)}`,
       {
         headers: engineAuthHeaders(connection),
-        timeoutMs: 30_000,
-        retries: 4,
+        timeoutMs: IMPORT_TIMEOUT_MS,
+        retries: IMPORT_RETRIES,
         signal: request.signal,
       }
     );

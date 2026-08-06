@@ -584,19 +584,29 @@ async function externalizeNodeMedia(
       // externalized under its own handle id. Text outputs stay inline —
       // they are small, and a text file per run would be wasteful.
       const outputs = d.outputs ?? {};
-      const textHandles = new Set(
-        (d.app?.outputs ?? []).filter((o) => o.type === "text").map((o) => o.id)
-      );
+      const declaredType = new Map((d.app?.outputs ?? []).map((o) => [o.id, o.type]));
       const refs: Record<string, string> = { ...(d.outputRefs ?? {}) };
       const remaining: Record<string, string> = {};
       for (const [handleId, value] of Object.entries(outputs)) {
-        if (textHandles.has(handleId) || !isDataUrl(value)) {
+        const type = declaredType.get(handleId);
+        if (type === "text" || !isDataUrl(value)) {
           remaining[handleId] = value;
           continue;
         }
-        if (!refs[handleId]) {
-          refs[handleId] = await saveImageAndGetId(value, workflowPath, savedImageIds, "generations");
-        }
+        if (refs[handleId]) continue;
+        // Each type into the store hydration reads it back from. Saving a video
+        // through the image store and loading it from the video store is how an
+        // output survived the save and came back empty.
+        const ref =
+          type === "video"
+            ? await saveVideoAndGetRef(value, workflowPath, savedMediaIds)
+            : type === "audio"
+              ? await saveAudioAndGetRef(value, workflowPath, savedMediaIds)
+              : await saveImageAndGetId(value, workflowPath, savedImageIds, "generations");
+        // A store that declined the value leaves it inline rather than losing
+        // it to a ref that points at nothing.
+        if (ref) refs[handleId] = ref;
+        else remaining[handleId] = value;
       }
       newData = {
         ...d,

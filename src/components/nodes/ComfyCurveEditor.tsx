@@ -140,7 +140,12 @@ function ComfyCurveEditorInner({ label, value, onChange, description }: ComfyCur
           const locked = index === 0 || index === curve.points.length - 1;
           return (
             <circle
-              key={`${index}-${point[0]}`}
+              // By index alone. Keying on the moving x remounted the circle on
+              // every drag frame, and the browser drops pointer capture with
+              // the element it was set on — so a drag stopped tracking the
+              // moment the pointer left the SVG. The point count only changes
+              // on add and remove, where a remount is what should happen.
+              key={index}
               cx={cx}
               cy={cy}
               r={dragging === index ? 6 : 4.5}

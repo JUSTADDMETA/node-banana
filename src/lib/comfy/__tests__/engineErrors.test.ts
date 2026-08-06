@@ -83,6 +83,18 @@ describe("errorCode", () => {
     expect(errorCode(fetchFailed("ECONNRESET"))).toBe("ECONNRESET");
     expect(errorCode(new Error("plain"))).toBe(null);
   });
+
+  it("keeps looking past a cause that carries no code", () => {
+    // Both shapes at once: a bare cause and one coded entry per address. A
+    // search that stopped at the cause reported no code at all, and no code
+    // means no connect-phase retry for a request that was safe to repeat.
+    const coded = new Error("connect ECONNREFUSED");
+    (coded as { code?: string }).code = "ECONNREFUSED";
+    const aggregate = new AggregateError([coded], "");
+    (aggregate as { cause?: unknown }).cause = new Error("no code here");
+
+    expect(errorCode(aggregate)).toBe("ECONNREFUSED");
+  });
 });
 
 describe("createEngineFetch", () => {
@@ -161,15 +173,87 @@ describe("createEngineFetch", () => {
     const starts: number[] = [];
     stubStalledFetch(starts);
 
-    const engineFetch = createEngineFetch({ retryBaseMs: 0, requestTimeoutMs: 40 });
+    // 200ms rather than 40: the deadline is two timeouts and it is only checked
+    // between attempts, so the expected elapsed time is 2-3x the timeout either
+    // way — but at 40ms the margin left over is small enough that one GC pause
+    // on a loaded CI runner fails a test that found nothing wrong.
+    const engineFetch = createEngineFetch({ retryBaseMs: 0, requestTimeoutMs: 200 });
     const began = Date.now();
     await expect(engineFetch("https://cloud.comfy.org/api/v2/jobs/job-1")).rejects.toThrow();
 
     // Bounded by elapsed time, not by the retry count: four retries of one
     // timeout would be five times the wait, and the caller checks its own
     // deadline only between requests.
-    expect(Date.now() - began).toBeLessThan(40 * 4);
+    expect(Date.now() - began).toBeLessThan(200 * 4);
     expect(starts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("holds a connect failure to the same deadline once it costs a timeout", async () => {
+    // `ETIMEDOUT` is a connect failure — nothing was sent, so repeating is safe
+    // — but unlike a refused connection it costs the whole timeout. Bounding
+    // that branch by the retry count alone let five attempts against an
+    // unreachable dual-stack host run for minutes on an asset route.
+    const starts: number[] = [];
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      starts.push(Date.now());
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(noAddressAnswered()), { once: true });
+      });
+    });
+
+    const engineFetch = createEngineFetch({ retryBaseMs: 0, requestTimeoutMs: 200, retries: 4 });
+    const began = Date.now();
+    await expect(engineFetch("https://cloud.comfy.org/api/v2/jobs/job-1")).rejects.toThrow();
+
+    expect(Date.now() - began).toBeLessThan(200 * 4);
+    expect(starts.length).toBeLessThanOrEqual(3);
+  });
+
+  it("still spends its whole retry count on connect failures that cost nothing", async () => {
+    // The reason the count exists: a refused connection fails in milliseconds,
+    // and roughly two Comfy Cloud submits in five needed a second attempt.
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      if (calls <= 4) throw fetchFailed("ECONNREFUSED");
+      return new Response("{}", { status: 200 });
+    });
+
+    const engineFetch = createEngineFetch({ retryBaseMs: 0, retries: 4 });
+    expect((await engineFetch("https://cloud.comfy.org/api/v2/jobs")).status).toBe(200);
+    expect(calls).toBe(5);
+  });
+
+  it("releases the body of a response it is about to throw away", async () => {
+    // An unread body holds its socket until the collector gets to it, so a run
+    // that retries a 429 several times leaks one connection per attempt.
+    const cancelled: string[] = [];
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          status: 429,
+          statusText: "Too Many Requests",
+          headers: new Headers(),
+          body: {
+            cancel: async () => {
+              cancelled.push("first");
+            },
+          },
+        } as unknown as Response;
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    const { resilientFetch } = await import("../server/fetch");
+    const res = await resilientFetch("https://cloud.comfy.org/api/v2/jobs", {
+      retries: 1,
+      retryBaseMs: 0,
+    });
+
+    expect(res.status).toBe(200);
+    expect(cancelled).toEqual(["first"]);
   });
 
   it("gives an asset transfer longer than a poll", async () => {

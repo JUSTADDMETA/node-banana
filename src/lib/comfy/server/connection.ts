@@ -7,11 +7,13 @@
  * variables act as a fallback for a headless / shared deployment.
  */
 
-import { COMFY_HEADERS, COMFY_CLOUD_URL, COMFY_DEFAULT_JOB_TIMEOUT_MS } from "../settings";
+import {
+  clampJobTimeoutMs,
+  COMFY_HEADERS,
+  COMFY_CLOUD_URL,
+  COMFY_DEFAULT_JOB_TIMEOUT_MS,
+} from "../settings";
 import type { ComfyBackendMode, ComfyConnection } from "../types";
-
-const MIN_JOB_TIMEOUT_MS = 60_000;
-const MAX_JOB_TIMEOUT_MS = 3_600_000;
 
 export class ComfyConfigError extends Error {
   readonly status: number;
@@ -99,9 +101,7 @@ export function connectionFromRequest(request: Request): ComfyConnection {
     // headless deployment where no browser supplies one.
     apiKey: headers.get(COMFY_HEADERS.apiKey) || process.env.COMFY_API_KEY?.trim() || null,
     useSdk: headers.get(COMFY_HEADERS.apiV2) === "1",
-    jobTimeoutMs: Number.isFinite(timeout)
-      ? Math.min(MAX_JOB_TIMEOUT_MS, Math.max(MIN_JOB_TIMEOUT_MS, timeout))
-      : COMFY_DEFAULT_JOB_TIMEOUT_MS,
+    jobTimeoutMs: clampJobTimeoutMs(timeout),
   };
 }
 

@@ -179,6 +179,31 @@ describe("editing", () => {
     expect(moved.points.map((p) => p[0])).toEqual([...moved.points.map((p) => p[0])].sort((a, b) => a - b));
   });
 
+  it("keeps the order when an imported curve crowds a point", () => {
+    // `normalizeCurve` only drops duplicates within 1e-6, so a workflow can
+    // carry neighbours closer together than two MIN_POINT_GAPs. The clamp
+    // range is then empty, and clamping into an empty range lands *below* the
+    // previous point — an unsorted list that `sampleCurve` reads as ascending,
+    // so the drawn curve stops matching the stored value.
+    const crowded = {
+      points: [
+        [0, 0],
+        [0.5, 0.5],
+        [0.51, 0.6],
+        [0.52, 0.7],
+        [1, 1],
+      ] as Array<[number, number]>,
+    };
+
+    const moved = moveCurvePoint(crowded, 2, 0, 0.9);
+    const xs = moved.points.map((p) => p[0]);
+
+    expect(xs).toEqual([...xs].sort((a, b) => a - b));
+    // Held where it was on x, but still free to move vertically.
+    expect(moved.points[2]![0]).toBe(0.51);
+    expect(moved.points[2]![1]).toBe(0.9);
+  });
+
   it("removes an interior point and keeps the endpoints", () => {
     const three = addCurvePoint(IDENTITY_CURVE, 0.5, 0.8);
     expect(removeCurvePoint(three, 1).points).toEqual(IDENTITY_CURVE.points);

@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     const ping = await engine.ping(request.signal);
     let nodeCount: number | null = null;
     if (ping.ok) {
-      const catalog = await getObjectInfo(engine, { signal: request.signal }).catch(() => null);
+      const catalog = await getObjectInfo(engine).catch(() => null);
       nodeCount = catalog ? Object.keys(catalog).length : null;
     }
 

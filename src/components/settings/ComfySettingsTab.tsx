@@ -45,11 +45,23 @@ export function ComfySettingsTab({ settings, onChange }: ComfySettingsTabProps) 
 
   const configError = comfyConfigError(settings);
 
-  // A different endpoint invalidates the previous probe, so clear it rather
-  // than leaving a green tick against a URL that was never tested.
+  // A different endpoint — or credential, or transport — invalidates the
+  // previous probe, so clear it rather than leaving a green tick against a
+  // configuration that was never tested. Every field the probe depends on
+  // belongs here, including the two API-v2 toggles, which change the routes it
+  // calls entirely.
   useEffect(() => {
     setResult(null);
-  }, [settings.mode, settings.cloudApiKey, settings.localUrl, settings.remoteUrl, settings.cloudUrl]);
+  }, [
+    settings.mode,
+    settings.cloudApiKey,
+    settings.cloudUrl,
+    settings.localUrl,
+    settings.localUsesApiV2,
+    settings.remoteUrl,
+    settings.remoteApiKey,
+    settings.remoteUsesApiV2,
+  ]);
 
   const update = useCallback(
     (patch: Partial<ComfySettings>) => onChange({ ...settings, ...patch }),

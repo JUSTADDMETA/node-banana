@@ -32,6 +32,20 @@ export const COMFY_DEFAULT_JOB_TIMEOUT_MS = 1_800_000; // 30 minutes
 const MIN_JOB_TIMEOUT_MS = 60_000;
 const MAX_JOB_TIMEOUT_MS = 3_600_000;
 
+/**
+ * A job timeout the user (or a request header) supplied, brought into range.
+ *
+ * Shared with the server side so the two cannot drift: a browser storing one
+ * bound and a route enforcing another would cancel a render the settings pane
+ * said was still allowed.
+ */
+export function clampJobTimeoutMs(value: unknown): number {
+  const ms = Number(value);
+  return Number.isFinite(ms)
+    ? Math.min(MAX_JOB_TIMEOUT_MS, Math.max(MIN_JOB_TIMEOUT_MS, ms))
+    : COMFY_DEFAULT_JOB_TIMEOUT_MS;
+}
+
 export interface ComfySettings {
   /** Backend used for Comfy app nodes. Cloud is the default. */
   mode: ComfyBackendMode;
@@ -91,7 +105,6 @@ export function normalizeComfySettings(raw: unknown): ComfySettings {
     stored.mode === "local" || stored.mode === "remote" || stored.mode === "cloud"
       ? stored.mode
       : defaultComfySettings.mode;
-  const timeout = Number(stored.jobTimeoutMs);
   return {
     ...defaultComfySettings,
     ...stored,
@@ -99,9 +112,7 @@ export function normalizeComfySettings(raw: unknown): ComfySettings {
     cloudUrl: trimTrailingSlash(stored.cloudUrl || COMFY_CLOUD_URL) || COMFY_CLOUD_URL,
     localUrl: trimTrailingSlash(stored.localUrl || COMFY_LOCAL_URL) || COMFY_LOCAL_URL,
     remoteUrl: trimTrailingSlash(stored.remoteUrl || ""),
-    jobTimeoutMs: Number.isFinite(timeout)
-      ? Math.min(MAX_JOB_TIMEOUT_MS, Math.max(MIN_JOB_TIMEOUT_MS, timeout))
-      : COMFY_DEFAULT_JOB_TIMEOUT_MS,
+    jobTimeoutMs: clampJobTimeoutMs(stored.jobTimeoutMs),
   };
 }
 

@@ -49,7 +49,10 @@ function nameFromFilename(filename: string | undefined): string {
 export async function POST(request: NextRequest) {
   try {
     const raw = await request.text();
-    if (raw.length > MAX_WORKFLOW_BYTES) {
+    // Bytes, not `raw.length`: that counts UTF-16 code units, so a workflow of
+    // three-byte characters would sail past a cap named in bytes at roughly
+    // three times its size.
+    if (Buffer.byteLength(raw, "utf8") > MAX_WORKFLOW_BYTES) {
       return NextResponse.json(
         { success: false, error: "That workflow file is too large to import." },
         { status: 413 }

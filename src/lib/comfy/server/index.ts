@@ -62,10 +62,14 @@ const catalogCache = new Map<string, CatalogEntry>();
  * it, so refetching per request would dominate import latency. The cache is
  * keyed by base URL — two users pointing at the same engine share it, which is
  * safe because the catalog is a property of the engine, not of the caller.
+ *
+ * There is deliberately no `signal`: the fetch is shared, so no one caller may
+ * abort it, and taking a signal only to ignore it advertises a cancellation
+ * that cannot happen.
  */
 export async function getObjectInfo(
   engine: ComfyEngine,
-  options: { force?: boolean; signal?: AbortSignal } = {}
+  options: { force?: boolean } = {}
 ): Promise<ComfyObjectInfo> {
   const key = engine.connection.baseUrl;
   const cached = catalogCache.get(key);

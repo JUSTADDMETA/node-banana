@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ComfyCurveEditor } from "./ComfyCurveEditor";
 import type { ComfyAppParam } from "@/lib/comfy/types";
@@ -112,6 +112,10 @@ interface ComfyParameterInputProps {
  */
 function ComfyParameterInputInner({ param, value, onChange }: ComfyParameterInputProps) {
   const label = shortLabel(param);
+  // Pairs each label with its control, so a screen reader announces the field
+  // by name and a click on the label focuses it. Generated rather than derived
+  // from `param.id`, which repeats across two nodes running the same workflow.
+  const controlId = useId();
   const [local, setLocal] = useState<string>(() =>
     value === undefined || value === null ? "" : String(value)
   );
@@ -158,10 +162,15 @@ function ComfyParameterInputInner({ param, value, onChange }: ComfyParameterInpu
   if (param.enum && param.enum.length > 0) {
     return (
       <div className="flex items-center gap-2">
-        <label className="text-[11px] text-neutral-400 shrink-0" title={param.description}>
+        <label
+          htmlFor={controlId}
+          className="text-[11px] text-neutral-400 shrink-0"
+          title={param.description}
+        >
           {label}
         </label>
         <select
+          id={controlId}
           value={(value as string) ?? ""}
           onChange={(e) => onChange(param.id, e.target.value || undefined)}
           className="nodrag nopan flex-1 min-w-0 text-[11px] py-1 px-2 rounded-md bg-[#1a1a1a] focus:outline-none focus:ring-1 focus:ring-neutral-600 text-white"
@@ -200,10 +209,11 @@ function ComfyParameterInputInner({ param, value, onChange }: ComfyParameterInpu
   if (param.multiline) {
     return (
       <div className="flex flex-col gap-1">
-        <label className="text-[11px] text-neutral-400" title={param.description}>
+        <label htmlFor={controlId} className="text-[11px] text-neutral-400" title={param.description}>
           {label}
         </label>
         <textarea
+          id={controlId}
           value={local}
           rows={3}
           placeholder={param.default !== undefined ? String(param.default) : undefined}
@@ -230,11 +240,16 @@ function ComfyParameterInputInner({ param, value, onChange }: ComfyParameterInpu
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-2">
-        <label className="text-[11px] text-neutral-400 shrink-0" title={param.description}>
+        <label
+          htmlFor={controlId}
+          className="text-[11px] text-neutral-400 shrink-0"
+          title={param.description}
+        >
           {label}
         </label>
         <div className="flex-1 min-w-0 flex items-center gap-1">
           <input
+            id={controlId}
             type={isNumber ? "number" : "text"}
             value={local}
             placeholder={param.default !== undefined ? String(param.default) : undefined}

@@ -676,6 +676,16 @@ export interface ComfyAppNodeData extends BaseNodeData {
    * them — because that lives in the uploaded file, not the runnable graph.
    */
   inspection?: ComfyWorkflowInspection;
+  /**
+   * The library entry this node was created from, when it came from a saved
+   * node rather than an import.
+   *
+   * Saving is a snapshot, so this node and that entry drift apart the moment
+   * either is changed. Knowing which entry it was lets the dialog offer to
+   * update that one, instead of leaving "save again" as the only way back and
+   * a pile of near-identical entries as the result.
+   */
+  savedNodeId?: string;
   /** Values for `app.params`, keyed by param id. */
   paramValues: Record<string, unknown>;
   /** Derived from `app.inputs` — drives dynamic handles and `dynamicInputs`. */

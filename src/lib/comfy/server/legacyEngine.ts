@@ -67,7 +67,7 @@ export function collectOutputText(
 ): Array<{ nodeId: string; text: string }> {
   const results: Array<{ nodeId: string; text: string }> = [];
   for (const [nodeId, node] of Object.entries(outputs ?? {})) {
-    const raw = (node as { text?: unknown }).text;
+    const raw = (node as { text?: unknown } | null)?.text;
     if (!Array.isArray(raw)) continue;
     const text = raw.filter((t) => typeof t === "string").join("").trim();
     if (text.length > 0) results.push({ nodeId, text });
