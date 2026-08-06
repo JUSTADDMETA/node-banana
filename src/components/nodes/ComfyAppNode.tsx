@@ -16,7 +16,7 @@ import { ComfyWordmark } from "@/components/icons/ComfyWordmark";
 import { useShowHandleLabels } from "@/hooks/useShowHandleLabels";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { outputsToNodeData } from "@/store/execution/comfyAppExecutor";
-import { appToInputSchema } from "@/lib/comfy/nodeSchema";
+import { appInputHandles, appToInputSchema } from "@/lib/comfy/nodeSchema";
 import { mergeParamValues } from "@/lib/comfy/reconfigure";
 import type {
   ComfyAppDefinition,
@@ -42,10 +42,6 @@ function handleTop(index: number, total: number): string {
   return `${((index + 1) / (total + 1)) * 100}%`;
 }
 
-/** Handle id for a connectable input — indexed per type, as the store expects. */
-function inputHandleId(type: ComfyInputType, indexWithinType: number): string {
-  return `${type}-${indexWithinType}`;
-}
 
 export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>) {
   const nodeData = data;
@@ -93,15 +89,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   }, [app, id, nodeData.inputSchema, updateNodeData]);
 
   /** Input handles, grouped by type so ids stay `image-0`, `text-0`, … */
-  const inputHandles = useMemo(() => {
-    if (!app) return [];
-    const counters: Record<string, number> = {};
-    return app.inputs.map((input) => {
-      const index = counters[input.type] ?? 0;
-      counters[input.type] = index + 1;
-      return { ...input, handleId: inputHandleId(input.type, index) };
-    });
-  }, [app]);
+  const inputHandles = useMemo(() => (app ? appInputHandles(app) : []), [app]);
 
   const outputHandles = useMemo(() => app?.outputs ?? [], [app]);
 
@@ -132,16 +120,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
    */
   const pruneStaleEdges = useCallback(
     (attached: ComfyAppDefinition) => {
-      const inputHandleIds = new Set(
-        (() => {
-          const counters: Record<string, number> = {};
-          return attached.inputs.map((input) => {
-            const index = counters[input.type] ?? 0;
-            counters[input.type] = index + 1;
-            return inputHandleId(input.type, index);
-          });
-        })()
-      );
+      const inputHandleIds = new Set(appInputHandles(attached).map((input) => input.handleId));
       const outputHandleIds = new Set(attached.outputs.map((o) => o.id));
       for (const edge of edges) {
         if (edge.target === id && edge.targetHandle && !inputHandleIds.has(edge.targetHandle)) {
@@ -155,11 +134,19 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   );
 
   const handleAttach = useCallback(
-    (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection) => {
+    (
+      attached: ComfyAppDefinition,
+      inspection: ComfyWorkflowInspection | undefined,
+      meta?: { savedNodeId?: string }
+    ) => {
       pruneStaleEdges(attached);
       updateNodeData(id, {
         app: attached,
         inspection,
+        // Cleared unless this came from the library: a node that has been given
+        // a different workflow is no longer the saved one, and offering to
+        // "update" that entry with it would overwrite something else entirely.
+        savedNodeId: meta?.savedNodeId,
         inputSchema: appToInputSchema(attached),
         // A new contract invalidates the previous run entirely — old parameter
         // ids point at nodes the new graph may not even have.
@@ -193,7 +180,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
    * on a setting they kept must survive being shown the list again.
    */
   const handleReconfigure = useCallback(
-    (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection) => {
+    (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection | undefined) => {
       pruneStaleEdges(attached);
       const paramValues = mergeParamValues(attached.params, nodeData.paramValues ?? {});
       // Results are keyed by output handle id, so a dropped output's value has
@@ -361,6 +348,8 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
         }}
         onAttach={modal === "edit" ? handleReconfigure : handleAttach}
         {...(app ? { existingName: app.name } : {})}
+        {...(nodeData.savedNodeId ? { savedNodeId: nodeData.savedNodeId } : {})}
+        paramValues={nodeData.paramValues ?? {}}
         {...(reconfigureTarget ? { reconfigure: reconfigureTarget } : {})}
         {...(dropped && modal === "replace" ? { upload: dropped } : {})}
       />

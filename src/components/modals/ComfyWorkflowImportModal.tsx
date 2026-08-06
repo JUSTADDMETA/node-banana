@@ -9,8 +9,16 @@ import {
   ComfySettingsTab,
   useComfySettingsDraft,
 } from "@/components/settings/ComfySettingsTab";
+import { useSavedComfyNodes } from "@/hooks/useSavedComfyNodes";
 import { buildComfyApp } from "@/lib/comfy/buildApp";
 import { loaderInputType } from "@/lib/comfy/graph";
+import {
+  instantiateSavedComfyNode,
+  removeSavedComfyNode,
+  saveComfyNode,
+  withDialledValues,
+  type SavedComfyNode,
+} from "@/lib/comfy/library";
 import { inputFromCandidate, inputFromLoader, paramFromCandidate } from "@/lib/comfy/inspect";
 import { withAppLabels } from "@/lib/comfy/reconfigure";
 import {
@@ -48,10 +56,30 @@ export interface ComfyReconfigureTarget {
 interface ComfyWorkflowImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** The confirmed contract, plus the candidate list it was chosen from. */
-  onAttach: (app: ComfyAppDefinition, inspection: ComfyWorkflowInspection) => void;
+  /**
+   * The confirmed contract, plus the candidate list it was chosen from.
+   *
+   * A saved node carries no candidate list when it was stored without one —
+   * better to pass nothing and let the node re-read the graph than to hand it
+   * an empty list, which reads as "this workflow exposes nothing".
+   */
+  onAttach: (
+    app: ComfyAppDefinition,
+    inspection: ComfyWorkflowInspection | undefined,
+    meta?: { savedNodeId?: string }
+  ) => void;
   /** Shown as the "replacing" hint when the node already has a workflow. */
   existingName?: string;
+  /**
+   * The library entry this node was created from, which turns the save action
+   * into an update of that entry.
+   */
+  savedNodeId?: string;
+  /**
+   * The node's current settings. Folded into the defaults when saving, so a
+   * saved node arrives dialled in rather than back at the workflow's own values.
+   */
+  paramValues?: Record<string, unknown>;
   /**
    * Set to skip the file/blueprint step and edit an attached workflow's picks
    * directly. The node's current selection is what gets pre-filled, not the
@@ -102,6 +130,11 @@ const APP_MODE_DOCS = "https://docs.comfy.org/interface/app-mode";
 const PRIMARY_BUTTON =
   "px-4 py-2 text-sm rounded-lg bg-neutral-100 text-neutral-900 font-medium hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-[background-color,scale] duration-150 active:scale-[0.96] disabled:active:scale-100";
 
+/** Beside it: keeping this node is a different act from attaching it, and a
+ *  second filled button would make the dialog ask twice which one you meant. */
+const SECONDARY_BUTTON =
+  "px-3 py-2 text-sm rounded-lg bg-neutral-700/60 text-neutral-300 hover:bg-neutral-700 hover:text-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed transition-[background-color,color,scale] duration-150 active:scale-[0.96] disabled:active:scale-100";
+
 /**
  * Import a ComfyUI workflow and confirm what it exposes.
  *
@@ -115,10 +148,12 @@ export function ComfyWorkflowImportModal({
   onClose,
   onAttach,
   existingName,
+  savedNodeId,
+  paramValues,
   reconfigure,
   upload,
 }: ComfyWorkflowImportModalProps) {
-  const [tab, setTab] = useState<"file" | "blueprints">("file");
+  const [tab, setTab] = useState<"file" | "blueprints" | "saved">("file");
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [source, setSource] = useState<"upload" | "blueprint">("upload");
   const [busy, setBusy] = useState(false);
@@ -136,6 +171,12 @@ export function ComfyWorkflowImportModal({
   const [blueprints, setBlueprints] = useState<BlueprintListItem[] | null>(null);
   const [blueprintError, setBlueprintError] = useState<string | null>(null);
   const [blueprintId, setBlueprintId] = useState("");
+
+  // Saved-node library
+  const savedNodes = useSavedComfyNodes();
+  const [savedPick, setSavedPick] = useState("");
+  /** The outcome of the last save, shown where the button is. */
+  const [saveResult, setSaveResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // The two panels that take over the body: how to prepare a workflow, and
   // where it runs. Settings live here because this dialog is where a missing
@@ -227,7 +268,14 @@ export function ComfyWorkflowImportModal({
     setRoles({});
     setBusy(false);
     setDragOver(false);
+    setSaveResult(null);
   }, []);
+
+  // The tab only exists while there is a library to show, so deleting the last
+  // entry has to put the dialog back on a step that still exists.
+  useEffect(() => {
+    if (tab === "saved" && savedNodes.length === 0) setTab("file");
+  }, [tab, savedNodes.length]);
 
   useEffect(() => {
     if (!isOpen) setView("main");
@@ -497,15 +545,19 @@ export function ComfyWorkflowImportModal({
     [inspection, roles]
   );
 
-  const attach = useCallback(() => {
-    if (!inspection) return;
+  /**
+   * The contract as the picks currently stand — what Add, Save changes and
+   * Save as node all commit, so the three cannot disagree about it.
+   */
+  const buildContract = useCallback(() => {
+    if (!inspection) return null;
     // The candidate list travels back to the node so the picks can be revisited.
     // The graph is dropped (the app already carries it), as are the blueprint
     // listing and the import-time warnings — both describe the upload, not the
     // contract, and replaying "could not reach the engine" weeks later misleads.
     const { graph: _graph, ...snapshot } = inspection;
-    onAttach(
-      buildComfyApp({
+    return {
+      app: buildComfyApp({
         name,
         source: source === "blueprint" ? "blueprint" : "upload",
         graph: inspection.graph,
@@ -513,9 +565,60 @@ export function ComfyWorkflowImportModal({
         params,
         outputs,
       }),
-      { ...snapshot, blueprints: [], warnings: [] }
-    );
-  }, [inspection, params, name, source, inputs, outputs, onAttach]);
+      inspection: { ...snapshot, blueprints: [], warnings: [] } as ComfyWorkflowInspection,
+    };
+  }, [inspection, params, name, source, inputs, outputs]);
+
+  const attach = useCallback(() => {
+    const built = buildContract();
+    if (built) onAttach(built.app, built.inspection);
+  }, [buildContract, onAttach]);
+
+  /**
+   * Keep this node, as configured, in the library.
+   *
+   * The values the node is running are folded into the defaults, which is the
+   * whole point: a saved node arrives set up, not merely attached. Updating
+   * overwrites the entry it came from; anything else adds one.
+   */
+  const saveToLibrary = useCallback(
+    (mode: "new" | "update") => {
+      const built = buildContract();
+      if (!built) return;
+      try {
+        saveComfyNode({
+          ...(mode === "update" && savedNodeId ? { id: savedNodeId } : {}),
+          name,
+          app: withDialledValues(built.app, paramValues ?? {}),
+          inspection: built.inspection,
+        });
+        setSaveResult({ ok: true, message: mode === "update" ? "Updated" : "Saved" });
+      } catch (err) {
+        setSaveResult({
+          ok: false,
+          message: err instanceof Error ? err.message : "Could not save this node.",
+        });
+      }
+    },
+    [buildContract, name, paramValues, savedNodeId]
+  );
+
+  // A confirmation that stayed put would still be sitting there after the next
+  // change, claiming that change was saved too.
+  useEffect(() => {
+    if (!saveResult?.ok) return;
+    const timer = setTimeout(() => setSaveResult(null), 2500);
+    return () => clearTimeout(timer);
+  }, [saveResult]);
+
+  /** Attach a library entry straight to the node — nothing to inspect. */
+  const addSaved = useCallback(
+    (entry: SavedComfyNode) => {
+      const { app, inspection: stored } = instantiateSavedComfyNode(entry);
+      onAttach(app, stored, { savedNodeId: entry.id });
+    },
+    [onAttach]
+  );
 
   if (!isOpen) return null;
 
@@ -539,6 +642,12 @@ export function ComfyWorkflowImportModal({
         : null;
   const showBlueprintAdd =
     !reconfigure && tab === "blueprints" && blueprints !== null && blueprints.length > 0;
+  const showSavedAdd = !reconfigure && tab === "saved" && savedNodes.length > 0;
+  // Only offer to update an entry that is still there — the node keeps its
+  // `savedNodeId` after the library entry has been deleted.
+  const canUpdateSaved = Boolean(
+    savedNodeId && savedNodes.some((entry) => entry.id === savedNodeId)
+  );
   // The preview is of the node being built, so it belongs to that step alone —
   // not to the file picker, the connection settings or the help text.
   const showPreview = Boolean(isMain && inspection);
@@ -650,6 +759,13 @@ export function ComfyWorkflowImportModal({
               <TabButton active={tab === "blueprints"} onClick={() => setTab("blueprints")}>
                 Blueprints
               </TabButton>
+              {/* Absent until there is something in it — an empty tab for a
+                  feature you have not used yet is a dead end with a label. */}
+              {savedNodes.length > 0 && (
+                <TabButton active={tab === "saved"} onClick={() => setTab("saved")}>
+                  Saved nodes
+                </TabButton>
+              )}
             </div>
           )}
         </div>
@@ -714,6 +830,19 @@ export function ComfyWorkflowImportModal({
               onRetry={loadBlueprints}
               onAdd={() => void importBlueprint(blueprintId)}
               busy={busy}
+            />
+          )}
+
+          {isMain && !reconfigure && !inspection && tab === "saved" && (
+            <SavedNodePicker
+              nodes={savedNodes}
+              selected={savedPick}
+              onSelect={setSavedPick}
+              onAdd={addSaved}
+              onDelete={(entryId) => {
+                removeSavedComfyNode(entryId);
+                setSavedPick((current) => (current === entryId ? "" : current));
+              }}
             />
           )}
 
@@ -782,8 +911,54 @@ export function ComfyWorkflowImportModal({
               Save connection
             </button>
           ) : inspection ? (
-            <button type="button" onClick={attach} disabled={!canAttach} className={PRIMARY_BUTTON}>
-              {reconfigure ? "Save changes" : "Add to node"}
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Saving is otherwise invisible — the dialog stays exactly as it
+                  was, so without this there is no way to tell it worked. */}
+              {saveResult && (
+                <span
+                  role="status"
+                  className={`text-[11px] ${
+                    saveResult.ok ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
+                  {saveResult.message}
+                </span>
+              )}
+              {canUpdateSaved && (
+                <button
+                  type="button"
+                  onClick={() => saveToLibrary("update")}
+                  disabled={!canAttach}
+                  title="Overwrite the saved node this one came from"
+                  className={SECONDARY_BUTTON}
+                >
+                  Update saved node
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => saveToLibrary("new")}
+                disabled={!canAttach}
+                title="Keep this node, as configured, in the node menus"
+                className={SECONDARY_BUTTON}
+              >
+                {canUpdateSaved ? "Save as new" : "Save as node"}
+              </button>
+              <button type="button" onClick={attach} disabled={!canAttach} className={PRIMARY_BUTTON}>
+                {reconfigure ? "Save changes" : "Add to node"}
+              </button>
+            </div>
+          ) : showSavedAdd ? (
+            <button
+              type="button"
+              onClick={() => {
+                const entry = savedNodes.find((n) => n.id === savedPick);
+                if (entry) addSaved(entry);
+              }}
+              disabled={!savedPick}
+              className={PRIMARY_BUTTON}
+            >
+              Add
             </button>
           ) : (
             // The Blueprint list confirms from here too, so the dialog has one
@@ -1035,6 +1210,123 @@ function BlueprintPicker({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The saved-node library.
+ *
+ * Each entry is a workflow someone already confirmed and dialled in, so there
+ * is nothing to read and nothing to choose — picking one attaches it. What the
+ * row has to answer is which one this is, hence the handle counts: two saves of
+ * the same workflow usually differ by what they expose, not by name.
+ */
+function SavedNodePicker({
+  nodes,
+  selected,
+  onSelect,
+  onAdd,
+  onDelete,
+}: {
+  nodes: SavedComfyNode[];
+  selected: string;
+  onSelect: (id: string) => void;
+  onAdd: (entry: SavedComfyNode) => void;
+  onDelete: (id: string) => void;
+}) {
+  // Deleting is not undoable — localStorage keeps no history — so it asks,
+  // inline rather than through a system dialog stacked on top of this one.
+  const [confirming, setConfirming] = useState<string | null>(null);
+
+  if (nodes.length === 0) {
+    return (
+      <p className="text-xs text-neutral-500 py-8 text-center">
+        Nothing saved yet. Confirm a workflow&rsquo;s inputs and outputs, then
+        &ldquo;Save as node&rdquo;.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="rounded-lg border border-neutral-700 bg-neutral-900 overflow-hidden divide-y divide-neutral-800/80 max-h-[320px] overflow-y-auto">
+      {nodes.map((entry) => {
+        const isSelected = entry.id === selected;
+        const { app } = entry;
+        const handles = [
+          `${app.inputs.length} input${app.inputs.length === 1 ? "" : "s"}`,
+          `${app.params.length} setting${app.params.length === 1 ? "" : "s"}`,
+          `${app.outputs.length} output${app.outputs.length === 1 ? "" : "s"}`,
+        ].join(" · ");
+
+        return (
+          <li key={entry.id} className={isSelected ? "bg-neutral-700" : "hover:bg-neutral-800"}>
+            <div className="flex items-center">
+              <button
+                type="button"
+                onClick={() => onSelect(entry.id)}
+                onDoubleClick={() => onAdd(entry)}
+                className="flex-1 min-w-0 text-left px-3 py-2.5 transition-[scale] duration-150 active:scale-[0.99]"
+              >
+                <p
+                  className={`text-sm truncate ${
+                    isSelected ? "text-white" : "text-neutral-300"
+                  }`}
+                >
+                  {entry.name}
+                </p>
+                <p className="text-[10px] text-neutral-500 truncate">
+                  {app.source === "blueprint" ? "Blueprint" : "App workflow"} · {handles}
+                </p>
+              </button>
+
+              {confirming === entry.id ? (
+                <div className="flex items-center gap-1 pr-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDelete(entry.id);
+                      setConfirming(null);
+                    }}
+                    className="px-2 py-1 text-[11px] rounded bg-red-500/15 text-red-300 hover:bg-red-500/25 transition-colors"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirming(null)}
+                    className="px-2 py-1 text-[11px] text-neutral-400 hover:text-neutral-200 transition-colors"
+                  >
+                    Keep
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirming(entry.id)}
+                  title={`Delete "${entry.name}"`}
+                  aria-label={`Delete ${entry.name}`}
+                  className="shrink-0 w-10 h-10 flex items-center justify-center text-neutral-600 hover:text-red-400 transition-colors"
+                >
+                  <svg
+                    className="w-3.5 h-3.5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 6h18" />
+                    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                    <path d="M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

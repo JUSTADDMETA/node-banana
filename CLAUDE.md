@@ -237,6 +237,24 @@ routes, which is why the legacy engine is the default there.
 | Import/confirm dialog | `src/components/modals/ComfyWorkflowImportModal.tsx` |
 | Settings tab | `src/components/settings/ComfySettingsTab.tsx` |
 | Executor | `src/store/execution/comfyAppExecutor.ts` |
+| Saved-node library | `src/lib/comfy/library.ts` |
+
+### Saved nodes
+
+A confirmed node can be kept — "Save as node" in the confirm step of the import
+and edit dialog. An entry holds the workflow, the contract *and* the values the
+node was running (seeds excluded, since they are re-randomised per run), so it
+comes back set up rather than merely attached.
+
+Saved nodes then appear as ordinary nodes: in the canvas double-click search
+under "Saved nodes", in the connection-drop menus for any handle type their
+contract matches, and in the dialog's own "Saved nodes" tab. All three create a
+plain `comfyApp` node seeded via `seedFromSavedComfyNode`; there is no new node
+type.
+
+Saving is a **snapshot**. A node created from an entry records `savedNodeId`, so
+the dialog can offer "Update saved node" as well as "Save as new"; attaching a
+different workflow clears it.
 
 ### Formats
 
@@ -291,6 +309,7 @@ All routes in `src/app/api/`:
 - `node-banana-workflow-costs` - Cost tracking per workflow
 - `node-banana-nanoBanana-defaults` - Sticky generation settings
 - `node-banana-comfy-settings` - ComfyUI backend (cloud/local/remote), keys, job timeout
+- `node-banana-comfy-apps` - Saved Comfy nodes (workflow + contract + settings)
 
 ## Git Workflow
 
