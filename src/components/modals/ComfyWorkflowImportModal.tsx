@@ -1278,8 +1278,12 @@ function ConfirmStep({
                       <div key={nodeId}>
                         {/* A band, not a row: the node a widget belongs to is a
                             heading over the list, and at row weight the two
-                            were being read as the same kind of thing. */}
-                        <div className="flex items-baseline gap-2 px-2.5 py-1 bg-neutral-950/80 border-y border-neutral-800">
+                            were being read as the same kind of thing.
+
+                            Weighted to the top, because a heading belongs to
+                            what follows it — evenly padded, it floated between
+                            two groups and read as ending the one above. */}
+                        <div className="flex items-baseline gap-2 px-2.5 pt-2.5 pb-1 bg-neutral-950/80 border-y border-neutral-800">
                           <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
                             {group.classType}
                           </span>
