@@ -189,7 +189,13 @@ export function errorCode(error: unknown): string | null {
   const self = (error as { code?: unknown }).code;
   if (typeof self === "string") return self;
   const cause = (error as { cause?: unknown }).cause;
-  if (cause) return errorCode(cause);
+  if (cause) {
+    // A cause that carries no code is not an answer — an AggregateError can
+    // hold both a bare cause and one coded entry per address tried, and
+    // stopping here would report no code at all for it.
+    const fromCause = errorCode(cause);
+    if (fromCause) return fromCause;
+  }
   const nested = (error as { errors?: unknown }).errors;
   if (Array.isArray(nested)) {
     for (const inner of nested) {

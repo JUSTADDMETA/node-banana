@@ -81,7 +81,7 @@ export async function prepareWorkflow(
     // so an unreachable engine degrades rather than blocking the import.
     let objectInfo: ComfyObjectInfo | undefined;
     if (engine) {
-      objectInfo = await getObjectInfo(engine, { signal: options.signal }).catch(() => undefined);
+      objectInfo = await getObjectInfo(engine).catch(() => undefined);
       if (!objectInfo) {
         warnings.push(
           "Could not reach the ComfyUI engine, so dropdown options and value limits are unavailable."
@@ -102,7 +102,7 @@ export async function prepareWorkflow(
 
   let objectInfo: ComfyObjectInfo;
   try {
-    objectInfo = await getObjectInfo(engine, { signal: options.signal });
+    objectInfo = await getObjectInfo(engine);
   } catch (error) {
     throw new ComfyImportError(
       `Could not read the node catalog from ${engine.label}, which is needed to interpret a saved workflow. ${
@@ -119,7 +119,7 @@ export async function prepareWorkflow(
     // The catalog is cached for minutes, so a user who installs the missing
     // node pack and retries would keep hitting the same stale answer. Re-read
     // once before reporting a failure they cannot clear.
-    objectInfo = await getObjectInfo(engine, { force: true, signal: options.signal }).catch(
+    objectInfo = await getObjectInfo(engine, { force: true }).catch(
       () => objectInfo
     );
     missing = editorNodeTypes(file).filter((type) => !objectInfo[type]);
@@ -128,7 +128,11 @@ export async function prepareWorkflow(
   if (options.blueprintId) {
     const { workflow, instanceNodeId, skippedOutputs, unsupportedInputs } =
       blueprintToWorkflowFile(file, options.blueprintId);
-    const graph = convert(workflow, objectInfo, missing, engine.label);
+    // Only the chosen blueprint is converted, so only its own node types are
+    // its problem — a file carrying several would otherwise tell the user to
+    // install a pack for a blueprint they did not pick.
+    const blueprintMissing = editorNodeTypes(workflow).filter((type) => !objectInfo[type]);
+    const graph = convert(workflow, objectInfo, blueprintMissing, engine.label);
     for (const skipped of skippedOutputs) {
       warnings.push(`Output "${skipped}" has no displayable type and was left unbound.`);
     }

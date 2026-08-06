@@ -59,6 +59,10 @@ export async function resilientFetch(
     try {
       const res = await fetch(url, { ...init, signal: controller.signal });
       if (RETRYABLE_STATUS.has(res.status) && attempt < retries) {
+        // Nothing reads this response, and an unread body holds its socket
+        // until the collector gets to it — several retries of a 429 would
+        // otherwise leave one open connection each.
+        await res.body?.cancel().catch(() => undefined);
         await sleep(retryBaseMs * 2 ** attempt);
         continue;
       }
@@ -197,7 +201,12 @@ export function createEngineFetch(options: EngineFetchOptions = {}): typeof fetc
         const code = errorCode(error);
         const neverConnected = code !== null && CONNECT_FAILURE.test(code);
         const worthRetrying = neverConnected || (repeatable && engineNeverAnswered(error));
-        const budgetLeft = neverConnected ? attempt < retries : Date.now() < deadline;
+        // The count bounds the cheap case and the deadline bounds the expensive
+        // one. A refused connect costs milliseconds, so four of them fit inside
+        // the budget easily; `ETIMEDOUT` is also a connect failure and costs a
+        // whole timeout, and repeating *that* four times is exactly the wait
+        // the deadline above exists to forbid.
+        const budgetLeft = Date.now() < deadline && (neverConnected ? attempt < retries : true);
         if (!worthRetrying || !budgetLeft) throw error;
         await sleep(retryBaseMs * 2 ** Math.min(attempt, 4));
       }
