@@ -286,11 +286,23 @@ export function BaseNode({
   );
 
   const hasExpandedSettings = settingsExpanded && settingsPanel;
+  const running = isCurrentlyExecuting || isExecuting;
 
   return (
     <div
       className={hasExpandedSettings
-        ? `relative flex flex-col w-full h-full overflow-visible bg-neutral-800 rounded-lg ${selected ? "ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/25" : ""}`
+        // Both outlines belong on this wrapper once it exists, because it is
+        // the only element that encloses the settings panel as well as the
+        // body. Selection already did this; the running outline did not, and
+        // stopped short of the settings — the same node looked like two
+        // different shapes depending on why it was highlighted.
+        ? `relative flex flex-col w-full h-full overflow-visible bg-neutral-800 rounded-lg ${
+            selected
+              ? "ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/25"
+              : running
+                ? "ring-1 ring-blue-500/20"
+                : ""
+          }`
         : "contents"}
       onDoubleClick={handleResizeHandleDblClick}
       data-tutorial={hasExpandedSettings ? dataTutorial : undefined}
@@ -309,7 +321,14 @@ export function BaseNode({
           ${fullBleed
             ? `${settingsExpanded ? "rounded-t-lg border-b-0" : "rounded-lg"} bg-neutral-800/50 border border-neutral-700/40`
             : `bg-neutral-800 ${settingsExpanded ? "rounded-t-lg border-b-0" : "rounded-lg"} shadow-lg border`}
-          ${fullBleed ? "" : (isCurrentlyExecuting || isExecuting ? "border-blue-500 ring-1 ring-blue-500/20" : "border-neutral-700/60")}
+          ${fullBleed
+            ? ""
+            : running
+              // The wrapper above carries the ring when it exists, so drawing
+              // one here too would trace the body's edge through the middle of
+              // the node. Mirrors what selection does two lines down.
+              ? (hasExpandedSettings ? "border-blue-500" : "border-blue-500 ring-1 ring-blue-500/20")
+              : "border-neutral-700/60"}
           ${fullBleed ? "" : (hasError ? "border-red-500" : "")}
           ${fullBleed && selected && !settingsExpanded ? "ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/25" : ""}
           ${!fullBleed && selected && !settingsExpanded ? "border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/25" : ""}
