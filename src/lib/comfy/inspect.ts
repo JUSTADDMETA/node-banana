@@ -270,7 +270,13 @@ export function inspectWorkflow(
   const params: ComfyAppParam[] = [];
   let outputs: ComfyAppOutput[] = [];
 
-  if (appMode) {
+  // An App Mode whose every entry failed to resolve is not a curated surface,
+  // it is a lost one — and following it exactly would propose a node with no
+  // inputs and no settings at all. Detection is a poorer answer than the
+  // author's, and a far better one than nothing.
+  const curated = (appMode?.inputs ?? []).some((entry) => graph[entry.nodeId] !== undefined);
+
+  if (curated && appMode) {
     // The author curated this surface — follow it exactly, in their order.
     for (const entry of appMode.inputs) {
       const node = graph[entry.nodeId];
@@ -336,17 +342,6 @@ export function inspectWorkflow(
       });
     }
 
-    outputs = appMode.outputNodeIds
-      .map((nodeId) => {
-        const node = graph[nodeId];
-        if (!node) return null;
-        return outputFromCandidate({
-          nodeId,
-          classType: node.class_type,
-          label: nodeLabel(nodeId, node),
-        });
-      })
-      .filter((o): o is ComfyAppOutput => o !== null);
   } else {
     for (const candidate of imageInputCandidates) {
       inputs.push(inputFromLoader(candidate, "image", taken, graph[candidate.nodeId]));
@@ -361,6 +356,20 @@ export function inspectWorkflow(
       }
     }
   }
+
+  // Outputs follow the author whether or not their inputs survived: the two are
+  // recorded separately, and one being unreadable says nothing about the other.
+  outputs = (appMode?.outputNodeIds ?? [])
+    .map((nodeId) => {
+      const node = graph[nodeId];
+      if (!node) return null;
+      return outputFromCandidate({
+        nodeId,
+        classType: node.class_type,
+        label: nodeLabel(nodeId, node),
+      });
+    })
+    .filter((o): o is ComfyAppOutput => o !== null);
 
   // Fall back to every sink when the author exposed none — a workflow with no
   // bound output would run and produce nothing the node could show.

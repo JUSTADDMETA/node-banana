@@ -732,3 +732,181 @@ describe("blueprints", () => {
     expect(() => blueprintToWorkflowFile(blueprintFile(), "nope")).toThrow(ComfyConversionError);
   });
 });
+
+/* ── a workflow containing a subgraph whose widgets were promoted ── */
+
+/**
+ * The shape ComfyUI saves for a subgraph node with promoted widgets.
+ *
+ * Two things about it are easy to get wrong, and both were:
+ *
+ * - The instance's `widgets_values` line up against the *definition's* widget
+ *   boundary slots, not against the instance's own `inputs`. An instance only
+ *   materialises the slots the author wired or touched, so `inputs` is shorter
+ *   and in a different order.
+ * - App Mode addresses a promoted widget by the *instance* node, which does not
+ *   survive conversion — the subgraph is expanded into `instance:inner` ids.
+ */
+const SUBGRAPH_ID = "sub-abc";
+
+const promotedCatalog: ComfyObjectInfo = {
+  Sampler: {
+    input: {
+      required: {
+        prompt: ["STRING", { multiline: true }],
+        width: ["INT", { default: 512 }],
+        height: ["INT", { default: 512 }],
+      },
+    },
+  },
+  PrimitiveFloat: { input: { required: { value: ["FLOAT", { default: 1 }] } } },
+  VAELoader: { input: { required: { vae_name: [["a.safetensors"], {}] } } },
+  SaveImage: { input: { required: { images: ["IMAGE", {}], filename_prefix: ["STRING", {}] } } },
+};
+
+const promotedFile = (): EditorWorkflowFile =>
+  JSON.parse(
+    JSON.stringify({
+      nodes: [
+        {
+          id: 105,
+          type: SUBGRAPH_ID,
+          // Only the slots the author touched: three of the five, out of order.
+          inputs: [
+            { name: "first_frame", type: "IMAGE", link: null },
+            { name: "width", type: "INT", widget: { name: "width" }, link: null },
+            { name: "duration", type: "FLOAT", widget: { name: "duration" }, link: null },
+          ],
+          outputs: [{ name: "IMAGE", type: "IMAGE", links: [90] }],
+          widgets_values: ["a red car", 1344, 768, 5, "audio.safetensors"],
+        },
+        {
+          id: 92,
+          type: "SaveImage",
+          inputs: [{ name: "images", type: "IMAGE", link: 90 }],
+          widgets_values: ["ComfyUI"],
+        },
+      ],
+      links: [{ id: 90, origin_id: 105, origin_slot: 0, target_id: 92, target_slot: 0 }],
+      extra: {
+        linearData: {
+          inputs: [
+            ["root:105:prompt", "prompt"],
+            ["root:105:duration", "duration"],
+          ],
+          outputs: ["92"],
+        },
+      },
+      definitions: {
+        subgraphs: [
+          {
+            id: SUBGRAPH_ID,
+            name: "Inner",
+            // `first_frame` is fed into a socket, so it carries no widget value
+            // and must not consume one of the positional slots.
+            inputs: [
+              { name: "first_frame", type: "IMAGE", linkIds: [] },
+              { name: "prompt", type: "STRING", linkIds: [11] },
+              { name: "width", type: "INT", linkIds: [12] },
+              { name: "height", type: "INT", linkIds: [13] },
+              { name: "duration", type: "FLOAT", label: "clip length", linkIds: [14] },
+              { name: "vae_name", type: "COMBO", linkIds: [15] },
+            ],
+            outputs: [{ name: "IMAGE", type: "IMAGE", linkIds: [16] }],
+            nodes: [
+              {
+                id: 1,
+                type: "Sampler",
+                inputs: [
+                  { name: "prompt", type: "STRING", widget: { name: "prompt" }, link: 11 },
+                  { name: "width", type: "INT", widget: { name: "width" }, link: 12 },
+                  { name: "height", type: "INT", widget: { name: "height" }, link: 13 },
+                ],
+                outputs: [{ name: "IMAGE", type: "IMAGE", links: [16] }],
+                widgets_values: ["saved prompt", 512, 512],
+              },
+              {
+                id: 2,
+                type: "PrimitiveFloat",
+                inputs: [{ name: "value", type: "FLOAT", widget: { name: "value" }, link: 14 }],
+                outputs: [{ name: "FLOAT", type: "FLOAT", links: [] }],
+                widgets_values: [1],
+              },
+              {
+                id: 3,
+                type: "VAELoader",
+                inputs: [
+                  { name: "vae_name", type: "COMBO", widget: { name: "vae_name" }, link: 15 },
+                ],
+                outputs: [{ name: "VAE", type: "VAE", links: [] }],
+                widgets_values: ["old.safetensors"],
+              },
+            ],
+            links: [
+              { id: 11, origin_id: -10, origin_slot: 1, target_id: 1, target_slot: 0 },
+              { id: 12, origin_id: -10, origin_slot: 2, target_id: 1, target_slot: 1 },
+              { id: 13, origin_id: -10, origin_slot: 3, target_id: 1, target_slot: 2 },
+              { id: 14, origin_id: -10, origin_slot: 4, target_id: 2, target_slot: 0 },
+              { id: 15, origin_id: -10, origin_slot: 5, target_id: 3, target_slot: 0 },
+            ],
+          },
+        ],
+      },
+    })
+  ) as EditorWorkflowFile;
+
+describe("a subgraph instance's promoted widget values", () => {
+  it("lines them up against the definition's slots, not the instance's inputs", () => {
+    // Zipping against the instance's three materialised inputs put the prompt
+    // string into `width`, `1344` into `duration`, and a VAE filename slot got
+    // the number 5. Every value here belongs to a different slot under the two
+    // orderings, so a regression cannot pass by coincidence.
+    const graph = convertEditorGraph(promotedFile(), promotedCatalog);
+
+    expect(graph["105:1"]?.inputs.prompt).toBe("a red car");
+    expect(graph["105:1"]?.inputs.width).toBe(1344);
+    expect(graph["105:1"]?.inputs.height).toBe(768);
+    expect(graph["105:2"]?.inputs.value).toBe(5);
+    expect(graph["105:3"]?.inputs.vae_name).toBe("audio.safetensors");
+  });
+
+  it("does not spend a value on a slot that is fed by a link", () => {
+    // `first_frame` reaches a socket, so it carries no widget value. Counting
+    // it would shift every value after it by one.
+    const graph = convertEditorGraph(promotedFile(), promotedCatalog);
+    expect(graph["105:1"]?.inputs.prompt).not.toBe(1344);
+  });
+});
+
+describe("App Mode entries that name a subgraph instance", () => {
+  it("resolves them to the inner input the boundary slot drives", () => {
+    // The author sees one control on the subgraph node; conversion expands that
+    // node away, so the id matched nothing and the control was dropped in
+    // silence — a workflow arrived with no inputs and no settings at all.
+    const file = promotedFile();
+    const graph = convertEditorGraph(file, promotedCatalog);
+    const appMode = extractAppMode(file, Object.keys(graph));
+
+    expect(appMode?.inputs).toEqual([
+      { nodeId: "105:1", widget: "prompt", label: "prompt", connectAs: "text" },
+      { nodeId: "105:2", widget: "value", label: "clip length" },
+    ]);
+  });
+
+  it("prefers the author's own name for the slot", () => {
+    // "clip length" is what they renamed it to; "PrimitiveFloat · Value" is
+    // what the inner node would have been called.
+    const file = promotedFile();
+    const graph = convertEditorGraph(file, promotedCatalog);
+    expect(extractAppMode(file, Object.keys(graph))?.inputs[1]?.label).toBe("clip length");
+  });
+
+  it("still resolves an entry that names a real node", () => {
+    const file = promotedFile();
+    file.extra!.linearData!.inputs = [["root:92:filename_prefix", "filename_prefix"]];
+    const graph = convertEditorGraph(file, promotedCatalog);
+    expect(extractAppMode(file, Object.keys(graph))?.inputs).toEqual([
+      { nodeId: "92", widget: "filename_prefix" },
+    ]);
+  });
+});
