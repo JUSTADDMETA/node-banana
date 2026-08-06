@@ -20,6 +20,7 @@ import {
   Unauthorized,
   WorkflowFormatUi,
 } from "@comfyorg/sdk";
+import { ComfyLow } from "@comfyorg/sdk/low";
 
 import { mediaTypeForFilename, mimeForFilename } from "../graph";
 import type { ComfyConnection, ComfyGraph, ComfyObjectInfo, ComfyOutputType } from "../types";
@@ -30,6 +31,7 @@ import {
   type ComfyEngine,
   type ComfyJobState,
   type ComfyOutputAsset,
+  type ComfyPreviewFrame,
   type ComfySubmitOptions,
   type ComfyUploadInput,
   type ComfyUploadRef,
@@ -53,6 +55,76 @@ const SDK_TIMEOUT_MS = 300_000;
 const TERMINAL = new Set(["succeeded", "canceled", "failed", "expired"]);
 const SUCCESS = "succeeded";
 
+/** Magic numbers, for deciding what a preview's bytes actually are. */
+const JPEG = [0xff, 0xd8];
+const PNG = [0x89, 0x50, 0x4e, 0x47];
+const startsWith = (bytes: Uint8Array, magic: number[]): boolean =>
+  magic.every((byte, index) => bytes[index] === byte);
+
+/**
+ * The image inside a preview payload.
+ *
+ * The payload is not the bare JPEG the SDK's types imply. ComfyUI wraps preview
+ * images in a binary envelope, and Comfy Cloud sends the newer of its two
+ * shapes — measured on a live render:
+ *
+ *   [uint32 kind=4][uint32 jsonLength][JSON metadata][image bytes]
+ *
+ * The classic shape (`kind=1`, then a format word, then the image) is handled
+ * too, since a self-hosted engine behind `comfy-api-proxy` may send it. Anything
+ * that already looks like an image is passed straight through, so an engine that
+ * skips the envelope entirely still works.
+ *
+ * Returns null when nothing image-shaped can be found — better a spinner than a
+ * broken-image icon in the middle of the node.
+ */
+export function previewImage(bytes: Uint8Array): { mime: string; bytes: Uint8Array } | null {
+  const sniff = (candidate: Uint8Array): { mime: string; bytes: Uint8Array } | null => {
+    if (startsWith(candidate, JPEG)) return { mime: "image/jpeg", bytes: candidate };
+    if (startsWith(candidate, PNG)) return { mime: "image/png", bytes: candidate };
+    return null;
+  };
+
+  const bare = sniff(bytes);
+  if (bare) return bare;
+  if (bytes.length < 8) return null;
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const kind = view.getUint32(0);
+  const second = view.getUint32(4);
+
+  // Metadata-carrying: the second word is the length of a JSON header.
+  if (kind === 4 && 8 + second <= bytes.length) {
+    return sniff(bytes.subarray(8 + second));
+  }
+  // Classic: the second word names the format, and the image follows it.
+  if (kind === 1) return sniff(bytes.subarray(8));
+  return null;
+}
+
+/**
+ * The graph node a preview belongs to, read from the envelope's metadata.
+ *
+ * Worth digging out because the SSE frame's own `node_id` field arrives empty
+ * from Comfy Cloud, while the envelope names it (`"114:81"` — the namespaced
+ * id of a node inside an expanded subgraph).
+ */
+export function envelopeNodeId(bytes: Uint8Array): string | null {
+  if (bytes.length < 8) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0) !== 4) return null;
+  const jsonLength = view.getUint32(4);
+  if (8 + jsonLength > bytes.length) return null;
+  try {
+    const meta = JSON.parse(Buffer.from(bytes.subarray(8, 8 + jsonLength)).toString("utf8")) as {
+      node_id?: unknown;
+    };
+    return typeof meta.node_id === "string" && meta.node_id ? meta.node_id : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Map the v2 output type onto a Node Banana handle type.
  *
@@ -72,9 +144,30 @@ function handleTypeFor(type: string, contentType: string, filename: string): Com
 export class SdkComfyEngine implements ComfyEngine {
   readonly label: string;
   private client: Comfy | null = null;
+  private lowClient: ComfyLow | null = null;
 
   constructor(readonly connection: ComfyConnection) {
     this.label = connection.mode === "cloud" ? "Comfy Cloud" : "ComfyUI (API v2)";
+  }
+
+  /**
+   * The generated transport, for the one thing the wrapper does not expose in a
+   * usable form: the raw event stream. Built with the same base URL, key and
+   * resilient fetch as {@link sdk}.
+   */
+  private get low(): ComfyLow {
+    if (!this.lowClient) {
+      this.lowClient = new ComfyLow(
+        this.connection.baseUrl,
+        this.connection.apiKey ?? undefined,
+        {
+          clientInfo: "node-banana",
+          timeoutMs: SDK_TIMEOUT_MS,
+          fetch: createEngineFetch(),
+        }
+      );
+    }
+    return this.lowClient;
   }
 
   private get sdk(): Comfy {
@@ -192,6 +285,47 @@ export class SdkComfyEngine implements ComfyEngine {
       return { status: job.status, terminal: true, error: null, raw: { jobId } };
     } catch (error) {
       throw toEngineError(error, `Could not read the job from ${this.label}`, this.label);
+    }
+  }
+
+  /**
+   * The engine's live event stream, reduced to the previews.
+   *
+   * Only `preview` frames are forwarded. The stream also carries progress, but
+   * Comfy Cloud fills it thinly — no node name, no step counts, and a fraction
+   * computed against a node total that grows as the graph expands, so it
+   * reaches 100% several times before the job ends. A picture of the latent is
+   * both truthful and more use.
+   *
+   * One connection, no reconnect: a dropped stream costs a stale thumbnail,
+   * and the caller reopens while the job is still running.
+   */
+  async *previews(
+    jobId: string,
+    signal?: AbortSignal
+  ): AsyncGenerator<ComfyPreviewFrame, void, void> {
+    // No idle timeout: a long sampling step legitimately emits nothing, and
+    // erroring the stream there would throw away the run's remaining previews.
+    const events = this.low.getJobEvents(jobId, {
+      ...(signal ? { signal } : {}),
+      timeoutMs: null,
+    });
+    for await (const event of events) {
+      if (event.event !== "preview") continue;
+      const data = event.data as { node_id?: unknown; data_base64?: unknown };
+      const base64 = typeof data.data_base64 === "string" ? data.data_base64 : "";
+      if (!base64) continue;
+
+      const payload = Buffer.from(base64, "base64");
+      const image = previewImage(new Uint8Array(payload));
+      if (!image) continue;
+
+      yield {
+        // The frame's own `node_id` comes through empty on Comfy Cloud; the
+        // envelope's metadata carries the real one.
+        nodeId: envelopeNodeId(payload) ?? String(data.node_id ?? ""),
+        dataUrl: `data:${image.mime};base64,${Buffer.from(image.bytes).toString("base64")}`,
+      };
     }
   }
 

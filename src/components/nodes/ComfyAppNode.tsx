@@ -13,6 +13,7 @@ import {
   type ComfyUpload,
 } from "@/components/modals/ComfyWorkflowImportModal";
 import { ComfyWordmark } from "@/components/icons/ComfyWordmark";
+import { useComfyPreview } from "@/hooks/useComfyPreview";
 import { useShowHandleLabels } from "@/hooks/useShowHandleLabels";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { outputsToNodeData } from "@/store/execution/comfyAppExecutor";
@@ -243,6 +244,9 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
     ) : undefined;
 
   const isRunning = nodeData.status === "loading";
+  // The latent as it forms. Only the v2 engines emit these, so it stays null
+  // on a stock ComfyUI and the node keeps its spinner.
+  const livePreview = useComfyPreview(nodeData.jobId, isRunning);
 
   return (
     <>
@@ -332,6 +336,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
                 <Preview
                   preview={primaryPreview}
                   isRunning={isRunning}
+                  livePreview={livePreview}
                   error={nodeData.status === "error" ? nodeData.error : null}
                 />
               </div>
@@ -494,16 +499,19 @@ function HeaderButton({
   );
 }
 
-function Preview({
-  preview,
-  isRunning,
-  error,
-}: {
-  preview: { type: ComfyOutputType; value: string; label: string } | null;
-  isRunning: boolean;
-  error: string | null;
-}) {
-  if (isRunning) {
+/**
+ * A node mid-render.
+ *
+ * Where the engine sends previews, the latent itself — which says more about
+ * what is happening than any number Comfy Cloud currently reports, since its
+ * progress carries no node name, no step counts, and a fraction that reaches
+ * 100% several times before the job ends.
+ *
+ * The spinner stays for everything else: the first seconds of any run, and
+ * every run on a stock ComfyUI, which has no event stream at all.
+ */
+function Rendering({ livePreview }: { livePreview: string | null }) {
+  if (!livePreview) {
     return (
       <div className="flex flex-col items-center gap-2 text-neutral-500">
         <div className="w-5 h-5 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
@@ -511,6 +519,39 @@ function Preview({
       </div>
     );
   }
+
+  return (
+    <div className="relative w-full h-full">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={livePreview}
+        alt="Rendering"
+        // Each frame replaces the last; a fade would cross-blend two states of
+        // the same image into something neither of them looked like.
+        className="w-full h-full object-contain"
+      />
+      {/* Over the image, not beside it: the preview fills the node, and this
+          has to stay legible on whatever the latent happens to look like. */}
+      <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/60 backdrop-blur-sm">
+        <div className="w-2.5 h-2.5 border-2 border-neutral-500 border-t-blue-400 rounded-full animate-spin" />
+        <span className="text-[9px] text-neutral-200">Rendering…</span>
+      </div>
+    </div>
+  );
+}
+
+function Preview({
+  preview,
+  isRunning,
+  livePreview,
+  error,
+}: {
+  preview: { type: ComfyOutputType; value: string; label: string } | null;
+  isRunning: boolean;
+  livePreview: string | null;
+  error: string | null;
+}) {
+  if (isRunning) return <Rendering livePreview={livePreview} />;
   if (error) {
     return (
       <div className="px-3 py-2 max-h-full overflow-y-auto nowheel">

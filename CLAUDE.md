@@ -272,6 +272,26 @@ detected heuristically and confirmed in the dialog.
 on Cloud and local alike). Their data enters and leaves through boundary slots,
 so importing one materialises a loader per media input and a sink per output.
 
+### Live previews
+
+While a run is going, a v2 engine streams partial images over
+`GET /api/v2/jobs/{id}/events`. `/api/comfy/preview` relays those to the node,
+which shows the latent forming instead of a spinner. Two things to know:
+
+- The payload is **not** the bare JPEG the SDK's types describe. ComfyUI wraps
+  it: `[uint32 kind][uint32 jsonLength][JSON metadata][image bytes]`, and the
+  frame's own `node_id` arrives empty — the real one is in the metadata. See
+  `previewImage` in `src/lib/comfy/server/sdkEngine.ts`.
+- The same stream carries `progress`, and it is deliberately **not** used.
+  Measured against a live Cloud render it reports no node name, no step counts,
+  and a fraction computed against a node total that grows as the graph expands
+  — so it reaches 100% several times before the job ends. The job record's
+  `progress` field is `null` on Cloud throughout, despite the spec.
+
+Previews live in component state (`useComfyPreview`), never in the workflow
+store: they are 50–80KB JPEGs belonging to a run, and node data gets written
+into saved workflow files.
+
 ### Smoke tests
 
 The Blueprint corpus is the regression net for this integration — every entry
@@ -302,6 +322,7 @@ All routes in `src/app/api/`:
 | `/api/comfy/blueprints` | 2 min | List/import ComfyUI Blueprints |
 | `/api/comfy/run` | 5 min | Submit a Comfy app run |
 | `/api/comfy/poll` | 5 min | Poll a run and collect its outputs |
+| `/api/comfy/preview` | 5 min | Stream a running job's preview images (NDJSON) |
 
 ## localStorage Keys
 

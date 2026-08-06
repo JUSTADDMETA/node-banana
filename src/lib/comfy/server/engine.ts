@@ -64,6 +64,19 @@ export interface ComfyJobState {
   raw: unknown;
 }
 
+/**
+ * A partial image an engine emitted mid-run — the latent as it forms.
+ *
+ * Throttled and lossy by design: it is a glimpse of work in progress, never a
+ * result, and is deliberately kept out of anything that persists.
+ */
+export interface ComfyPreviewFrame {
+  /** Graph node that produced it. */
+  nodeId: string;
+  /** Data URL, ready to put in an `<img>`. */
+  dataUrl: string;
+}
+
 /** One finished output, already downloaded. */
 export interface ComfyOutputAsset {
   /** Graph node that produced it. */
@@ -112,6 +125,15 @@ export interface ComfyEngine {
 
   /** Best-effort stop. Must never throw. */
   cancel(jobId: string, signal?: AbortSignal): Promise<void>;
+
+  /**
+   * Partial images while the job runs, if this engine can produce them.
+   *
+   * Optional because only the v2 surface has an event stream: a stock ComfyUI
+   * says nothing at all until `/history` fills in, so there is no honest
+   * implementation to give it. Callers must treat its absence as normal.
+   */
+  previews?(jobId: string, signal?: AbortSignal): AsyncGenerator<ComfyPreviewFrame, void, void>;
 }
 
 /** An engine-reported failure that should be shown to the user verbatim. */
