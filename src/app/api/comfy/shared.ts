@@ -75,7 +75,16 @@ export function comfyErrorResponse(error: unknown): NextResponse<ComfyErrorRespo
   );
 }
 
-const DATA_URL = /^data:([^;,]+)?(;base64)?,/;
+/**
+ * `data:` prefix: the media type, then any `;key=value` parameters, then the
+ * optional `;base64` marker.
+ *
+ * The parameters group is not decoration. Without it `data:text/plain;charset=utf-8;base64,…`
+ * matches nothing at all — `(;base64)?` cannot consume `;charset=utf-8`, so the
+ * required comma never matches — and the caller reports a perfectly valid input
+ * as media it could not read.
+ */
+const DATA_URL = /^data:([^;,]+)?((?:;[^;,]*)*?)(;base64)?,/;
 
 /** Decoded media from a `data:` URL. */
 export interface DecodedMedia {
@@ -97,7 +106,7 @@ export function decodeDataUrl(value: string): DecodedMedia | null {
   const contentType = match[1] || "application/octet-stream";
   const payload = value.slice(match[0].length);
   try {
-    const bytes = match[2]
+    const bytes = match[3]
       ? new Uint8Array(Buffer.from(payload, "base64"))
       : new TextEncoder().encode(decodeURIComponent(payload));
     return bytes.length > 0 ? { bytes, contentType } : null;
@@ -116,7 +125,11 @@ export function decodeDataUrl(value: string): DecodedMedia | null {
  * from re-uploading it.
  */
 export function uploadFilename(name: string, contentType: string, bytes: Uint8Array): string {
-  const ext = contentType.split("/")[1]?.split("+")[0] ?? "bin";
+  // The subtype reaches the engine as a filename suffix, so it is held to the
+  // shape of one: anything longer or stranger than a real extension is not
+  // worth guessing at.
+  const subtype = contentType.split("/")[1]?.split("+")[0] ?? "";
+  const ext = /^[a-zA-Z0-9]{1,8}$/.test(subtype) ? subtype.toLowerCase() : "bin";
   const slug = name.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 24) || "input";
   const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 16);
   return `node-banana-${slug}-${hash}.${ext}`;

@@ -115,6 +115,9 @@ function isAbort(error: unknown, signal?: AbortSignal): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+/** How long a best-effort cancel may take before the node stops waiting on it. */
+const CANCEL_TIMEOUT_MS = 10_000;
+
 /** Best-effort stop for an engine job. Never throws. */
 async function cancelJob(
   headers: Record<string, string>,
@@ -127,6 +130,10 @@ async function cancelJob(
       method: "POST",
       headers,
       body: JSON.stringify({ jobId, app, cancel: true }),
+      // Its own bound, unrelated to the run's: cancelling is what *unblocks*
+      // the node, so a stalled route must not be able to hold the user's Stop
+      // — or the job-timeout path — waiting forever for a best-effort request.
+      signal: AbortSignal.timeout(CANCEL_TIMEOUT_MS),
     });
   } catch {
     // A cancel must never fail the cancel.

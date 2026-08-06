@@ -60,6 +60,28 @@ export async function POST(request: NextRequest) {
     const { engine, orgApiKey } = engineFromRequest(request);
     const inputs = body.inputs ?? {};
 
+    // One predicate for both decisions below. Splitting them let an input be
+    // "present" for the required check (anything but `undefined`) and "absent"
+    // for the split loop (anything but a non-empty string), so an empty string
+    // sent for a required input passed validation and then reached the engine
+    // unset — a curated 400 replaced by a render from a stale widget value.
+    const provided = (name: string): boolean => {
+      const value = inputs[name];
+      return typeof value === "string" && value !== "";
+    };
+
+    // Reported before any media is decoded and hashed: there is no point
+    // spending that on a run that cannot be submitted.
+    const missingRequired = app.inputs
+      .filter((input) => input.required && !provided(input.name))
+      .map((input) => input.label);
+    if (missingRequired.length > 0) {
+      return NextResponse.json(
+        { success: false, error: `Missing required input: ${missingRequired.join(", ")}` },
+        { status: 400 }
+      );
+    }
+
     // Split connected inputs by handle type: text is patched straight into the
     // graph, media has to reach the engine's storage first.
     const text: Record<string, string> = {};
@@ -68,7 +90,7 @@ export async function POST(request: NextRequest) {
 
     for (const input of app.inputs) {
       const value = inputs[input.name];
-      if (typeof value !== "string" || value === "") continue;
+      if (!provided(input.name)) continue;
       if (input.type === "text") {
         text[input.name] = value;
         continue;
@@ -92,16 +114,6 @@ export async function POST(request: NextRequest) {
           success: false,
           error: `Could not read the media connected to ${unreadable.join(", ")}.`,
         },
-        { status: 400 }
-      );
-    }
-
-    const missingRequired = app.inputs
-      .filter((input) => input.required && inputs[input.name] === undefined)
-      .map((input) => input.label);
-    if (missingRequired.length > 0) {
-      return NextResponse.json(
-        { success: false, error: `Missing required input: ${missingRequired.join(", ")}` },
         { status: 400 }
       );
     }

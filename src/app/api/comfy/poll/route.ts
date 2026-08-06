@@ -67,6 +67,17 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Checked after the cancel branch, which needs no contract — but before
+    // anything reads it. `nameFailedOutput` and `collectRun` both do, and a
+    // missing `app` failing inside them surfaces as a bare 500 rather than as
+    // the same curated 400 the run route already gives for this.
+    if (!body.app?.outputs) {
+      return NextResponse.json(
+        { success: false, error: "This node has no ComfyUI workflow attached yet." },
+        { status: 400 }
+      );
+    }
+
     const state = await engine.poll(body.jobId, request.signal);
 
     if (!state.terminal) {

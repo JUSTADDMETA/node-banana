@@ -18,14 +18,18 @@ import type {
 import type { ComfyEngine, ComfyOutputAsset } from "./engine";
 import { ComfyEngineError } from "./engine";
 
-/** Seeds must stay inside the range JSON can round-trip without precision loss. */
-const MAX_SEED = Number.MAX_SAFE_INTEGER;
-
-/** A deterministic seed derived from a run key. */
+/**
+ * A deterministic seed derived from a run key.
+ *
+ * Seeds must stay inside the range JSON round-trips without precision loss, and
+ * the `| 0` does that on its own: the accumulator never leaves signed 32-bit,
+ * which is far below `Number.MAX_SAFE_INTEGER`. Non-negative too, because
+ * ComfyUI rejects a negative seed.
+ */
 export function hashSeed(key: string): number {
   let h = 0;
   for (let i = 0; i < key.length; i += 1) h = (Math.imul(h, 31) + key.charCodeAt(i)) | 0;
-  return Math.abs(h) % MAX_SEED;
+  return Math.abs(h);
 }
 
 /**
@@ -82,6 +86,11 @@ export function buildRunGraph(options: BuildRunGraphOptions): ComfyGraph {
       const value = text[input.name];
       if (value !== undefined) {
         assignments.push({ nodeId: input.nodeId, inputKey: input.inputKey, value });
+        // A boundary slot wired to two text encoders is one connection point;
+        // writing only the first would leave the second on the author's text.
+        for (const extra of input.alsoBind ?? []) {
+          assignments.push({ nodeId: extra.nodeId, inputKey: extra.inputKey, value });
+        }
       }
       continue;
     }
@@ -118,6 +127,7 @@ export function buildRunGraph(options: BuildRunGraphOptions): ComfyGraph {
   const keepRoots = [
     ...outputNodeIds,
     ...app.inputs.map((i) => i.nodeId),
+    ...app.inputs.flatMap((i) => (i.alsoBind ?? []).map((b) => b.nodeId)),
     ...app.params.map((p) => p.nodeId),
     ...app.params.flatMap((p) => (p.alsoBind ?? []).map((b) => b.nodeId)),
   ];

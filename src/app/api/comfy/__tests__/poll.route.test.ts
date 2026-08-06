@@ -7,6 +7,10 @@
  * produced. One measured at 73 seconds against Comfy Cloud, well past the 45
  * the client allows a poll — so the download was cut off, retried from nothing,
  * and cut off again.
+ *
+ * The two limits themselves are the client's, in `comfyAppExecutor`. What this
+ * route owes is the split those limits rely on: answering "is it done?" without
+ * downloading anything when asked, which is what these cover.
  */
 
 import { NextRequest } from "next/server";
@@ -15,10 +19,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ComfyAppDefinition } from "@/lib/comfy/types";
 
 const poll = vi.fn();
+const cancel = vi.fn();
 const collectRun = vi.fn();
 
 vi.mock("@/lib/comfy/server", () => ({
-  engineFromRequest: () => ({ engine: { poll, cancel: vi.fn(), label: "Comfy Cloud" } }),
+  engineFromRequest: () => ({ engine: { poll, cancel, label: "Comfy Cloud" } }),
 }));
 
 vi.mock("@/lib/comfy/server/run", async (importOriginal) => ({
@@ -55,6 +60,7 @@ const call = (body: Record<string, unknown>) =>
 
 beforeEach(() => {
   poll.mockReset();
+  cancel.mockReset();
   collectRun.mockReset();
 });
 
@@ -88,6 +94,41 @@ describe("POST /api/comfy/poll", () => {
 
     expect(body).toMatchObject({ polling: true, status: "running" });
     expect(body.ready).toBeUndefined();
+  });
+
+  it("stops the job, and asks nothing else, when told to cancel", async () => {
+    const body = await (await call({ cancel: true })).json();
+
+    expect(cancel).toHaveBeenCalledWith("job-1", expect.anything());
+    expect(poll).not.toHaveBeenCalled();
+    expect(body).toMatchObject({ success: true, polling: false, status: "cancelled" });
+  });
+
+  it("cancels without a contract, because stopping needs no output map", async () => {
+    const response = await POST(
+      new NextRequest("http://localhost/api/comfy/poll", {
+        method: "POST",
+        body: JSON.stringify({ jobId: "job-1", cancel: true }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("says what is missing when a poll arrives with no contract", async () => {
+    // `nameFailedOutput` and `collectRun` both read it. Without this guard the
+    // failure happens inside them and reaches the caller as a bare 500.
+    const response = await POST(
+      new NextRequest("http://localhost/api/comfy/poll", {
+        method: "POST",
+        body: JSON.stringify({ jobId: "job-1" }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ success: false });
+    expect(poll).not.toHaveBeenCalled();
   });
 
   it("names the output a failed sink belongs to", async () => {
