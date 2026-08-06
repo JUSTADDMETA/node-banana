@@ -92,7 +92,7 @@ export function connectionFromRequest(request: Request): ComfyConnection {
 
   const mode: ComfyBackendMode =
     rawMode === "local" || rawMode === "remote" || rawMode === "cloud" ? rawMode : "cloud";
-  const timeout = Number(headers.get(COMFY_HEADERS.jobTimeout));
+  const timeout = headers.get(COMFY_HEADERS.jobTimeout);
 
   return {
     mode,

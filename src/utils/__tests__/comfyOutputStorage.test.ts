@@ -18,7 +18,14 @@ const VIDEO = "data:video/mp4;base64,dmlkZW8=";
 const AUDIO = "data:audio/mpeg;base64,YXVkaW8=";
 
 /** What each store was handed, so the save side can be read back per type. */
-const written = { images: new Map<string, string>(), generations: new Map<string, string>() };
+const written = {
+  images: new Map<string, string>(),
+  // The kind is recorded alongside the bytes, and a load answers under that
+  // field only. A stub that returned the same value as both `video` and `audio`
+  // would pass even if hydration read a video out of the audio field — which is
+  // the mix-up this file is here to catch.
+  generations: new Map<string, { kind: "video" | "audio"; data: string }>(),
+};
 
 const app = {
   id: "app-1",
@@ -80,15 +87,16 @@ beforeEach(() => {
         return new Response(JSON.stringify({ success: true, imageId: body.imageId }));
       }
       if (url === "/api/save-generation") {
-        written.generations.set(body.imageId!, body.video ?? body.audio ?? "");
+        written.generations.set(body.imageId!, {
+          kind: body.video ? "video" : "audio",
+          data: body.video ?? body.audio ?? "",
+        });
         return new Response(JSON.stringify({ success: true, imageId: body.imageId }));
       }
       if (url === "/api/load-generation") {
         const stored = written.generations.get(body.imageId!);
         if (!stored) return new Response(JSON.stringify({ success: false, notFound: true }));
-        return new Response(
-          JSON.stringify({ success: true, video: stored, audio: stored })
-        );
+        return new Response(JSON.stringify({ success: true, [stored.kind]: stored.data }));
       }
       throw new Error(`unexpected fetch: ${url}`);
     })
@@ -113,8 +121,14 @@ describe("a Comfy node's outputs across save and reload", () => {
 
     // …and each one landed in its own store.
     expect(written.images.get(data.outputRefs!["9"]!)).toBe(IMAGE);
-    expect(written.generations.get(data.outputRefs!["10"]!)).toBe(VIDEO);
-    expect(written.generations.get(data.outputRefs!["11"]!)).toBe(AUDIO);
+    expect(written.generations.get(data.outputRefs!["10"]!)).toEqual({
+      kind: "video",
+      data: VIDEO,
+    });
+    expect(written.generations.get(data.outputRefs!["11"]!)).toEqual({
+      kind: "audio",
+      data: AUDIO,
+    });
   });
 
   it("brings all three back, and rebuilds the typed mirrors", async () => {

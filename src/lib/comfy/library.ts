@@ -101,8 +101,16 @@ export function withDialledValues(
 }
 
 function write(entries: SavedComfyNode[]): void {
+  if (!isBrowser()) {
+    // Loudly, not silently: a save that quietly did nothing is the one failure
+    // this module exists to avoid.
+    throw new Error("Saved nodes are only available in the browser.");
+  }
+  // Serialised outside the try, so a value that cannot be stringified is not
+  // reported as a storage problem the user could fix by deleting something.
+  const payload = JSON.stringify(entries);
   try {
-    window.localStorage.setItem(COMFY_APPS_KEY, JSON.stringify(entries));
+    window.localStorage.setItem(COMFY_APPS_KEY, payload);
   } catch {
     // Almost always the storage quota. Nothing here can free space safely —
     // the other keys are the user's projects and costs — so it is reported.

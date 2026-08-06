@@ -57,6 +57,17 @@ export async function POST(request: NextRequest) {
     const frames = engine.previews(body.jobId, request.signal);
     const encoder = new TextEncoder();
 
+    // The platform calls `cancel()` when the browser disconnects, and the
+    // controller is closed from that moment. Closing it again throws
+    // `TypeError: Invalid state` out of a promise nothing awaits — an unhandled
+    // rejection in the server log every time someone navigates away mid-render.
+    let closed = false;
+    const close = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+      if (closed) return;
+      closed = true;
+      controller.close();
+    };
+
     const stream = new ReadableStream<Uint8Array>({
       // One frame per pull, not a loop that drains the engine as fast as it
       // emits. `enqueue` never blocks, so draining upstream would pile frames
@@ -67,7 +78,7 @@ export async function POST(request: NextRequest) {
         try {
           const next = await frames.next();
           if (next.done) {
-            controller.close();
+            close(controller);
             return;
           }
           controller.enqueue(encoder.encode(`${JSON.stringify(next.value)}\n`));
@@ -75,10 +86,11 @@ export async function POST(request: NextRequest) {
           // A dropped upstream stream ends this one. It says nothing about the
           // job, which the poll loop is watching regardless, so it is closed
           // quietly rather than raised as a failure the user would have to read.
-          controller.close();
+          close(controller);
         }
       },
       cancel() {
+        closed = true;
         // The browser navigated away or the run ended; let the generator's
         // `finally` close the upstream connection.
         void frames.return(undefined);
