@@ -302,3 +302,38 @@ describe("normalizeInputs", () => {
     expect(normalizeInputs(inputs).map((i) => i.name)).toEqual(["reference", "reference_2"]);
   });
 });
+
+describe("an App Mode whose entries all failed to resolve", () => {
+  it("detects a surface rather than proposing an empty node", () => {
+    // App Mode is followed exactly, which is right when it resolves and
+    // catastrophic when it does not: a workflow whose entries addressed a
+    // subgraph instance arrived with no inputs, no settings, and no hint that
+    // anything had been lost. Detection is a poorer answer than the author's,
+    // and a far better one than nothing.
+    const inspection = inspectWorkflow(graph(), {
+      appMode: { inputs: [{ nodeId: "does-not-exist", widget: "prompt" }], outputNodeIds: ["9"] },
+    });
+
+    // The prompt is only ever offered by detection: the curated branch adds
+    // media loaders regardless, so counting inputs would pass either way.
+    expect(inspection.suggested.inputs.map((i) => `${i.nodeId}.${i.inputKey}`)).toContain("24.text");
+    // The author's outputs are recorded separately and stay honoured.
+    expect(inspection.suggested.outputs.map((o) => o.nodeId)).toEqual(["9"]);
+  });
+
+  it("still follows App Mode when even one entry resolves", () => {
+    const inspection = inspectWorkflow(graph(), {
+      appMode: {
+        inputs: [
+          { nodeId: "does-not-exist", widget: "prompt" },
+          { nodeId: "31", widget: "steps" },
+        ],
+        outputNodeIds: ["9"],
+      },
+    });
+
+    // Curated, so the loaders are added but the KSampler's `cfg` — which the
+    // author did not expose — stays off the node.
+    expect(inspection.suggested.params.map((p) => p.inputKey)).toEqual(["steps"]);
+  });
+});

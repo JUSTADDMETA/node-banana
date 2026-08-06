@@ -320,17 +320,19 @@ function buildScope(
   for (const [slot, input] of (def?.inputs ?? []).entries()) {
     for (const linkId of input.linkIds ?? []) scope.boundaryOwner.set(linkId, slot);
   }
-  // Promoted widgets: instance inputs marked as widgets carry their values
-  // positionally in the instance's widgets_values. Keyed by NAME — an instance
-  // materializes only the boundary inputs the author touched.
+  // Promoted widget values, keyed by the boundary slot they belong to.
+  //
+  // They are stored positionally, and the list they are positional *against* is
+  // the definition's own slots — not the instance's `inputs`. The instance
+  // materialises only the slots the author wired or touched, so the two lists
+  // routinely differ in length and order. One published workflow carries nine
+  // values beside four materialised inputs, and zipping against the latter put
+  // the prompt into `width`, `1344` into `height`, and left five slots unset.
   if (instance && Array.isArray(instance.widgets_values)) {
-    let i = 0;
-    for (const input of instance.inputs ?? []) {
-      if (!input.widget) continue;
-      if (i >= instance.widgets_values.length) break;
-      scope.boundaryWidgetValue.set(input.name, instance.widgets_values[i]);
-      i += 1;
-    }
+    const values = instance.widgets_values;
+    widgetBackedSlots(def).forEach((name, index) => {
+      if (index < values.length) scope.boundaryWidgetValue.set(name, values[index]);
+    });
   }
   for (const node of nodes) {
     const childDef = defs.get(String(node.type));
@@ -351,6 +353,28 @@ function buildScope(
     }
   }
   return scope;
+}
+
+/**
+ * The boundary input slots that carry a widget value, in declaration order.
+ *
+ * A slot fed into a socket takes its value from a link and has no widget; one
+ * fed into a widget is a promoted control, and it is exactly these — in this
+ * order — that an instance's `widgets_values` lines up against.
+ */
+function widgetBackedSlots(def: SubgraphDef | null | undefined): string[] {
+  const nodes = new Map((def?.nodes ?? []).map((n) => [String(n.id), n]));
+  const targets = linkTargets(def?.links);
+  const names: string[] = [];
+  for (const slot of def?.inputs ?? []) {
+    if (!slot.name) continue;
+    const backed = (slot.linkIds ?? []).some((linkId) => {
+      const target = targets.get(linkId);
+      return target ? Boolean(nodes.get(target.target)?.inputs?.[target.slot]?.widget) : false;
+    });
+    if (backed) names.push(slot.name);
+  }
+  return names;
 }
 
 function resolveLinkId(scope: Scope, linkId: number, depth: number): Resolved | null {
@@ -664,6 +688,48 @@ export function parseAppModeInputId(
  * becoming a dead handle. Pass `knownNodeIds` from the converted graph; without
  * it only root-level nodes can be validated.
  */
+/**
+ * Where a widget promoted onto a subgraph instance actually lives.
+ *
+ * The author sees one control on the subgraph node; the graph has no such node
+ * once conversion expands it. `widget` names the boundary slot, and the control
+ * belongs to every inner input that slot drives — usually one, occasionally
+ * several, in which case they move together as a single setting.
+ */
+function promotedBindings(
+  file: EditorWorkflowFile,
+  instanceNodeId: string,
+  widget: string
+): AppModeData["inputs"] {
+  const instance = (file.nodes ?? []).find((n) => String(n.id) === instanceNodeId);
+  if (!instance) return [];
+  const def = (file.definitions?.subgraphs ?? []).find(
+    (d) => String(d.id) === String(instance.type)
+  );
+  if (!def) return [];
+
+  const [primary, ...rest] = resolveProxied(
+    file,
+    def,
+    instanceNodeId,
+    BOUNDARY_SLOT_ID,
+    widget
+  );
+  if (!primary) return [];
+
+  const slot = (def.inputs ?? []).find((s) => s.name === widget);
+  const label = slot ? slotLabel(slot, widget) : widget;
+  return [
+    {
+      nodeId: primary.nodeId,
+      widget: primary.widget,
+      ...(label ? { label } : {}),
+      ...(slot?.type === "STRING" ? { connectAs: "text" as const } : {}),
+      ...(rest.length > 0 ? { alsoBind: rest } : {}),
+    },
+  ];
+}
+
 export function extractAppMode(
   file: EditorWorkflowFile,
   knownNodeIds?: Iterable<string>
@@ -697,7 +763,17 @@ export function extractAppMode(
     const widget = String(entry[1] ?? parsed.widget ?? "");
     if (!widget) continue;
     const nodeId = resolveId(parsed.nodeId);
-    if (!nodeId) continue;
+    if (!nodeId) {
+      // The id may name a subgraph *instance*, which conversion expands away —
+      // so it matches nothing in the graph, and the author's control was being
+      // dropped without a word. The widget is then a boundary slot name, and
+      // the control belongs to whatever that slot drives inside.
+      for (const binding of promotedBindings(file, parsed.nodeId, widget)) {
+        if (inputs.some((i) => i.nodeId === binding.nodeId && i.widget === binding.widget)) continue;
+        inputs.push(binding);
+      }
+      continue;
+    }
     if (inputs.some((i) => i.nodeId === nodeId && i.widget === widget)) continue;
     inputs.push({ nodeId, widget });
   }
