@@ -745,9 +745,9 @@ export function WorkflowCanvas() {
           const targetNode = nodes.find((n) => n.id === connection.target);
           if (targetNode?.type === "output" || targetNode?.type === "router") return true;
         }
-        if (sourceNode?.type === "comfyApp" || targetNode?.type === "comfyApp") {
-          return sourceType === "audio" && targetType === "audio";
-        }
+        // A Comfy app needs no clause of its own here: audio-to-audio is what
+        // the fallthrough already allows it, and the early return above covers
+        // the only ends that take audio on a differently-typed handle.
         return sourceType === "audio" && targetType === "audio";
       }
 
@@ -966,6 +966,33 @@ export function WorkflowCanvas() {
       ): string | null => {
         // Check for dynamic inputSchema first
         const nodeData = node.data as { inputSchema?: Array<{ name: string; type: string }> };
+
+        // A Comfy app's handles come entirely from its attached workflow, and
+        // its outputs are declared independently of its inputs — a text-to-image
+        // app with nothing to connect has an empty `inputSchema` and a perfectly
+        // good image output. Resolved before the schema check for that reason:
+        // dragging onto such a node used to find nothing and drop the wire.
+        if (node.type === "comfyApp") {
+          if (needInput) {
+            const matching = (nodeData.inputSchema ?? []).filter((i) => i.type === handleType);
+            for (let i = 0; i < matching.length; i += 1) {
+              const candidateHandle = `${handleType}-${i}`;
+              const isOccupied =
+                edges.some(
+                  (edge) => edge.target === node.id && edge.targetHandle === candidateHandle
+                ) || batchUsed?.has(candidateHandle);
+              if (!isOccupied) return candidateHandle;
+            }
+            return null;
+          }
+          // Output handle ids are ComfyUI node ids, so no naming convention
+          // decodes them — and the static list below is a superset kept for
+          // connection *validation*, not a set of handles this node renders.
+          const app = (node.data as { app?: { outputs?: Array<{ id: string; type: string }> } })
+            .app;
+          return app?.outputs?.find((o) => o.type === handleType)?.id ?? null;
+        }
+
         if (nodeData.inputSchema && nodeData.inputSchema.length > 0) {
           if (needInput) {
             // Find input handles matching the type
@@ -989,13 +1016,6 @@ export function WorkflowCanvas() {
             // to the output branch below would hand back an OUTPUT handle as
             // the connection target, so stop here instead.
             return null;
-          }
-          // A Comfy app's outputs are declared by the attached workflow, and
-          // their handle ids are ComfyUI node ids — the generic names below
-          // would produce an edge from a handle that does not exist.
-          if (node.type === "comfyApp") {
-            const app = (node.data as { app?: { outputs?: Array<{ id: string; type: string }> } }).app;
-            return app?.outputs?.find((o) => o.type === handleType)?.id ?? null;
           }
           // Output handle - check for video, 3d, or image type
           if (handleType === "video") return "video";
@@ -1063,13 +1083,6 @@ export function WorkflowCanvas() {
             return "default";
           }
         }
-
-        // A Comfy app node's handles come entirely from its attached workflow.
-        // The static list below is a superset for connection *validation*, not a
-        // set of real handles, so using it here would create an edge bound to a
-        // handle the node never renders — invisible, unselectable, and still
-        // counted as a dependency by the topological sort.
-        if (node.type === "comfyApp") return null;
 
         // Fall back to static handles
         const staticHandles = getNodeHandles(node.type || "");
@@ -2112,7 +2125,14 @@ export function WorkflowCanvas() {
             return;
           }
           if (isNodeBananaWorkflow(parsed)) {
-            await loadWorkflow(parsed as WorkflowFile);
+            // Reported the same way the parse failure above is: without this the
+            // rejection is unhandled and the canvas simply does not change.
+            try {
+              await loadWorkflow(parsed as WorkflowFile);
+            } catch (err) {
+              console.error("Failed to load workflow:", err);
+              alert("Failed to load workflow file");
+            }
             return;
           }
           // A ComfyUI workflow becomes a node rather than replacing the canvas.
