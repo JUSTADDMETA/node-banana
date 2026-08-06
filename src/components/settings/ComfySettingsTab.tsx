@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   COMFY_CLOUD_URL,
@@ -50,7 +50,15 @@ export function ComfySettingsTab({ settings, onChange }: ComfySettingsTabProps) 
   // configuration that was never tested. Every field the probe depends on
   // belongs here, including the two API-v2 toggles, which change the routes it
   // calls entirely.
+  //
+  // The counter is bumped alongside, so a probe still in flight can tell its
+  // answer is about a configuration the user has moved on from. Clearing
+  // `result` alone is not enough — the in-flight call captured the old settings
+  // and would set its own result on top afterwards.
+  const probeGeneration = useRef(0);
+
   useEffect(() => {
+    probeGeneration.current += 1;
     setResult(null);
   }, [
     settings.mode,
@@ -69,6 +77,10 @@ export function ComfySettingsTab({ settings, onChange }: ComfySettingsTabProps) 
   );
 
   const test = useCallback(async () => {
+    const generation = probeGeneration.current;
+    const commit = (next: ConnectionResult) => {
+      if (probeGeneration.current === generation) setResult(next);
+    };
     setTesting(true);
     setResult(null);
     try {
@@ -81,14 +93,14 @@ export function ComfySettingsTab({ settings, onChange }: ComfySettingsTabProps) 
         | ({ success: true } & ConnectionResult)
         | { success: false; error: string };
       if ("success" in body && body.success) {
-        setResult({
+        commit({
           connected: body.connected,
           detail: body.detail,
           nodeCount: body.nodeCount,
           apiV2: body.apiV2,
         });
       } else {
-        setResult({
+        commit({
           connected: false,
           detail: "error" in body ? body.error : "Could not reach ComfyUI",
           nodeCount: null,
@@ -96,14 +108,14 @@ export function ComfySettingsTab({ settings, onChange }: ComfySettingsTabProps) 
         });
       }
     } catch (error) {
-      setResult({
+      commit({
         connected: false,
         detail: error instanceof Error ? error.message : "Could not reach ComfyUI",
         nodeCount: null,
         apiV2: false,
       });
     } finally {
-      setTesting(false);
+      if (probeGeneration.current === generation) setTesting(false);
     }
   }, [settings]);
 

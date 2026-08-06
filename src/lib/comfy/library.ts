@@ -14,6 +14,7 @@
 
 import { appToInputSchema } from "./nodeSchema";
 import { COMFY_APPS_KEY } from "./settings";
+import type { ComfyAppNodeData } from "@/types/nodes";
 import type { ComfyAppDefinition, ComfyAppParam, ComfyWorkflowInspection } from "./types";
 
 /** A workflow kept as a reusable node. */
@@ -48,10 +49,17 @@ function parse(raw: string | null): SavedComfyNode[] {
     return parsed.filter((entry): entry is SavedComfyNode => {
       if (!entry || typeof entry !== "object") return false;
       const candidate = entry as Partial<SavedComfyNode>;
+      // All three arrays, not just the outputs. The connection menu calls
+      // `app.inputs.some(...)` on every entry as it renders, and the picker
+      // reads `app.params.length` — so an entry written by an older build, or
+      // edited by hand in localStorage, would pass this check and then throw
+      // inside a render, which is exactly what the check exists to prevent.
       return (
         typeof candidate.id === "string" &&
         typeof candidate.name === "string" &&
         !!candidate.app &&
+        Array.isArray(candidate.app.inputs) &&
+        Array.isArray(candidate.app.params) &&
         Array.isArray(candidate.app.outputs)
       );
     });
@@ -162,7 +170,7 @@ export function instantiateSavedComfyNode(saved: SavedComfyNode): {
  * records where it came from, so the dialog can offer to update that entry
  * rather than leaving another near-identical one as the only way back.
  */
-export function seedFromSavedComfyNode(saved: SavedComfyNode): Record<string, unknown> {
+export function seedFromSavedComfyNode(saved: SavedComfyNode): Partial<ComfyAppNodeData> {
   const { app, inspection } = instantiateSavedComfyNode(saved);
   return {
     app,

@@ -20,6 +20,9 @@ export function useComfyPreview(jobId: string | null | undefined, active: boolea
   const [preview, setPreview] = useState<string | null>(null);
 
   useEffect(() => {
+    // Cleared here on the way out too, so the next run never opens on the last
+    // one's latent. The effect re-runs on both `active` and `jobId`, so this is
+    // the only place that needs to do it.
     if (!active || !jobId) {
       setPreview(null);
       return;
@@ -79,11 +82,6 @@ export function useComfyPreview(jobId: string | null | undefined, active: boolea
       controller.abort();
     };
   }, [jobId, active]);
-
-  // Cleared on the way out so the next run never opens on the last one's latent.
-  useEffect(() => {
-    if (!active) setPreview(null);
-  }, [active]);
 
   return preview;
 }

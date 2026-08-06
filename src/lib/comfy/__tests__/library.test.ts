@@ -86,6 +86,24 @@ describe("the saved-node library", () => {
     expect(listSavedComfyNodes()).toEqual([]);
   });
 
+  it("skips an app missing any of the three arrays a node reads", () => {
+    // Not just the outputs. The connection menu calls `app.inputs.some(...)` on
+    // every entry as it renders and the picker reads `app.params.length`, so an
+    // entry from an older build would pass a check that only looked at outputs
+    // and then throw in the middle of a render.
+    window.localStorage.setItem(
+      COMFY_APPS_KEY,
+      JSON.stringify([
+        { id: "a", name: "No inputs", savedAt: 1, app: { ...app(), inputs: undefined } },
+        { id: "b", name: "No params", savedAt: 2, app: { ...app(), params: undefined } },
+        { id: "c", name: "No outputs", savedAt: 3, app: { ...app(), outputs: undefined } },
+        { id: "d", name: "Whole", savedAt: 4, app: app() },
+      ])
+    );
+
+    expect(listSavedComfyNodes().map((entry) => entry.id)).toEqual(["d"]);
+  });
+
   it("survives storage holding something that is not a list", () => {
     window.localStorage.setItem(COMFY_APPS_KEY, "{oh dear");
     expect(listSavedComfyNodes()).toEqual([]);

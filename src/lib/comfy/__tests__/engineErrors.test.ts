@@ -224,6 +224,31 @@ describe("createEngineFetch", () => {
     expect(calls).toBe(5);
   });
 
+  it("counts the backoff against the same budget the requests spend", async () => {
+    // The check that a retry is allowed happens *before* the sleep, so a large
+    // configured backoff could cross the deadline and still start another full
+    // attempt — the budget the comment promises, spent twice over.
+    const starts: number[] = [];
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      starts.push(Date.now());
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(noAddressAnswered()), { once: true });
+      });
+    });
+
+    const engineFetch = createEngineFetch({
+      requestTimeoutMs: 150,
+      retryBaseMs: 5_000,
+      retries: 4,
+    });
+    const began = Date.now();
+    await expect(engineFetch("https://cloud.comfy.org/api/v2/jobs/job-1")).rejects.toThrow();
+
+    // One attempt, then a backoff clipped to what is left of the deadline.
+    expect(Date.now() - began).toBeLessThan(150 * 4);
+    expect(starts.length).toBe(1);
+  });
+
   it("releases the body of a response it is about to throw away", async () => {
     // An unread body holds its socket until the collector gets to it, so a run
     // that retries a 429 several times leaks one connection per attempt.
