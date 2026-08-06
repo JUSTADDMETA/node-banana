@@ -1274,16 +1274,19 @@ function SavedNodePicker({
                 onDoubleClick={() => onAdd(entry)}
                 className="flex-1 min-w-0 text-left px-3 py-2.5 transition-[scale] duration-150 active:scale-[0.99]"
               >
-                <p
-                  className={`text-sm truncate ${
+                {/* Spans, as in `FileDropZone`: a button holds phrasing content
+                    only, and a browser reparenting a `p` out of one takes the
+                    row's layout with it. */}
+                <span
+                  className={`block text-sm truncate ${
                     isSelected ? "text-white" : "text-neutral-300"
                   }`}
                 >
                   {entry.name}
-                </p>
-                <p className="text-[10px] text-neutral-500 truncate">
+                </span>
+                <span className="block text-[10px] text-neutral-500 truncate">
                   {app.source === "blueprint" ? "Blueprint" : "App workflow"} · {handles}
-                </p>
+                </span>
               </button>
 
               {confirming === entry.id ? (

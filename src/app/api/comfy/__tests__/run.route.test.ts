@@ -100,8 +100,14 @@ describe("POST /api/comfy/run", () => {
   it("reports the missing input before spending anything on uploads", async () => {
     // Decoding and hashing media for a run that cannot be submitted is work
     // thrown away, and on a large image it is not cheap work.
-    await call({});
+    //
+    // The successful call comes first on purpose: "was not called" says nothing
+    // unless the mock is known to be reached when the route does get that far.
+    await call({ prompt: "a dog" });
+    expect(uploadInputs).toHaveBeenCalledOnce();
 
+    uploadInputs.mockClear();
+    await call({});
     expect(uploadInputs).not.toHaveBeenCalled();
   });
 });

@@ -20,7 +20,7 @@ import {
   type ComfySubmitOptions,
   type ComfyUploadInput,
 } from "./engine";
-import { resilientFetch } from "./fetch";
+import { CATALOG_RETRIES, CATALOG_TIMEOUT_MS, resilientFetch } from "./fetch";
 
 /** A file reference in a `/history` or `/api/jobs` outputs object. */
 interface RawFileRef {
@@ -129,8 +129,8 @@ export class LegacyComfyEngine implements ComfyEngine {
   async objectInfo(signal?: AbortSignal): Promise<ComfyObjectInfo> {
     const res = await resilientFetch(`${this.base}/api/object_info`, {
       headers: this.headers(),
-      timeoutMs: 30_000,
-      retries: 4,
+      timeoutMs: CATALOG_TIMEOUT_MS,
+      retries: CATALOG_RETRIES,
       signal,
     });
     if (res.status === 401 || res.status === 403) {

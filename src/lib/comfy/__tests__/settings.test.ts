@@ -4,6 +4,7 @@ import {
   COMFY_CLOUD_URL,
   COMFY_HEADERS,
   buildComfyHeaders,
+  clampJobTimeoutMs,
   comfyConfigError,
   defaultComfySettings,
   getComfySettings,
@@ -66,6 +67,35 @@ describe("normalizeComfySettings", () => {
     expect(normalizeComfySettings({ jobTimeoutMs: 5 }).jobTimeoutMs).toBe(60_000);
     expect(normalizeComfySettings({ jobTimeoutMs: 99_999_999 }).jobTimeoutMs).toBe(3_600_000);
     expect(normalizeComfySettings({ jobTimeoutMs: NaN }).jobTimeoutMs).toBe(1_800_000);
+  });
+});
+
+describe("clampJobTimeoutMs", () => {
+  it("keeps a value that is already in range", () => {
+    expect(clampJobTimeoutMs(900_000)).toBe(900_000);
+    expect(clampJobTimeoutMs("900000")).toBe(900_000);
+  });
+
+  it("brings an out-of-range value to the nearest bound", () => {
+    expect(clampJobTimeoutMs(5)).toBe(60_000);
+    expect(clampJobTimeoutMs(99_999_999)).toBe(3_600_000);
+  });
+
+  it("treats a value that was never supplied as absent, not as zero", () => {
+    // `headers.get()` answers `null` for a header that is not there, and
+    // `Number(null)` is 0 — which is finite, so it used to clamp to the *lower
+    // bound*. A request without the header ran on a one-minute job timeout
+    // instead of thirty, and every long render was cancelled part-way through.
+    expect(clampJobTimeoutMs(null)).toBe(1_800_000);
+    expect(clampJobTimeoutMs(undefined)).toBe(1_800_000);
+    expect(clampJobTimeoutMs("")).toBe(1_800_000);
+    expect(clampJobTimeoutMs("not a number")).toBe(1_800_000);
+  });
+
+  it("still honours a deliberate zero by bringing it into range", () => {
+    // Explicitly asking for none of it is a value, not an omission.
+    expect(clampJobTimeoutMs(0)).toBe(60_000);
+    expect(clampJobTimeoutMs("0")).toBe(60_000);
   });
 });
 

@@ -17,7 +17,7 @@ import type { ComfyAppNodeData } from "@/types";
 
 const mockUpdateNodeData = vi.fn();
 const mockUseWorkflowStore = vi.fn();
-const mockPreview = vi.fn<() => string | null>(() => null);
+const mockPreview = vi.fn<(jobId?: string | null, active?: boolean) => string | null>(() => null);
 
 vi.mock("@/store/workflowStore", () => ({
   useWorkflowStore: (selector?: (state: unknown) => unknown) =>
@@ -25,7 +25,10 @@ vi.mock("@/store/workflowStore", () => ({
 }));
 
 vi.mock("@/hooks/useComfyPreview", () => ({
-  useComfyPreview: () => mockPreview(),
+  // Arguments forwarded, not dropped: the node deciding *when* to stream, and
+  // for which job, is the half of this worth asserting.
+  useComfyPreview: (jobId: string | null | undefined, active: boolean) =>
+    mockPreview(jobId, active),
 }));
 
 vi.mock("@xyflow/react", async () => {
@@ -105,6 +108,18 @@ describe("a running Comfy node", () => {
         setHoveredNodeId: vi.fn(),
       })
     );
+  });
+
+  it("streams for the job it is running, and only while it runs", () => {
+    // The half the mock used to swallow. A node that asked for previews of the
+    // wrong job — or kept asking after the run ended — would still have shown
+    // whatever the hook returned, so every test below would pass regardless.
+    render(tree(nodeData()));
+    expect(mockPreview).toHaveBeenCalledWith("job_1", true);
+
+    mockPreview.mockClear();
+    render(tree(nodeData({ status: "success", runStatus: null })));
+    expect(mockPreview).toHaveBeenCalledWith("job_1", false);
   });
 
   it("shows the latent once the engine sends one", () => {

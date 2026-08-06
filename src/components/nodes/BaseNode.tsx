@@ -333,12 +333,19 @@ export function BaseNode({
               // whole node: a dark hairline just inside the blue one reads as
               // a gap, and a blue one reads as a second outline that stops
               // where the settings start.
+              //
+              // Running beats selected here, and the selected-and-expanded
+              // clause below says so explicitly. Both branches emit a
+              // border-colour utility, and which one wins is decided by the
+              // order Tailwind emits them in — not by their order in this
+              // string. Selecting a running node was landing on whichever that
+              // happened to be, and half the time it was the doubled line.
               ? (hasExpandedSettings ? "border-transparent" : "border-blue-500 ring-1 ring-blue-500/20")
               : "border-neutral-700/60"}
           ${fullBleed ? "" : (hasError ? "border-red-500" : "")}
           ${fullBleed && selected && !settingsExpanded ? "ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/25" : ""}
           ${!fullBleed && selected && !settingsExpanded ? "border-blue-500 ring-2 ring-blue-500/40 shadow-lg shadow-blue-500/25" : ""}
-          ${!fullBleed && selected && settingsExpanded ? "border-blue-500" : ""}
+          ${!fullBleed && selected && settingsExpanded && !running ? "border-blue-500" : ""}
           ${className}
         `}
         data-tutorial={!hasExpandedSettings ? dataTutorial : undefined}

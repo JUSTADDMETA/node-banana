@@ -126,11 +126,16 @@ describe("saving a Comfy node from the edit dialog", () => {
       throw new Error("QuotaExceededError");
     });
 
-    open();
-    fireEvent.click(screen.getByRole("button", { name: "Save as node" }));
-    expect(screen.getByRole("status")).toHaveTextContent(/no room/i);
-
-    setItem.mockRestore();
+    // Restored in a `finally`: a failed assertion here would otherwise leave
+    // every later test in this file writing through a throwing `setItem`, and
+    // they would fail for a reason that has nothing to do with them.
+    try {
+      open();
+      fireEvent.click(screen.getByRole("button", { name: "Save as node" }));
+      expect(screen.getByRole("status")).toHaveTextContent(/no room/i);
+    } finally {
+      setItem.mockRestore();
+    }
   });
 });
 

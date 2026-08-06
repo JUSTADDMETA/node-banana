@@ -133,6 +133,26 @@ describe("previews", () => {
     );
   });
 
+  it("falls back to the frame's own node id when the envelope carries none", async () => {
+    // The classic envelope has no metadata to read, so the frame field is all
+    // there is. On Cloud it arrives empty and the metadata wins; on a
+    // self-hosted engine it is the other way round.
+    const frames = await collect(
+      engineYielding([
+        {
+          event: "preview",
+          data: {
+            node_id: "42",
+            data_base64: Buffer.from(classic(JPEG_BYTES)).toString("base64"),
+          },
+        },
+      ])
+    );
+
+    expect(frames).toHaveLength(1);
+    expect(frames[0]!.nodeId).toBe("42");
+  });
+
   it("ignores everything that is not a preview", async () => {
     // Progress in particular: it rides the same stream, and it is the thing we
     // deliberately do not draw.

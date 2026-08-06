@@ -40,6 +40,13 @@ const MAX_JOB_TIMEOUT_MS = 3_600_000;
  * said was still allowed.
  */
 export function clampJobTimeoutMs(value: unknown): number {
+  // `Number(null)` and `Number("")` are both 0, and 0 is finite — so a header
+  // that was never sent used to clamp to the *minimum* rather than fall back to
+  // the default. A request without one then ran with a one-minute job timeout
+  // instead of thirty, and every long render was cancelled mid-flight.
+  if (value === null || value === undefined || value === "") {
+    return COMFY_DEFAULT_JOB_TIMEOUT_MS;
+  }
   const ms = Number(value);
   return Number.isFinite(ms)
     ? Math.min(MAX_JOB_TIMEOUT_MS, Math.max(MIN_JOB_TIMEOUT_MS, ms))

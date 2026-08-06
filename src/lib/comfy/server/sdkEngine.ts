@@ -36,7 +36,12 @@ import {
   type ComfyUploadInput,
   type ComfyUploadRef,
 } from "./engine";
-import { createEngineFetch, resilientFetch } from "./fetch";
+import {
+  CATALOG_RETRIES,
+  CATALOG_TIMEOUT_MS,
+  createEngineFetch,
+  resilientFetch,
+} from "./fetch";
 
 /**
  * How long one SDK request may take.
@@ -223,8 +228,8 @@ export class SdkComfyEngine implements ComfyEngine {
       : {};
     const res = await resilientFetch(`${this.connection.baseUrl}/api/object_info`, {
       headers,
-      timeoutMs: 30_000,
-      retries: 4,
+      timeoutMs: CATALOG_TIMEOUT_MS,
+      retries: CATALOG_RETRIES,
       signal,
     });
     if (res.status === 401 || res.status === 403) {

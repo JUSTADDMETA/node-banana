@@ -13,7 +13,27 @@
 
 import { engineNeverAnswered, errorCode } from "./engine";
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/**
+ * A backoff the caller can cut short.
+ *
+ * Cancelling during a wait must land as soon as the user asks, not once the
+ * backoff runs out — otherwise Stop appears to do nothing for a second or two,
+ * and the loop then opens another attempt with a signal that is already
+ * aborted. Resolves rather than rejects: the caller checks `aborted` itself and
+ * has a more useful error to throw than this one would be.
+ */
+function sleepUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal?.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
 
 /** Transient statuses worth retrying (rate limit, gateway, overloaded). */
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -63,7 +83,7 @@ export async function resilientFetch(
         // until the collector gets to it — several retries of a 429 would
         // otherwise leave one open connection each.
         await res.body?.cancel().catch(() => undefined);
-        await sleep(retryBaseMs * 2 ** attempt);
+        await sleepUnlessAborted(retryBaseMs * 2 ** attempt, signal);
         continue;
       }
       // Consume the body before the finally disarms the timer — the timeout
@@ -85,7 +105,7 @@ export async function resilientFetch(
         ? new Error(`Request to ${String(url)} timed out after ${timeoutMs}ms`)
         : err;
       if (attempt < retries) {
-        await sleep(retryBaseMs * 2 ** attempt);
+        await sleepUnlessAborted(retryBaseMs * 2 ** attempt, signal);
         continue;
       }
       throw lastErr;
@@ -121,6 +141,23 @@ const CONNECT_FAILURE = /^(ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREA
  */
 const DOWNLOAD_TIMEOUT_MS = 300_000;
 const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * What one `/api/object_info` read may cost.
+ *
+ * The catalog is megabytes of JSON, and `getObjectInfo` caches one promise for
+ * every concurrent caller — so its budget has to fit the *tightest* of them,
+ * which is `/api/comfy/status` at 60 s. Five attempts of thirty seconds is
+ * 150 s: the route is killed long before that, and the user gets a platform
+ * timeout in place of "connected, node count unknown".
+ *
+ * Two attempts rather than five for the same reason a stalled read is bounded
+ * at all — a catalog that does not answer in twenty seconds does not answer in
+ * a hundred and fifty either. Comfy Cloud's, measured hanging, went past ninety
+ * on every one of five tries.
+ */
+export const CATALOG_TIMEOUT_MS = 20_000;
+export const CATALOG_RETRIES = 1;
 
 /** Asset routes move the bytes; everything else is small and should fail fast. */
 const isAssetRoute = (url: string): boolean => /\/assets(\/|$|\?)/.test(url);
@@ -190,9 +227,14 @@ export function createEngineFetch(options: EngineFetchOptions = {}): typeof fetc
 
     for (let attempt = 0; ; attempt += 1) {
       const caller = init?.signal ?? undefined;
+      // Never longer than the budget that is left. A first attempt gets the
+      // whole timeout; a later one gets whatever the earlier attempts and their
+      // backoff did not spend, so the last request cannot run past the deadline
+      // it was allowed to start before.
+      const attemptMs = Math.max(1, Math.min(timeoutMs, deadline - Date.now()));
       const signal = caller
-        ? AbortSignal.any([caller, AbortSignal.timeout(timeoutMs)])
-        : AbortSignal.timeout(timeoutMs);
+        ? AbortSignal.any([caller, AbortSignal.timeout(attemptMs)])
+        : AbortSignal.timeout(attemptMs);
       try {
         return await fetch(input, { ...init, signal });
       } catch (error) {
@@ -208,7 +250,12 @@ export function createEngineFetch(options: EngineFetchOptions = {}): typeof fetc
         // the deadline above exists to forbid.
         const budgetLeft = Date.now() < deadline && (neverConnected ? attempt < retries : true);
         if (!worthRetrying || !budgetLeft) throw error;
-        await sleep(retryBaseMs * 2 ** Math.min(attempt, 4));
+        // The backoff spends the same budget the requests do. Left uncapped, a
+        // caller-configured `retryBaseMs` could sleep past the deadline and
+        // still start another attempt, because the check above already passed.
+        const backoff = retryBaseMs * 2 ** Math.min(attempt, 4);
+        await sleepUnlessAborted(Math.min(backoff, deadline - Date.now()), caller);
+        if (caller?.aborted || Date.now() >= deadline) throw error;
       }
     }
   };

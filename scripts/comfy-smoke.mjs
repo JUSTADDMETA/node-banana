@@ -248,11 +248,12 @@ function textFor(input) {
   return "a cinematic photo of a red car on a coastal road at sunset";
 }
 
-async function nb(path, body) {
+async function nb(path, body, timeoutMs) {
   const res = await fetch(`${NB_BASE}${path}`, {
     method: "POST",
     headers: nbHeaders(),
     body: JSON.stringify(body),
+    ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   });
   const text = await res.text();
   let json = null;
@@ -262,6 +263,17 @@ async function nb(path, body) {
     /* not JSON — surfaced below */
   }
   return { res, json, text };
+}
+
+/**
+ * Stop a job we are walking away from. Bounded and never throws.
+ *
+ * Best-effort, but not unbounded: this runs on the path that reports why the
+ * run failed, so a `/api/comfy/poll` that stalls here would swallow the reason
+ * as surely as it holds the credits.
+ */
+async function cancelRun(jobId, app) {
+  await nb("/api/comfy/poll", { jobId, app, cancel: true }, 15_000).catch(() => {});
 }
 
 /** Import, feed, submit, poll, and check the result is usable. */
@@ -315,7 +327,7 @@ async function runOne(id, timeoutMs) {
 
   for (;;) {
     if (Date.now() > deadline) {
-      await nb("/api/comfy/poll", { jobId, app, cancel: true });
+      await cancelRun(jobId, app);
       return { id, ok: false, stage: "timeout", error: `gave up after ${Math.round(timeoutMs / 60000)} min` };
     }
     await new Promise((r) => setTimeout(r, interval));
@@ -328,7 +340,7 @@ async function runOne(id, timeoutMs) {
       if (polled.json?.transient) continue;
       // Giving up locally does not stop the render — and it is billed. The
       // timeout branch above already cancels; so must this one.
-      await nb("/api/comfy/poll", { jobId, app, cancel: true }).catch(() => {});
+      await cancelRun(jobId, app);
       return { id, ok: false, stage: "run", error: polled.json?.error ?? polled.text.slice(0, 200) };
     }
     if (polled.json.polling) continue;

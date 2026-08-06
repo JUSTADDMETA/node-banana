@@ -224,6 +224,31 @@ describe("createEngineFetch", () => {
     expect(calls).toBe(5);
   });
 
+  it("counts the backoff against the same budget the requests spend", async () => {
+    // The check that a retry is allowed happens *before* the sleep, so a large
+    // configured backoff could cross the deadline and still start another full
+    // attempt — the budget the comment promises, spent twice over.
+    const starts: number[] = [];
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => {
+      starts.push(Date.now());
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(noAddressAnswered()), { once: true });
+      });
+    });
+
+    const engineFetch = createEngineFetch({
+      requestTimeoutMs: 150,
+      retryBaseMs: 5_000,
+      retries: 4,
+    });
+    const began = Date.now();
+    await expect(engineFetch("https://cloud.comfy.org/api/v2/jobs/job-1")).rejects.toThrow();
+
+    // One attempt, then a backoff clipped to what is left of the deadline.
+    expect(Date.now() - began).toBeLessThan(150 * 4);
+    expect(starts.length).toBe(1);
+  });
+
   it("releases the body of a response it is about to throw away", async () => {
     // An unread body holds its socket until the collector gets to it, so a run
     // that retries a 429 several times leaks one connection per attempt.
@@ -279,6 +304,28 @@ describe("createEngineFetch", () => {
 
     expect(assetTook).toBeGreaterThan(pollTook * 2);
   }, 20_000);
+
+  it("stops the moment the caller cancels, without waiting out the backoff", async () => {
+    // Cancelling during a wait has to land when the user asks. Left to run, the
+    // backoff finishes first — Stop appears to do nothing for a second or two,
+    // and the loop then opens another attempt with a signal already aborted.
+    const controller = new AbortController();
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      setTimeout(() => controller.abort(), 20);
+      throw noAddressAnswered();
+    });
+
+    const engineFetch = createEngineFetch({ retryBaseMs: 10_000, retries: 4 });
+    const began = Date.now();
+    await expect(
+      engineFetch("https://cloud.comfy.org/api/queue", { signal: controller.signal })
+    ).rejects.toThrow();
+
+    expect(Date.now() - began).toBeLessThan(1_000);
+    expect(calls).toBe(1);
+  });
 
   it("stops when the caller cancels", async () => {
     const controller = new AbortController();

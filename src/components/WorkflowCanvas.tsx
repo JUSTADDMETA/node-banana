@@ -1380,7 +1380,7 @@ export function WorkflowCanvas() {
       const newNodeId = addNode(
         nodeType,
         flowPosition,
-        saved ? (seedFromSavedComfyNode(saved) as Partial<WorkflowNodeData>) : undefined
+        saved ? seedFromSavedComfyNode(saved) : undefined
       );
 
       // Tutorial tracking
@@ -1659,7 +1659,7 @@ export function WorkflowCanvas() {
         addNode(
           type,
           nodeSearchMenu.flowPosition,
-          saved ? (seedFromSavedComfyNode(saved) as Partial<WorkflowNodeData>) : undefined
+          saved ? seedFromSavedComfyNode(saved) : undefined
         );
       }
       setNodeSearchMenu(null);
