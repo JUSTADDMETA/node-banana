@@ -93,7 +93,9 @@ export async function POST(request: NextRequest) {
         closed = true;
         // The browser navigated away or the run ended; let the generator's
         // `finally` close the upstream connection.
-        void frames.return(undefined);
+        // Caught: the cleanup is a promise, and a rejection from it on a
+        // disconnect would be as unhandled as the double close above.
+        void frames.return(undefined).catch(() => undefined);
       },
     });
 

@@ -59,6 +59,10 @@ export function ComfySettingsTab({ settings, onChange }: ComfySettingsTabProps) 
 
   useEffect(() => {
     probeGeneration.current += 1;
+    // Released here, not only in the probe's own `finally` — which is skipped
+    // once the generation has moved on, and skipping it left the Test button
+    // disabled with nothing able to re-enable it.
+    setTesting(false);
     setResult(null);
   }, [
     settings.mode,

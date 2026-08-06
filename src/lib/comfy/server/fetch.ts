@@ -13,7 +13,27 @@
 
 import { engineNeverAnswered, errorCode } from "./engine";
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/**
+ * A backoff the caller can cut short.
+ *
+ * Cancelling during a wait must land as soon as the user asks, not once the
+ * backoff runs out — otherwise Stop appears to do nothing for a second or two,
+ * and the loop then opens another attempt with a signal that is already
+ * aborted. Resolves rather than rejects: the caller checks `aborted` itself and
+ * has a more useful error to throw than this one would be.
+ */
+function sleepUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal?.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
 
 /** Transient statuses worth retrying (rate limit, gateway, overloaded). */
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -63,7 +83,7 @@ export async function resilientFetch(
         // until the collector gets to it — several retries of a 429 would
         // otherwise leave one open connection each.
         await res.body?.cancel().catch(() => undefined);
-        await sleep(retryBaseMs * 2 ** attempt);
+        await sleepUnlessAborted(retryBaseMs * 2 ** attempt, signal);
         continue;
       }
       // Consume the body before the finally disarms the timer — the timeout
@@ -85,7 +105,7 @@ export async function resilientFetch(
         ? new Error(`Request to ${String(url)} timed out after ${timeoutMs}ms`)
         : err;
       if (attempt < retries) {
-        await sleep(retryBaseMs * 2 ** attempt);
+        await sleepUnlessAborted(retryBaseMs * 2 ** attempt, signal);
         continue;
       }
       throw lastErr;
@@ -234,8 +254,8 @@ export function createEngineFetch(options: EngineFetchOptions = {}): typeof fetc
         // caller-configured `retryBaseMs` could sleep past the deadline and
         // still start another attempt, because the check above already passed.
         const backoff = retryBaseMs * 2 ** Math.min(attempt, 4);
-        await sleep(Math.max(0, Math.min(backoff, deadline - Date.now())));
-        if (Date.now() >= deadline) throw error;
+        await sleepUnlessAborted(Math.min(backoff, deadline - Date.now()), caller);
+        if (caller?.aborted || Date.now() >= deadline) throw error;
       }
     }
   };
