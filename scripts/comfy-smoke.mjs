@@ -173,6 +173,7 @@ async function record() {
 
   const classTypes = new Set(INJECTED_CLASSES);
   const recorded = [];
+  const pending = [];
 
   for (const { id, why } of CORPUS) {
     try {
@@ -186,10 +187,13 @@ async function record() {
       collect(workflow);
       for (const sub of workflow.definitions?.subgraphs ?? []) collect(sub);
 
-      writeFileSync(
-        join(FIXTURES, "blueprints", `${id}.json`),
-        JSON.stringify({ name: entry.name ?? id, why, workflow })
-      );
+      // Held in memory, not written yet: the catalog fetch below can still
+      // fail, and fresh blueprints beside a stale object-info.json fail the
+      // hermetic test with "unknown node type" rather than "re-record me".
+      pending.push({
+        file: join(FIXTURES, "blueprints", `${id}.json`),
+        body: JSON.stringify({ name: entry.name ?? id, why, workflow }),
+      });
       recorded.push({ id, name: entry.name ?? id, why });
       ok(id);
     } catch (error) {
@@ -202,6 +206,9 @@ async function record() {
   for (const type of [...classTypes].sort()) {
     if (catalog[type]) trimmed[type] = trimEntry(catalog[type]);
   }
+
+  // Everything collected: now the corpus can be replaced as one piece.
+  for (const { file, body } of pending) writeFileSync(file, body);
   writeFileSync(join(FIXTURES, "object-info.json"), JSON.stringify(trimmed));
 
   writeFileSync(
@@ -319,6 +326,9 @@ async function runOne(id, timeoutMs) {
       // A route that says it could not reach the engine is reporting the
       // network, not a verdict — the render is very likely still going.
       if (polled.json?.transient) continue;
+      // Giving up locally does not stop the render — and it is billed. The
+      // timeout branch above already cancels; so must this one.
+      await nb("/api/comfy/poll", { jobId, app, cancel: true }).catch(() => {});
       return { id, ok: false, stage: "run", error: polled.json?.error ?? polled.text.slice(0, 200) };
     }
     if (polled.json.polling) continue;

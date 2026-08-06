@@ -648,7 +648,11 @@ function outputEntryId(entry: unknown): string | null {
  *   segments are `encodeURIComponent`-escaped.
  *
  * Returns the node id plus, for the `WidgetId` form, the widget name it
- * carries — which is authoritative over element `[1]` when they disagree.
+ * carries. That name is a *fallback*: element `[1]` of the tuple is the field
+ * the frontend writes when it renames or re-promotes a control, and it is also
+ * the boundary slot name that {@link promotedBindings} needs when the id turns
+ * out to name a subgraph instance. The name inside the id is only reached when
+ * element `[1]` is absent.
  */
 export function parseAppModeInputId(
   raw: unknown

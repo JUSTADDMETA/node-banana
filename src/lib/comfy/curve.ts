@@ -195,7 +195,12 @@ export function moveCurvePoint(curve: ComfyCurve, index: number, x: number, y: n
   if (!isEnd) {
     const lower = points[index - 1]![0] + MIN_POINT_GAP;
     const upper = points[index + 1]![0] - MIN_POINT_GAP;
-    point[0] = Math.min(Math.max(clamp01(x), lower), upper);
+    // An imported curve is only de-duplicated at 1e-6, so its neighbours can sit
+    // closer together than two gaps. The range is then empty, and clamping into
+    // an empty range lands *below* the previous point — an unsorted list, which
+    // `sampleCurve` and `curvePath` both read as ascending. Such a point is
+    // x-locked instead; it can still move vertically.
+    if (lower <= upper) point[0] = Math.min(Math.max(clamp01(x), lower), upper);
   }
   return { ...curve, points };
 }

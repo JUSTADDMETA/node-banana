@@ -97,7 +97,8 @@ usual way — the environment variables are for headless or shared deployments.
 
 ### Running ComfyUI workflows
 
-Any ComfyUI workflow can be dropped onto the canvas as a node (`Shift + C`).
+Drop any ComfyUI workflow onto the canvas and it becomes a node. `Shift + C`
+adds an empty ComfyUI node and opens the same dialog to pick a workflow for it.
 If the workflow was set up as an app in ComfyUI — using **App Mode** to pick
 its inputs and outputs — those selections become the node's handles and
 settings directly; otherwise Node Banana detects them and asks you to confirm.

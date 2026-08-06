@@ -397,15 +397,22 @@ function EmptyState({
         if (!file) return;
         e.preventDefault();
         e.stopPropagation();
-        void file.text().then((text) => {
-          try {
-            onDropWorkflow({ workflow: JSON.parse(text), filename: file.name });
-          } catch {
-            // The dialog is where a bad file gets explained; it reports the
-            // same way whether the JSON or the workflow inside it is at fault.
-            onDropWorkflow({ workflow: text, filename: file.name });
-          }
-        });
+        void file
+          .text()
+          .then((text) => {
+            try {
+              onDropWorkflow({ workflow: JSON.parse(text), filename: file.name });
+            } catch {
+              // The dialog is where a bad file gets explained; it reports the
+              // same way whether the JSON or the workflow inside it is at fault.
+              onDropWorkflow({ workflow: text, filename: file.name });
+            }
+          })
+          .catch(() => {
+            // A file the browser could not read at all. Still the dialog's to
+            // report — without this the drop does nothing and says nothing.
+            onDropWorkflow({ workflow: null, filename: file.name });
+          });
       }}
       className={`nodrag nopan flex-1 flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed transition-colors ${
         dragOver

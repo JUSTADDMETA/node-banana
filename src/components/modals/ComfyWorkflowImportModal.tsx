@@ -20,7 +20,7 @@ import {
   type SavedComfyNode,
 } from "@/lib/comfy/library";
 import { inputFromCandidate, inputFromLoader, paramFromCandidate } from "@/lib/comfy/inspect";
-import { withAppLabels } from "@/lib/comfy/reconfigure";
+import { bindingKey, withAppLabels } from "@/lib/comfy/reconfigure";
 import {
   buildComfyHeaders,
   comfyConfigError,
@@ -121,7 +121,6 @@ const OUTPUT_TYPE_LABEL: Record<ComfyOutputType, string> = {
   "3d": "3D",
 };
 
-const bindingKey = (nodeId: string, inputKey: string): string => `${nodeId}:${inputKey}`;
 
 /** ComfyUI's own guide to preparing a workflow for this — inputs, outputs, saving. */
 const APP_MODE_DOCS = "https://docs.comfy.org/interface/app-mode";
@@ -403,7 +402,10 @@ export function ComfyWorkflowImportModal({
         });
         if (cancelled) return;
         if (!response.ok) {
-          setError(await readError(response, "Could not re-read this workflow."));
+          // Re-checked: `readError` awaits the body, and the dialog can be
+          // closed during that await. The success path below already does this.
+          const message = await readError(response, "Could not re-read this workflow.");
+          if (!cancelled) setError(message);
           return;
         }
         const result = (await response.json()) as Inspection;
@@ -1037,7 +1039,11 @@ function FileDropZone({
   onFile: (file: File) => void;
 }) {
   return (
-    <div
+    // A button, not a div: dropping a file needs a pointer, but *picking* one
+    // should not — and the Blueprints tab is a different task, not an
+    // equivalent keyboard path to importing a local file.
+    <button
+      type="button"
       onDragOver={(e) => {
         e.preventDefault();
         onDragOver(true);
@@ -1050,7 +1056,7 @@ function FileDropZone({
         if (file) onFile(file);
       }}
       onClick={onPick}
-      className={`flex flex-col items-center justify-center gap-3 py-12 rounded-xl border border-dashed cursor-pointer transition-colors ${
+      className={`w-full flex flex-col items-center justify-center gap-3 py-12 rounded-xl border border-dashed cursor-pointer transition-colors ${
         dragOver
           ? "border-blue-500 bg-blue-500/5"
           : "border-neutral-600 hover:border-neutral-500 bg-neutral-900/40"
@@ -1058,7 +1064,7 @@ function FileDropZone({
     >
       {busy ? (
         <>
-          <div className="w-5 h-5 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
+          <span className="w-5 h-5 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
           <span className="text-xs text-neutral-400">Reading workflow…</span>
         </>
       ) : (
@@ -1076,15 +1082,16 @@ function FileDropZone({
             <path d="m7 10 5-5 5 5" />
             <path d="M12 5v12" />
           </svg>
-          <div className="text-center">
-            <p className="text-sm text-neutral-300">Drop a workflow JSON here</p>
-            <p className="text-[11px] text-neutral-500 mt-0.5">
+          {/* Spans, not p/div: a button may only hold phrasing content. */}
+          <span className="block text-center">
+            <span className="block text-sm text-neutral-300">Drop a workflow JSON here</span>
+            <span className="block text-[11px] text-neutral-500 mt-0.5">
               Saved or API-format exports both work
-            </p>
-          </div>
+            </span>
+          </span>
         </>
       )}
-    </div>
+    </button>
   );
 }
 
