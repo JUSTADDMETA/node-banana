@@ -304,16 +304,18 @@ export function inspectWorkflow(
       // The author declaring this a boundary input outranks the name-shaped
       // guess, which only ever recognises prompts.
       const connectAs = entry.connectAs ?? candidate.connectableAs;
+      // One boundary slot can drive several inner widgets. The author exposed
+      // one control, so the run must write all of them from it — whether that
+      // control ended up a handle or a setting.
+      const alsoBind = entry.alsoBind?.map((b) => ({
+        nodeId: b.nodeId,
+        inputKey: b.widget,
+      }));
       if (connectAs) {
-        inputs.push(inputFromCandidate(candidate, connectAs, taken));
+        const input = inputFromCandidate(candidate, connectAs, taken);
+        inputs.push(alsoBind?.length ? { ...input, alsoBind } : input);
       } else {
         const param = paramFromCandidate(candidate);
-        // One boundary slot can drive several inner widgets. The author exposed
-        // one control, so the run must write all of them from it.
-        const alsoBind = entry.alsoBind?.map((b) => ({
-          nodeId: b.nodeId,
-          inputKey: b.widget,
-        }));
         params.push(alsoBind?.length ? { ...param, alsoBind } : param);
       }
     }

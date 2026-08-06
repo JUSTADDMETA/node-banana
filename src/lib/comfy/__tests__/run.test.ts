@@ -65,6 +65,9 @@ describe("hashSeed", () => {
     expect(hashSeed("run-1")).not.toBe(hashSeed("run-2"));
     // ComfyUI declares seed maxima up to 2^64-1, which JSON cannot round-trip.
     expect(hashSeed("anything")).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+    // And ComfyUI rejects a negative seed, so the floor matters as much.
+    expect(hashSeed("anything")).toBeGreaterThanOrEqual(0);
+    expect(Number.isInteger(hashSeed("anything"))).toBe(true);
   });
 });
 
@@ -328,6 +331,36 @@ describe("a setting the author tied to several nodes", () => {
 
     expect(graph["99"]).toBeDefined();
     expect(graph["99"]?.inputs.filename_prefix).toBe("flux.safetensors");
+  });
+
+  it("does the same when the author's control became a handle", () => {
+    // A Blueprint's STRING boundary slot becomes a connectable input, not a
+    // setting — and one prompt slot can feed two text encoders. Carrying the
+    // extra bindings only on params left the second encoder rendering the
+    // workflow's own saved text while the first got the user's.
+    const graph = buildRunGraph({
+      app: app({
+        inputs: [
+          {
+            id: "24:text",
+            name: "prompt",
+            label: "Prompt",
+            type: "text",
+            nodeId: "24",
+            inputKey: "text",
+            required: false,
+            alsoBind: [{ nodeId: "99", inputKey: "filename_prefix" }],
+          },
+        ],
+      }),
+      text: { prompt: "a running fox" },
+      uploads: {},
+      params: {},
+    });
+
+    expect(graph["24"]?.inputs.text).toBe("a running fox");
+    // Reached only through the extra binding, so it also proves the prune kept it.
+    expect(graph["99"]?.inputs.filename_prefix).toBe("a running fox");
   });
 });
 

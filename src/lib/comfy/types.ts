@@ -67,6 +67,17 @@ export interface ComfyAppInput {
   inputKey: string;
   required: boolean;
   description?: string;
+  /**
+   * Extra graph bindings this one handle also writes.
+   *
+   * The same story as {@link ComfyAppParam.alsoBind}: a Blueprint's `STRING`
+   * boundary slot can reach several inner widgets — one prompt feeding two text
+   * encoders — and the author exposed one connection point for all of them.
+   * Because a boundary slot becomes a *handle* rather than a setting, the
+   * carry-through has to exist on both shapes or the secondary encoders keep
+   * the workflow's saved text while the primary one gets the user's.
+   */
+  alsoBind?: Array<{ nodeId: string; inputKey: string }>;
 }
 
 /**

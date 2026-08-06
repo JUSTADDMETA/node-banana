@@ -168,6 +168,33 @@ describe("inspectWorkflow with App Mode", () => {
   });
 });
 
+describe("a boundary slot the author wired to more than one node", () => {
+  it("keeps every binding when the slot becomes a handle", () => {
+    // A Blueprint's `STRING` boundary slot is declared connectable, so it lands
+    // on a handle rather than in the settings — and a prompt slot feeding two
+    // text encoders is still one connection point. Carrying the extra bindings
+    // only on parameters silently dropped them here, leaving the second encoder
+    // on the workflow's own saved text.
+    const inspection = inspectWorkflow(graph(), {
+      appMode: {
+        inputs: [
+          {
+            nodeId: "24",
+            widget: "text",
+            connectAs: "text",
+            alsoBind: [{ nodeId: "9", widget: "filename_prefix" }],
+          },
+        ],
+        outputNodeIds: ["9"],
+      },
+    });
+
+    const prompt = inspection.suggested.inputs.find((i) => i.id === "24:text");
+    expect(prompt?.type).toBe("text");
+    expect(prompt?.alsoBind).toEqual([{ nodeId: "9", inputKey: "filename_prefix" }]);
+  });
+});
+
 describe("inspectWorkflow with App Mode and an uncurated loader", () => {
   it("still exposes a media loader App Mode does not mention", () => {
     // A blueprint's boundary inputs are not widgets, so they never appear in a
