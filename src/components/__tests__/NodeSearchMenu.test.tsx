@@ -1,9 +1,19 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { NodeSearchMenu } from "@/components/NodeSearchMenu";
 import { ALL_NODE_OPTIONS } from "@/components/ConnectionDropMenu";
+import { invalidateSavedComfyNodes } from "@/hooks/useSavedComfyNodes";
+import { saveComfyNode } from "@/lib/comfy/library";
+import type { ComfyAppDefinition } from "@/lib/comfy/types";
 
 const position = { x: 100, y: 100 };
+
+// The library is part of this list now, so every count below depends on it
+// starting empty.
+beforeEach(() => {
+  window.localStorage.clear();
+  invalidateSavedComfyNodes();
+});
 
 // The highlighted option carries the literal `bg-neutral-700` class (hover uses
 // the distinct `hover:bg-neutral-700` token, so this identifies only the
@@ -57,7 +67,67 @@ describe("NodeSearchMenu", () => {
       <NodeSearchMenu position={position} onSelect={onSelect} onClose={vi.fn()} />
     );
     fireEvent.click(screen.getByText("Prompt"));
-    expect(onSelect).toHaveBeenCalledWith("prompt");
+    // The second argument names a saved Comfy node; a built-in has none.
+    expect(onSelect).toHaveBeenCalledWith("prompt", undefined);
+  });
+
+  describe("saved Comfy nodes", () => {
+    const savedApp = (): ComfyAppDefinition => ({
+      id: "comfy_1",
+      name: "Upscale 2x",
+      description: "",
+      source: "upload",
+      graph: {},
+      inputs: [],
+      params: [],
+      outputs: [{ id: "9", label: "Result", type: "image", nodeId: "9", classType: "SaveImage" }],
+      classTypes: [],
+      nodeCount: 2,
+      createdAt: 1,
+    });
+
+    it("lists them after the built-ins, under their own heading", () => {
+      saveComfyNode({ name: "Upscale 2x", app: savedApp() });
+      render(
+        <NodeSearchMenu position={position} onSelect={vi.fn()} onClose={vi.fn()} />
+      );
+
+      expect(screen.getByText("Saved nodes")).toBeInTheDocument();
+      const buttons = screen.getAllByRole("button");
+      expect(buttons).toHaveLength(ALL_NODE_OPTIONS.length + 1);
+      expect(buttons[buttons.length - 1]).toHaveTextContent("Upscale 2x");
+    });
+
+    it("finds them by name", () => {
+      saveComfyNode({ name: "Upscale 2x", app: savedApp() });
+      render(
+        <NodeSearchMenu position={position} onSelect={vi.fn()} onClose={vi.fn()} />
+      );
+      fireEvent.change(screen.getByLabelText("Search nodes"), {
+        target: { value: "upscale" },
+      });
+
+      expect(screen.getAllByRole("button")).toHaveLength(1);
+      expect(screen.getByText("Upscale 2x")).toBeInTheDocument();
+    });
+
+    it("says which saved node was picked", () => {
+      const entry = saveComfyNode({ name: "Upscale 2x", app: savedApp() });
+      const onSelect = vi.fn();
+      render(
+        <NodeSearchMenu position={position} onSelect={onSelect} onClose={vi.fn()} />
+      );
+
+      fireEvent.click(screen.getByText("Upscale 2x"));
+      expect(onSelect).toHaveBeenCalledWith("comfyApp", entry.id);
+    });
+
+    it("shows no heading when nothing is saved", () => {
+      render(
+        <NodeSearchMenu position={position} onSelect={vi.fn()} onClose={vi.fn()} />
+      );
+      expect(screen.queryByText("Saved nodes")).not.toBeInTheDocument();
+    });
   });
 
   it("selects the highlighted option on Enter", () => {

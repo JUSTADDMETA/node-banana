@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { NodeType } from "@/types";
+import { useSavedComfyNodes } from "@/hooks/useSavedComfyNodes";
+import type { SavedComfyNode } from "@/lib/comfy/library";
+import { ComfyMark } from "./icons/ComfyMark";
 
 // Actions are special menu items that trigger behavior instead of creating a node
 export type MenuAction = "splitGridImmediate";
@@ -11,7 +14,16 @@ export interface MenuOption {
   label: string;
   icon: React.ReactNode;
   isAction?: boolean; // true if this is an action, not a node type
+  /**
+   * Set on a saved Comfy node. The type is still `comfyApp` — a saved node is
+   * that node arriving with its workflow already attached, not a new kind of
+   * node — so this is what tells the canvas which one to attach.
+   */
+  savedNodeId?: string;
 }
+
+/** Menu entries repeat node types once saved nodes are in the list. */
+export const optionKey = (option: MenuOption): string => option.savedNodeId ?? option.type;
 
 // Define which nodes can accept which handle types as inputs
 const IMAGE_TARGET_OPTIONS: MenuOption[] = [
@@ -139,6 +151,13 @@ const IMAGE_TARGET_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 const TEXT_TARGET_OPTIONS: MenuOption[] = [
@@ -233,6 +252,13 @@ const TEXT_TARGET_OPTIONS: MenuOption[] = [
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
       </svg>
+    ),
+  },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -335,6 +361,13 @@ const IMAGE_SOURCE_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 const TEXT_SOURCE_OPTIONS: MenuOption[] = [
@@ -402,6 +435,13 @@ const TEXT_SOURCE_OPTIONS: MenuOption[] = [
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
       </svg>
+    ),
+  },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -501,6 +541,13 @@ const VIDEO_TARGET_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 // GenerateVideo, VideoStitch, and VideoInput nodes produce video output
@@ -571,6 +618,13 @@ const VIDEO_SOURCE_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 // Audio target options (nodes that accept audio input)
@@ -632,6 +686,13 @@ const AUDIO_TARGET_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 // Audio source options (nodes that produce audio output)
@@ -675,6 +736,13 @@ const AUDIO_SOURCE_OPTIONS: MenuOption[] = [
       </svg>
     ),
   },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
+    ),
+  },
 ];
 
 // 3D target options (nodes that accept 3D input)
@@ -699,6 +767,13 @@ const THREE_D_SOURCE_OPTIONS: MenuOption[] = [
       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-2.25-1.313M21 7.5v2.25m0-2.25l-2.25 1.313M3 7.5l2.25-1.313M3 7.5l2.25 1.313M3 7.5v2.25m9 3l2.25-1.313M12 12.75l-2.25-1.313M12 12.75V15m0 6.75l2.25-1.313M12 21.75V19.5m0 2.25l-2.25-1.313m0-16.875L12 2.25l2.25 1.313M21 14.25v2.25l-2.25 1.313m-13.5 0L3 16.5v-2.25" />
       </svg>
+    ),
+  },
+  {
+    type: "comfyApp",
+    label: "ComfyUI App",
+    icon: (
+      <ComfyMark className="w-3.5 h-4" />
     ),
   },
 ];
@@ -727,11 +802,47 @@ export const ALL_NODE_OPTIONS: MenuOption[] = (() => {
   return all.sort((a, b) => a.label.localeCompare(b.label));
 })();
 
+/** Saved Comfy nodes as menu entries, in the order the library lists them. */
+export function savedComfyOptions(saved: SavedComfyNode[]): MenuOption[] {
+  return saved.map((entry) => ({
+    type: "comfyApp" as NodeType,
+    label: entry.name,
+    icon: <ComfyMark className="w-3.5 h-4" />,
+    savedNodeId: entry.id,
+  }));
+}
+
+/**
+ * The saved nodes that can join a wire of this type.
+ *
+ * Dragging from an output looks for a node that can take it, so the match is
+ * against the saved node's inputs; dragging from an input is the other way
+ * round. This is what makes a saved node behave like a built-in one — it turns
+ * up when it is useful, rather than only when asked for by name.
+ */
+export function savedComfyOptionsFor(
+  saved: SavedComfyNode[],
+  handleType: string,
+  connectionType: "source" | "target"
+): MenuOption[] {
+  return savedComfyOptions(
+    saved.filter((entry) =>
+      connectionType === "source"
+        ? entry.app.inputs.some((input) => input.type === handleType)
+        : entry.app.outputs.some((output) => output.type === handleType)
+    )
+  );
+}
+
 interface ConnectionDropMenuProps {
   position: { x: number; y: number };
   handleType: "image" | "text" | "video" | "audio" | "3d" | "easeCurve" | null;
   connectionType: "source" | "target"; // source = dragging from output, target = dragging from input
-  onSelect: (selection: { type: NodeType | MenuAction; isAction: boolean }) => void;
+  onSelect: (selection: {
+    type: NodeType | MenuAction;
+    isAction: boolean;
+    savedNodeId?: string;
+  }) => void;
   onClose: () => void;
 }
 
@@ -744,25 +855,31 @@ export function ConnectionDropMenu({
 }: ConnectionDropMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const savedNodes = useSavedComfyNodes();
 
   // Get the appropriate node options based on handle type and connection direction
   const getOptions = useCallback((): MenuOption[] => {
     if (!handleType) return [];
+    // Appended rather than interleaved: the built-ins are a fixed list people
+    // learn the shape of, and a saved node dropping into the middle of it would
+    // move everything below it each time one is saved.
+    const saved = savedComfyOptionsFor(savedNodes, handleType, connectionType);
+    const withSaved = (options: MenuOption[]): MenuOption[] => [...options, ...saved];
 
     if (connectionType === "source") {
       // Dragging from a source handle (output), need nodes with target handles (inputs)
-      if (handleType === "video") return VIDEO_TARGET_OPTIONS;
-      if (handleType === "audio") return AUDIO_TARGET_OPTIONS;
-      if (handleType === "3d") return THREE_D_TARGET_OPTIONS;
-      return handleType === "image" ? IMAGE_TARGET_OPTIONS : TEXT_TARGET_OPTIONS;
+      if (handleType === "video") return withSaved(VIDEO_TARGET_OPTIONS);
+      if (handleType === "audio") return withSaved(AUDIO_TARGET_OPTIONS);
+      if (handleType === "3d") return withSaved(THREE_D_TARGET_OPTIONS);
+      return withSaved(handleType === "image" ? IMAGE_TARGET_OPTIONS : TEXT_TARGET_OPTIONS);
     } else {
       // Dragging from a target handle (input), need nodes with source handles (outputs)
-      if (handleType === "video") return VIDEO_SOURCE_OPTIONS;
-      if (handleType === "audio") return AUDIO_SOURCE_OPTIONS;
-      if (handleType === "3d") return THREE_D_SOURCE_OPTIONS;
-      return handleType === "image" ? IMAGE_SOURCE_OPTIONS : TEXT_SOURCE_OPTIONS;
+      if (handleType === "video") return withSaved(VIDEO_SOURCE_OPTIONS);
+      if (handleType === "audio") return withSaved(AUDIO_SOURCE_OPTIONS);
+      if (handleType === "3d") return withSaved(THREE_D_SOURCE_OPTIONS);
+      return withSaved(handleType === "image" ? IMAGE_SOURCE_OPTIONS : TEXT_SOURCE_OPTIONS);
     }
-  }, [handleType, connectionType]);
+  }, [handleType, connectionType, savedNodes]);
 
   const options = getOptions();
 
@@ -781,9 +898,11 @@ export function ConnectionDropMenu({
         case "Enter":
           e.preventDefault();
           if (options[selectedIndex]) {
+            const option = options[selectedIndex];
             onSelect({
-              type: options[selectedIndex].type,
-              isAction: options[selectedIndex].isAction || false,
+              type: option.type,
+              isAction: option.isAction || false,
+              ...(option.savedNodeId ? { savedNodeId: option.savedNodeId } : {}),
             });
           }
           break;
@@ -837,8 +956,14 @@ export function ConnectionDropMenu({
       <div className="py-1">
         {options.map((option, index) => (
           <button
-            key={option.type}
-            onClick={() => onSelect({ type: option.type, isAction: option.isAction || false })}
+            key={optionKey(option)}
+            onClick={() =>
+              onSelect({
+                type: option.type,
+                isAction: option.isAction || false,
+                ...(option.savedNodeId ? { savedNodeId: option.savedNodeId } : {}),
+              })
+            }
             onMouseEnter={() => setSelectedIndex(index)}
             data-tutorial={option.type === "nanoBanana" ? "generate-image-option" : undefined}
             className={`w-full px-3 py-2 text-left text-[11px] font-medium flex items-center gap-2 transition-colors ${

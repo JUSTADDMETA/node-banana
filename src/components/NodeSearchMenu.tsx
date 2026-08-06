@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { NodeType } from "@/types";
-import { ALL_NODE_OPTIONS } from "./ConnectionDropMenu";
+import { useSavedComfyNodes } from "@/hooks/useSavedComfyNodes";
+import { ALL_NODE_OPTIONS, optionKey, savedComfyOptions } from "./ConnectionDropMenu";
 
 interface NodeSearchMenuProps {
   /** Screen position (clientX/clientY) where the menu should anchor. */
   position: { x: number; y: number };
-  onSelect: (type: NodeType) => void;
+  /** `savedNodeId` is set when the pick is a saved Comfy node. */
+  onSelect: (type: NodeType, savedNodeId?: string) => void;
   onClose: () => void;
 }
 
@@ -28,15 +30,25 @@ export function NodeSearchMenu({ position, onSelect, onClose }: NodeSearchMenuPr
   const [search, setSearch] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
+  const savedNodes = useSavedComfyNodes();
+
+  // Saved nodes sit after the built-ins under their own heading rather than
+  // being sorted in among them: the built-in list has a shape people learn, and
+  // it should not shuffle every time a workflow is saved.
+  const options = useMemo(
+    () => [...ALL_NODE_OPTIONS, ...savedComfyOptions(savedNodes)],
+    [savedNodes]
+  );
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return ALL_NODE_OPTIONS;
-    return ALL_NODE_OPTIONS.filter(
+    if (!query) return options;
+    return options.filter(
       (option) =>
         option.label.toLowerCase().includes(query) ||
         option.type.toLowerCase().includes(query)
     );
-  }, [search]);
+  }, [search, options]);
 
   // Reset the highlight to the top whenever the filtered list changes.
   useEffect(() => {
@@ -93,7 +105,7 @@ export function NodeSearchMenu({ position, onSelect, onClose }: NodeSearchMenuPr
     } else if (e.key === "Enter") {
       e.preventDefault();
       const option = filtered[selectedIndex];
-      if (option) onSelect(option.type as NodeType);
+      if (option) onSelect(option.type as NodeType, option.savedNodeId);
     } else if (e.key === "Escape") {
       e.preventDefault();
       onClose();
@@ -130,10 +142,17 @@ export function NodeSearchMenu({ position, onSelect, onClose }: NodeSearchMenuPr
           </div>
         ) : (
           filtered.map((option, index) => (
+            <Fragment key={optionKey(option)}>
+              {/* Once, above the first of them — the built-ins above are a
+                  fixed set, these are the user's own. */}
+              {option.savedNodeId && !filtered[index - 1]?.savedNodeId && (
+                <div className="px-3 pt-2 pb-1 text-[9px] uppercase tracking-wide text-neutral-500">
+                  Saved nodes
+                </div>
+              )}
             <button
-              key={option.type}
               data-index={index}
-              onClick={() => onSelect(option.type as NodeType)}
+              onClick={() => onSelect(option.type as NodeType, option.savedNodeId)}
               onMouseMove={(e) => {
                 // Only re-select on genuine cursor movement. When keyboard nav
                 // scrolls the list under a stationary cursor, the browser may
@@ -151,8 +170,11 @@ export function NodeSearchMenu({ position, onSelect, onClose }: NodeSearchMenuPr
               }`}
             >
               {option.icon}
-              {option.label}
+              {/* min-w-0, or a long saved-node name pushes the menu wider
+                  instead of ellipsing. */}
+              <span className="min-w-0 truncate">{option.label}</span>
             </button>
+            </Fragment>
           ))
         )}
       </div>

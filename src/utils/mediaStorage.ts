@@ -578,6 +578,49 @@ async function externalizeNodeMedia(
       break;
     }
 
+    case "comfyApp": {
+      const d = data as import("@/types").ComfyAppNodeData;
+      // A Comfy app can produce several outputs at once, so each is
+      // externalized under its own handle id. Text outputs stay inline —
+      // they are small, and a text file per run would be wasteful.
+      const outputs = d.outputs ?? {};
+      const declaredType = new Map((d.app?.outputs ?? []).map((o) => [o.id, o.type]));
+      const refs: Record<string, string> = { ...(d.outputRefs ?? {}) };
+      const remaining: Record<string, string> = {};
+      for (const [handleId, value] of Object.entries(outputs)) {
+        const type = declaredType.get(handleId);
+        if (type === "text" || !isDataUrl(value)) {
+          remaining[handleId] = value;
+          continue;
+        }
+        if (refs[handleId]) continue;
+        // Each type into the store hydration reads it back from. Saving a video
+        // through the image store and loading it from the video store is how an
+        // output survived the save and came back empty.
+        const ref =
+          type === "video"
+            ? await saveVideoAndGetRef(value, workflowPath, savedMediaIds)
+            : type === "audio"
+              ? await saveAudioAndGetRef(value, workflowPath, savedMediaIds)
+              : await saveImageAndGetId(value, workflowPath, savedImageIds, "generations");
+        // A store that declined the value leaves it inline rather than losing
+        // it to a ref that points at nothing.
+        if (ref) refs[handleId] = ref;
+        else remaining[handleId] = value;
+      }
+      newData = {
+        ...d,
+        outputs: remaining,
+        outputRefs: refs,
+        // The typed mirrors are rebuilt from `outputs` on hydration.
+        outputImage: null,
+        outputVideo: null,
+        outputAudio: null,
+        output3dUrl: null,
+      };
+      break;
+    }
+
     case "splitGrid": {
       const d = data as import("@/types").SplitGridNodeData;
       // SplitGrid source is input content, save to inputs
@@ -1172,6 +1215,40 @@ async function hydrateNodeMedia(
       } else {
         newData = d;
       }
+      break;
+    }
+
+    case "comfyApp": {
+      const d = data as import("@/types").ComfyAppNodeData;
+      const refs = d.outputRefs ?? {};
+      const outputs: Record<string, string> = { ...(d.outputs ?? {}) };
+      for (const [handleId, ref] of Object.entries(refs)) {
+        if (outputs[handleId]) continue;
+        const declared = d.app?.outputs.find((o) => o.id === handleId);
+        const mediaType =
+          declared?.type === "video" ? "video" : declared?.type === "audio" ? "audio" : "image";
+        outputs[handleId] = await loadMediaById(ref, workflowPath, loadedMedia, mediaType);
+      }
+      // Rebuild the typed mirrors from the restored outputs, in the same
+      // declared order the executor uses, so downstream nodes see the same
+      // value they did before the save.
+      const firstOfType = (type: string): string | null => {
+        for (const declared of d.app?.outputs ?? []) {
+          if (declared.type !== type) continue;
+          const value = outputs[declared.id];
+          if (value) return value;
+        }
+        return null;
+      };
+      newData = {
+        ...d,
+        outputs,
+        outputImage: firstOfType("image"),
+        outputVideo: firstOfType("video"),
+        outputAudio: firstOfType("audio"),
+        outputText: firstOfType("text"),
+        output3dUrl: firstOfType("3d"),
+      };
       break;
     }
 

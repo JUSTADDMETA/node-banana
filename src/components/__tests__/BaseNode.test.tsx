@@ -177,4 +177,86 @@ describe("BaseNode", () => {
       expect(screen.getByTestId("test-children")).toBeInTheDocument();
     });
   });
+
+  describe("the highlight around a node with an open settings panel", () => {
+    const settingsPanel = <div data-testid="settings-panel">Settings</div>;
+
+    /**
+     * The element whose ring encloses the settings panel.
+     *
+     * Weight is part of the assertion, not decoration: the first fix put a
+     * `ring-1 ring-blue-500/20` here, which satisfies "a ring encloses the
+     * panel" and yet is invisible on the canvas — 1px at 20% opacity over a
+     * near-black background. The bug survived a passing test, so the test now
+     * describes an outline you can actually see.
+     */
+    const enclosingRing = (container: HTMLElement): HTMLElement | undefined => {
+      const panel = screen.getByTestId("settings-panel");
+      return [...container.querySelectorAll<HTMLElement>("*")].find(
+        (el) => /(^|\s)ring-\d/.test(el.className.toString()) && el.contains(panel)
+      );
+    };
+
+    it("encloses the settings panel while the node is running", () => {
+      // It used to hug the body only, so a running node and a selected node
+      // were drawn as two different shapes. Reported from a Comfy app node,
+      // but BaseNode is shared, so every node with settings was affected.
+      const { container } = render(
+        <TestWrapper>
+          <BaseNode {...defaultProps} isExecuting settingsExpanded settingsPanel={settingsPanel} />
+        </TestWrapper>
+      );
+
+      const ring = enclosingRing(container);
+      expect(ring).toBeDefined();
+      expect(ring).toHaveClass("ring-1", "ring-blue-500");
+    });
+
+    it("draws that outline once, not once per section", () => {
+      // The body used to keep its own blue border under the wrapper's ring, so
+      // the node wore two lines down its sides and one down the settings.
+      const { container } = render(
+        <TestWrapper>
+          <BaseNode {...defaultProps} isExecuting settingsExpanded settingsPanel={settingsPanel} />
+        </TestWrapper>
+      );
+
+      const ring = enclosingRing(container)!;
+      const blueInside = [...ring.querySelectorAll<HTMLElement>("*")].filter((el) =>
+        /(^|\s)border-blue-500(\s|$)/.test(el.className.toString())
+      );
+      expect(blueInside).toHaveLength(0);
+    });
+
+    it("encloses it when selected too, as it always did", () => {
+      const { container } = render(
+        <TestWrapper>
+          <BaseNode {...defaultProps} selected settingsExpanded settingsPanel={settingsPanel} />
+        </TestWrapper>
+      );
+
+      const ring = enclosingRing(container);
+      expect(ring).toBeDefined();
+      expect(ring).toHaveClass("ring-2", "ring-blue-500/40");
+    });
+
+    it("draws one ring, not two, when a running node is also selected", () => {
+      const { container } = render(
+        <TestWrapper>
+          <BaseNode
+            {...defaultProps}
+            selected
+            isExecuting
+            settingsExpanded
+            settingsPanel={settingsPanel}
+          />
+        </TestWrapper>
+      );
+
+      const ringed = [...container.querySelectorAll<HTMLElement>("*")].filter((el) =>
+        /(^|\s)ring-\d/.test(el.className.toString())
+      );
+      expect(ringed).toHaveLength(1);
+    });
+  });
 });

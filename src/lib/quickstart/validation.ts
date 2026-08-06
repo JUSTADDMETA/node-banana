@@ -73,6 +73,7 @@ const DEFAULT_DIMENSIONS: Record<NodeType, { width: number; height: number }> = 
   switch: { width: 220, height: 120 },
   conditionalSwitch: { width: 260, height: 180 },
   glbViewer: { width: 360, height: 380 },
+  comfyApp: { width: 320, height: 340 },
 };
 
 /**
@@ -475,6 +476,22 @@ function createDefaultNodeData(type: NodeType): WorkflowNodeData {
         glbUrl: null,
         filename: null,
         capturedImage: null,
+      };
+    case "comfyApp":
+      // Deliberately absent from VALID_NODE_TYPES: a Comfy app node is defined
+      // by an imported ComfyUI workflow, which a generated quickstart has no
+      // way to supply. Handled here only so the switch stays exhaustive.
+      return {
+        app: null,
+        paramValues: {},
+        outputs: {},
+        outputImage: null,
+        outputVideo: null,
+        outputAudio: null,
+        outputText: null,
+        output3dUrl: null,
+        status: "idle",
+        error: null,
       };
   }
 }

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ConnectionDropMenu } from "@/components/ConnectionDropMenu";
+import { invalidateSavedComfyNodes } from "@/hooks/useSavedComfyNodes";
+import { saveComfyNode } from "@/lib/comfy/library";
+import type { ComfyAppDefinition } from "@/lib/comfy/types";
 
 describe("ConnectionDropMenu", () => {
   const mockOnSelect = vi.fn();
@@ -212,14 +215,17 @@ describe("ConnectionDropMenu", () => {
     });
 
     it("should navigate up with ArrowUp key", () => {
-      render(<ConnectionDropMenu {...defaultProps} handleType="image" connectionType="source" />);
+      const { container } = render(
+        <ConnectionDropMenu {...defaultProps} handleType="image" connectionType="source" />
+      );
 
       // Press ArrowUp to go to last item (wrapping)
       fireEvent.keyDown(document, { key: "ArrowUp" });
 
-      // Last item should now be highlighted
-      const lastButton = screen.getByText("Switch").closest("button");
-      expect(lastButton).toHaveClass("bg-neutral-700");
+      // Whichever option is last — asserting on a name would break every time
+      // a node type is added to the menu.
+      const buttons = container.querySelectorAll("button");
+      expect(buttons[buttons.length - 1]).toHaveClass("bg-neutral-700");
     });
 
     it("should select item with Enter key", () => {
@@ -243,17 +249,97 @@ describe("ConnectionDropMenu", () => {
     });
 
     it("should wrap around when navigating past last item", () => {
-      render(<ConnectionDropMenu {...defaultProps} handleType="text" connectionType="source" />);
+      const { container } = render(
+        <ConnectionDropMenu {...defaultProps} handleType="text" connectionType="source" />
+      );
 
-      // Text source labels: Prompt, Prompt Constructor, Array, Generate Image, Generate Video, Generate Audio, LLM Generate, Router, Switch, Conditional Switch (10 items)
-      // Navigate down 10 times to wrap to first
-      for (let i = 0; i < 10; i++) {
+      // One ArrowDown per option lands back on the first — derived from the
+      // rendered count so adding a node type does not break this.
+      const optionCount = container.querySelectorAll("button").length;
+      for (let i = 0; i < optionCount; i++) {
         fireEvent.keyDown(document, { key: "ArrowDown" });
       }
 
       // Should be back on first item (Prompt)
       const firstButton = screen.getByText("Prompt").closest("button");
       expect(firstButton).toHaveClass("bg-neutral-700");
+    });
+  });
+
+  describe("Saved Comfy nodes", () => {
+    // A saved node has to behave like a built-in one: offered when the wire it
+    // would carry matches, absent when it does not, and attachable in one click.
+    beforeEach(() => {
+      window.localStorage.clear();
+      invalidateSavedComfyNodes();
+    });
+
+    const savedApp = (over: Partial<ComfyAppDefinition> = {}): ComfyAppDefinition => ({
+      id: "comfy_1",
+      name: "Upscale 2x",
+      description: "",
+      source: "upload",
+      graph: {},
+      inputs: [
+        {
+          id: "1:image",
+          name: "image",
+          label: "Photo",
+          type: "image",
+          nodeId: "1",
+          inputKey: "image",
+          required: true,
+        },
+      ],
+      params: [],
+      outputs: [{ id: "9", label: "Result", type: "image", nodeId: "9", classType: "SaveImage" }],
+      classTypes: [],
+      nodeCount: 2,
+      createdAt: 1,
+      ...over,
+    });
+
+    it("offers a saved node that can take the wire being dragged", () => {
+      saveComfyNode({ name: "Upscale 2x", app: savedApp() });
+      render(<ConnectionDropMenu {...defaultProps} handleType="image" connectionType="source" />);
+
+      expect(screen.getByText("Upscale 2x")).toBeInTheDocument();
+    });
+
+    it("leaves it out when it has no input of that type", () => {
+      saveComfyNode({ name: "Upscale 2x", app: savedApp() });
+      render(<ConnectionDropMenu {...defaultProps} handleType="text" connectionType="source" />);
+
+      expect(screen.queryByText("Upscale 2x")).not.toBeInTheDocument();
+    });
+
+    it("matches on outputs when the drag started at an input", () => {
+      saveComfyNode({
+        name: "Caption",
+        app: savedApp({
+          inputs: [],
+          outputs: [
+            { id: "9", label: "Text", type: "text", nodeId: "9", classType: "SaveText" },
+          ],
+        }),
+      });
+      render(<ConnectionDropMenu {...defaultProps} handleType="text" connectionType="target" />);
+
+      expect(screen.getByText("Caption")).toBeInTheDocument();
+    });
+
+    it("names which saved node was picked", () => {
+      // Without this the canvas would add an empty Comfy node — the type alone
+      // does not say which workflow was meant.
+      const entry = saveComfyNode({ name: "Upscale 2x", app: savedApp() });
+      render(<ConnectionDropMenu {...defaultProps} handleType="image" connectionType="source" />);
+
+      fireEvent.click(screen.getByText("Upscale 2x"));
+      expect(mockOnSelect).toHaveBeenCalledWith({
+        type: "comfyApp",
+        isAction: false,
+        savedNodeId: entry.id,
+      });
     });
   });
 

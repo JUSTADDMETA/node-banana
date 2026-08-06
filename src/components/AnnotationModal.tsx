@@ -103,14 +103,24 @@ export function AnnotationModal() {
   }, [selectedShapeId, currentTool]);
 
   useEffect(() => {
+    // While the annotation modal is open, destructive shortcuts must NOT reach the canvas
+    // (React Flow) behind it — the canvas reads a different isModalOpen flag, so its
+    // deleteKeyCode/undo are still live. e.g. Delete would remove the selected NODE, making it
+    // vanish on save. Intercept in the CAPTURE phase (fires before React Flow's document handler)
+    // and stop propagation for the keys the modal owns. Text-editing keys are left alone — React
+    // Flow already ignores key events whose target is a text input.
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isModalOpen) return;
+
       if (e.key === "Delete" || e.key === "Backspace") {
-        if (selectedShapeId && !editingTextId) {
-          deleteAnnotation(selectedShapeId);
-        }
+        if (editingTextId) return; // typing in the text input — let it handle the key
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (selectedShapeId) deleteAnnotation(selectedShapeId);
+        return;
       }
       if (e.key === "Escape") {
+        e.stopImmediatePropagation();
         if (editingTextId) {
           setEditingTextId(null);
           setTextInputPosition(null);
@@ -118,20 +128,20 @@ export function AnnotationModal() {
         } else {
           closeModal();
         }
+        return;
       }
-      if (e.ctrlKey || e.metaKey) {
-        if (e.key === "z") {
-          e.preventDefault();
-          if (e.shiftKey) {
-            redo();
-          } else {
-            undo();
-          }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
         }
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [isModalOpen, selectedShapeId, editingTextId, deleteAnnotation, closeModal, undo, redo]);
 
   const getRelativePointerPosition = useCallback(() => {

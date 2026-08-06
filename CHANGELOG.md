@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-06
+
+The ComfyUI release. A ComfyUI workflow becomes a node on the canvas, wired to
+the rest of a Node Banana pipeline.
+
+> Note: 1.7.0 and 1.8.0 shipped without entries here. Their notes are on the
+> [releases page](https://github.com/shrimbly/node-banana/releases).
+
+### Added
+
+- **Run a ComfyUI workflow as a node** — Drop a workflow onto the canvas and it becomes a `comfyApp` node. If it was set up in ComfyUI's **App Mode**, the author's chosen inputs become typed handles, their widgets become inline settings, and their output nodes become typed outputs. Otherwise Node Banana detects them and asks you to confirm. Both upload formats work: the normal editor save and the API export.
+- **Three backends** — Comfy Cloud (the default, nothing to install), a ComfyUI on this machine, or one elsewhere on the network. Chosen in Settings → ComfyUI and sent per request, so no server configuration is needed.
+- **Blueprints** — The ready-made pipelines your ComfyUI already ships, listed in their own tab. Importing one materialises a loader per media input and a sink per output, so there is nothing to upload at all.
+- **Saved nodes** — Keep a configured Comfy node and it comes back set up, not merely attached: the workflow, the contract, and the values it was running. Saved nodes appear in the canvas double-click search, in the connection-drop menus for any handle type they match, and in the dialog's own tab.
+- **Live previews** — While a run is going, the node shows the latent forming instead of a spinner, streamed from the engine's event channel.
+- **Curve editor** — ComfyUI's `CURVE` widget renders as a draggable tone curve rather than raw JSON.
+- **Revisit a node's picks** — Reopening the dialog on an attached workflow shows the same candidate list with that node's selections applied, so inputs, settings and outputs can be changed without starting over.
+
+### Fixed
+
+- **Annotation modal shortcuts** — Delete inside the modal no longer removes the node behind it, and undo works with the shortcut typed in either case.
+- **Running outline** — A node that is running is outlined as one piece, settings panel included, instead of drawing a second line where the panel starts.
+
+### Notes
+
+Comfy Cloud reports job progress too thinly to draw — no node name, no step
+counts, and a fraction computed against a node total that grows during the run,
+so it reaches 100% several times before the job ends. Previews are shown
+instead, and progress deliberately is not.
+
 ## [1.6.0] - 2026-04-21
 
 ### Added

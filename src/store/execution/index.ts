@@ -49,4 +49,6 @@ export {
 export { executeRemoveBackground } from "./removeBackgroundExecutor";
 export { executeImageResize, executeGifEncoder } from "./imageProcessingExecutors";
 
+export { executeComfyApp } from "./comfyAppExecutor";
+
 export { runBatchIfApplicable } from "./batchExecution";

@@ -22,6 +22,7 @@ const RUNNABLE_TYPES = new Set([
   'generateAudio',
   'llmGenerate',
   'removeBackground',
+  'comfyApp',
 ]);
 const EXPANDABLE_TYPES = new Set(['prompt', 'promptConstructor', 'splitGrid', 'annotation']);
 
@@ -45,6 +46,11 @@ interface FloatingNodeHeaderProps {
   alwaysVisibleButtons?: ReactNode;
   provider?: ProviderType;
   title: string;
+  /**
+   * Shown instead of the title text — for a node whose kind is better said with
+   * a logo. `title` still supplies the accessible name and the tooltip.
+   */
+  titleLogo?: ReactNode;
   customTitle?: string;
   comment?: string;
   onCustomTitleChange?: (nodeId: string, title: string) => void;
@@ -68,6 +74,7 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
   alwaysVisibleButtons,
   provider,
   title,
+  titleLogo,
   customTitle,
   comment,
   onCustomTitleChange,
@@ -80,7 +87,7 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
   const isBodyHovered = useWorkflowStore((state) => state.hoveredNodeId === id);
   const isHovered = isHeaderHovered || isBodyHovered;
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [editTitleValue, setEditTitleValue] = useState(customTitle || "");
+  const [editTitleValue, setEditTitleValue] = useState(customTitle || (titleLogo ? title : ""));
   const [isEditingComment, setIsEditingComment] = useState(false);
   const [editCommentValue, setEditCommentValue] = useState(comment || "");
   const [showCommentTooltip, setShowCommentTooltip] = useState(false);
@@ -94,12 +101,22 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
   // Check if comment is focused for navigation
   const isCommentFocused = focusedCommentNodeId === id;
 
+  /**
+   * The name the user edits.
+   *
+   * Where a logo says what kind of node this is, the text beside it is the
+   * node's own name — the workflow it runs — so it is what the editor starts
+   * from, and clearing it falls back to that name rather than to nothing.
+   */
+  const defaultTitle = titleLogo ? title : "";
+  const seedTitle = customTitle || defaultTitle;
+
   // Sync state with props
   useEffect(() => {
     if (!isEditingTitle) {
-      setEditTitleValue(customTitle || "");
+      setEditTitleValue(seedTitle);
     }
-  }, [customTitle, isEditingTitle]);
+  }, [seedTitle, isEditingTitle]);
 
   useEffect(() => {
     if (!isEditingComment) {
@@ -149,22 +166,25 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
   // Title handlers
   const handleTitleSubmit = useCallback(() => {
     const trimmed = editTitleValue.trim();
-    if (trimmed !== (customTitle || "")) {
-      onCustomTitleChange?.(id, trimmed);
+    // Typing the node's own name back is not a custom title — storing it would
+    // freeze the name against a later change of workflow.
+    const next = trimmed === defaultTitle ? "" : trimmed;
+    if (next !== (customTitle || "")) {
+      onCustomTitleChange?.(id, next);
     }
     setIsEditingTitle(false);
-  }, [editTitleValue, customTitle, onCustomTitleChange, id]);
+  }, [editTitleValue, defaultTitle, customTitle, onCustomTitleChange, id]);
 
   const handleTitleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter") {
         handleTitleSubmit();
       } else if (e.key === "Escape") {
-        setEditTitleValue(customTitle || "");
+        setEditTitleValue(seedTitle);
         setIsEditingTitle(false);
       }
     },
-    [handleTitleSubmit, customTitle]
+    [handleTitleSubmit, seedTitle]
   );
 
   // Comment handlers
@@ -341,23 +361,39 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
         <div className="flex-1 min-w-0 max-w-[60%] flex items-center gap-1.5 pl-2">
           {provider && <ProviderBadge provider={provider} />}
           {isEditingTitle ? (
-            <input
-              ref={titleInputRef}
-              type="text"
-              value={editTitleValue}
-              onChange={(e) => setEditTitleValue(e.target.value)}
-              onBlur={handleTitleSubmit}
-              onKeyDown={handleTitleKeyDown}
-              placeholder="Custom title..."
-              className="nodrag nopan w-full bg-transparent border-none outline-none text-xs font-semibold tracking-wide text-neutral-300 placeholder:text-neutral-500 uppercase"
-            />
+            <>
+              {/* The logo stays put while its name is edited, so the header does
+                  not jump and it stays clear which node is being renamed. */}
+              {titleLogo}
+              <input
+                ref={titleInputRef}
+                type="text"
+                value={editTitleValue}
+                onChange={(e) => setEditTitleValue(e.target.value)}
+                onBlur={handleTitleSubmit}
+                onKeyDown={handleTitleKeyDown}
+                placeholder={titleLogo ? "Name this node..." : "Custom title..."}
+                className={`nodrag nopan w-full bg-transparent border-none outline-none text-xs font-semibold tracking-wide text-neutral-300 placeholder:text-neutral-500 ${
+                  titleLogo ? "" : "uppercase"
+                }`}
+              />
+            </>
           ) : (
             <span
-              className="nodrag text-xs font-semibold uppercase tracking-wide text-neutral-400 cursor-text truncate"
+              className="nodrag flex items-center gap-1.5 min-w-0 text-xs font-semibold uppercase tracking-wide text-neutral-400 cursor-text truncate"
               onClick={() => setIsEditingTitle(true)}
               title="Click to edit title"
             >
-              {customTitle ? `${customTitle} - ${title}` : title}
+              {titleLogo}
+              {/* With a logo standing in for the kind of node, the text beside
+                  it is the node's name on its own, not a prefix to a type. */}
+              {titleLogo ? (
+                seedTitle && <span className="truncate normal-case">{seedTitle}</span>
+              ) : customTitle ? (
+                `${customTitle} - ${title}`
+              ) : (
+                title
+              )}
             </span>
           )}
         </div>

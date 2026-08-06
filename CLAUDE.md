@@ -85,6 +85,7 @@ LLM models:
 | `generateAudio` | AI audio/TTS generation | text | audio |
 | `audioInput` | Load/upload audio files | audio | audio |
 | `glbViewer` | Load/display 3D GLB models | none | image |
+| `comfyApp` | Run a ComfyUI workflow as a node | schema-driven | schema-driven |
 | `output` | Display final result | image | none |
 
 ## Node Connection System
@@ -131,6 +132,7 @@ Returns `{ images: string[], text: string | null }`.
 - `Shift + L` - Add LLM node
 - `Shift + A` - Add annotation node
 - `Shift + T` - Add audio (generateAudio) node
+- `Shift + C` - Add ComfyUI app node
 - `H` - Stack selected nodes horizontally
 - `V` - Stack selected nodes vertically
 - `G` - Arrange selected nodes in grid
@@ -200,6 +202,110 @@ If the model uses different endpoints than `/api/v1/jobs/createTask` and `/api/v
 - Add a custom polling function for the model's status endpoint
 - Add a branch in the Kie request-building logic (see `src/app/api/generate/providers/kie.ts`) for the custom request format
 
+## ComfyUI Integration
+
+Node Banana can run a ComfyUI workflow as a node (`comfyApp`). The workflow's
+**App Mode** (linear mode) configuration defines the node's surface: the
+author's chosen inputs become typed handles, their widgets become inline
+settings, and their output nodes become typed output handles.
+
+### Backends
+
+Chosen in Settings → ComfyUI, stored in `node-banana-comfy-settings` and
+forwarded per request as `X-Comfy-*` headers (so no server config is needed):
+
+| Mode | Transport | Notes |
+|------|-----------|-------|
+| `cloud` (default) | `@comfyorg/sdk` (Comfy API v2) | Needs a `comfyui-…` key from platform.comfy.org |
+| `local` | legacy `/api/prompt` | A stock ComfyUI; no sidecar needed |
+| `remote` | legacy `/api/prompt` | Same, elsewhere on the network |
+
+Local/remote endpoints fronted by `comfy-api-proxy` can opt into the SDK path
+with the "Behind comfy-api-proxy" toggle. A stock ComfyUI has no `/api/v2/*`
+routes, which is why the legacy engine is the default there.
+
+### Key files
+
+| Purpose | Location |
+|---------|----------|
+| Graph parsing, patching, pruning | `src/lib/comfy/graph.ts` |
+| Editor→API conversion, App Mode, Blueprints | `src/lib/comfy/editor.ts` |
+| Workflow → node contract | `src/lib/comfy/inspect.ts` |
+| Backend settings + request headers | `src/lib/comfy/settings.ts` |
+| Engine interface + both transports | `src/lib/comfy/server/` |
+| Node component | `src/components/nodes/ComfyAppNode.tsx` |
+| Import/confirm dialog | `src/components/modals/ComfyWorkflowImportModal.tsx` |
+| Settings tab | `src/components/settings/ComfySettingsTab.tsx` |
+| Executor | `src/store/execution/comfyAppExecutor.ts` |
+| Saved-node library | `src/lib/comfy/library.ts` |
+
+### Saved nodes
+
+A confirmed node can be kept — "Save as node" in the confirm step of the import
+and edit dialog. An entry holds the workflow, the contract *and* the values the
+node was running (seeds excluded, since they are re-randomised per run), so it
+comes back set up rather than merely attached.
+
+Saved nodes then appear as ordinary nodes: in the canvas double-click search
+under "Saved nodes", in the connection-drop menus for any handle type their
+contract matches, and in the dialog's own "Saved nodes" tab. All three create a
+plain `comfyApp` node seeded via `seedFromSavedComfyNode`; there is no new node
+type.
+
+Saving is a **snapshot**. A node created from an entry records `savedNodeId`, so
+the dialog can offer "Update saved node" as well as "Save as new"; attaching a
+different workflow clears it.
+
+### Formats
+
+Dropping either format onto the canvas creates a `comfyApp` node at the drop
+point and opens the confirm step on it; our own workflow saves still replace the
+canvas, told apart by shape in `src/lib/comfy/detect.ts`.
+
+Both upload formats are accepted. An **editor save** (the normal ComfyUI Save)
+is the one that carries App Mode, but it is not executable — widget values are
+positional — so converting it needs `/api/object_info` from a reachable engine.
+An **API export** runs as-is but carries no App Mode, so inputs and outputs are
+detected heuristically and confirmed in the dialog.
+
+**Blueprints** are saved subgraphs, listed from `/api/global_subgraphs` (public,
+on Cloud and local alike). Their data enters and leaves through boundary slots,
+so importing one materialises a loader per media input and a sink per output.
+
+### Live previews
+
+While a run is going, a v2 engine streams partial images over
+`GET /api/v2/jobs/{id}/events`. `/api/comfy/preview` relays those to the node,
+which shows the latent forming instead of a spinner. Two things to know:
+
+- The payload is **not** the bare JPEG the SDK's types describe. ComfyUI wraps
+  it: `[uint32 kind][uint32 jsonLength][JSON metadata][image bytes]`, and the
+  frame's own `node_id` arrives empty — the real one is in the metadata. See
+  `previewImage` in `src/lib/comfy/server/sdkEngine.ts`.
+- The same stream carries `progress`, and it is deliberately **not** used.
+  Measured against a live Cloud render it reports no node name, no step counts,
+  and a fraction computed against a node total that grows as the graph expands
+  — so it reaches 100% several times before the job ends. The job record's
+  `progress` field is `null` on Cloud throughout, despite the spec.
+
+Previews live in component state (`useComfyPreview`), never in the workflow
+store: they are 50–80KB JPEGs belonging to a run, and node data gets written
+into saved workflow files.
+
+### Smoke tests
+
+The Blueprint corpus is the regression net for this integration — every entry
+is a real published Blueprint that once broke it in a different way.
+
+| Command | Cost | What it covers |
+|---------|------|----------------|
+| `npx vitest run src/lib/comfy/__tests__/catalog.test.ts` | none | Hermetic. Runs the real conversion over recorded workflows and a recorded node catalog. Runs in CI. |
+| `npm run comfy:smoke` | credits | Real renders end to end, through Node Banana's own routes. Needs a dev server and `COMFY_SMOKE_KEY`. |
+| `npm run comfy:record` | none | Re-record the corpus when Comfy Cloud's catalog moves. |
+
+Point the live tier at a local ComfyUI with
+`node scripts/comfy-smoke.mjs run --mode local --url http://127.0.0.1:8188`.
+
 ## API Routes
 
 All routes in `src/app/api/`:
@@ -211,12 +317,20 @@ All routes in `src/app/api/`:
 | `/api/workflow` | default | Save/load workflow files |
 | `/api/save-generation` | default | Auto-save generated images |
 | `/api/logs` | default | Session logging |
+| `/api/comfy/status` | 1 min | Probe the configured ComfyUI engine |
+| `/api/comfy/inspect` | 2 min | Workflow upload → node contract |
+| `/api/comfy/blueprints` | 2 min | List/import ComfyUI Blueprints |
+| `/api/comfy/run` | 5 min | Submit a Comfy app run |
+| `/api/comfy/poll` | 5 min | Poll a run and collect its outputs |
+| `/api/comfy/preview` | 5 min | Stream a running job's preview images (NDJSON) |
 
 ## localStorage Keys
 
 - `node-banana-workflow-configs` - Project metadata (paths)
 - `node-banana-workflow-costs` - Cost tracking per workflow
 - `node-banana-nanoBanana-defaults` - Sticky generation settings
+- `node-banana-comfy-settings` - ComfyUI backend (cloud/local/remote), keys, job timeout
+- `node-banana-comfy-apps` - Saved Comfy nodes (workflow + contract + settings)
 
 ## Git Workflow
 

@@ -28,6 +28,7 @@ import {
   SwitchNodeData,
   ConditionalSwitchNodeData,
   GLBViewerNodeData,
+  ComfyAppNodeData,
   WorkflowNodeData,
   GroupColor,
   SelectedModel,
@@ -68,6 +69,7 @@ export const defaultNodeDimensions: Record<NodeType, { width: number; height: nu
   switch: { width: 220, height: 120 },
   conditionalSwitch: { width: 260, height: 180 },
   glbViewer: { width: 360, height: 380 },
+  comfyApp: { width: 320, height: 340 },
 };
 
 /**
@@ -407,5 +409,23 @@ export const createDefaultNodeData = (type: NodeType): WorkflowNodeData => {
         filename: null,
         capturedImage: null,
       } as GLBViewerNodeData;
+    case "comfyApp":
+      // A fresh Comfy App node has no workflow yet — it renders an import
+      // prompt until the user attaches one, which is what defines its handles.
+      return {
+        app: null,
+        paramValues: {},
+        outputs: {},
+        outputImage: null,
+        outputVideo: null,
+        outputAudio: null,
+        outputText: null,
+        output3dUrl: null,
+        jobId: null,
+        runStatus: null,
+        parametersExpanded: false,
+        status: "idle",
+        error: null,
+      } as ComfyAppNodeData;
   }
 };

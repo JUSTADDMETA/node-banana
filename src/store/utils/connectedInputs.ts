@@ -30,6 +30,7 @@ import {
   GLBViewerNodeData,
   SwitchNodeData,
   ConditionalSwitchNodeData,
+  ComfyAppNodeData,
   MatchMode,
 } from "@/types";
 
@@ -128,6 +129,21 @@ export function getSourceOutput(
     return { type: "image", value: (sourceNode.data as GifEncoderNodeData).outputGif };
   } else if (sourceNode.type === "glbViewer") {
     return { type: "image", value: (sourceNode.data as GLBViewerNodeData).capturedImage };
+  } else if (sourceNode.type === "comfyApp") {
+    // A Comfy app can expose several outputs of different types, so the handle
+    // the edge leaves from decides both the value and its type. `outputs` is
+    // keyed by output id, which is also the source handle id.
+    const comfyData = sourceNode.data as ComfyAppNodeData;
+    const output = comfyData.app?.outputs.find((o) => o.id === sourceHandle);
+    if (output) {
+      const value = comfyData.outputs?.[output.id] ?? null;
+      return { type: output.type === "3d" ? "3d" : output.type, value };
+    }
+    // No handle match — an edge made before the app was attached, or one left
+    // over from a workflow that has since been replaced. Substituting a
+    // different output here would silently feed the wrong image downstream, so
+    // the edge carries nothing until it is reconnected.
+    return { type: "image", value: null };
   }
   return { type: "image", value: null };
 }

@@ -236,24 +236,42 @@ body {
   border-bottom: none !important;
 }
 
-/* Custom scrollbar */
+/* Scrollbars.
+ *
+ * A thumb and nothing else. The groove is chrome nobody asked for, and it drew
+ * a hard grey rule down the side of every panel — most visible where panels
+ * nest, which is most places.
+ *
+ * The thumb is inset by a transparent border rather than by making the bar
+ * narrower: the visible mark is 4px, while the thing you have to hit stays 8px.
+ * Its colour is translucent white rather than a fixed grey so that one rule
+ * reads correctly on all of the surfaces the app stacks — the canvas, panels,
+ * dialogs and the settings drawer are four different darks. */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
-::-webkit-scrollbar-track {
-  background: #262626;
-  border-radius: 4px;
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #525252;
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.16);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #737373;
+  background: rgba(255, 255, 255, 0.32);
+  background-clip: padding-box;
 }
 
 /* Make the multi-selection box pass through pointer events so we can still
@@ -301,4 +319,58 @@ body {
 
 .animate-fan-exit {
   animation: fanExit 0.15s ease-in forwards;
+}
+
+/* Dialog entrance: the backdrop fades, the panel rises under it, and the
+   panel's own sections follow in sequence so the eye lands on the title
+   before the list. Staged and run once, hence keyframes over transitions. */
+@keyframes dialogBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dialogPanelIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dialogSectionIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-dialog-backdrop {
+  animation: dialogBackdropIn 0.15s ease-out;
+}
+
+.animate-dialog-panel {
+  animation: dialogPanelIn 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.animate-dialog-section {
+  animation: dialogSectionIn 0.26s cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-dialog-backdrop,
+  .animate-dialog-panel,
+  .animate-dialog-section {
+    animation: none;
+  }
 }

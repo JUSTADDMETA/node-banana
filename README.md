@@ -92,6 +92,27 @@ KIE_API_KEY=your_kie_api_key                # Optional
 WAVESPEED_API_KEY=your_wavespeed_api_key    # Optional
 ```
 
+API keys can also be entered in the app (Settings → Providers), which is the
+usual way — the environment variables are for headless or shared deployments.
+
+### Running ComfyUI workflows
+
+Drop any ComfyUI workflow onto the canvas and it becomes a node. `Shift + C`
+adds an empty ComfyUI node and opens the same dialog to pick a workflow for it.
+If the workflow was set up as an app in ComfyUI — using **App Mode** to pick
+its inputs and outputs — those selections become the node's handles and
+settings directly; otherwise Node Banana detects them and asks you to confirm.
+The **Blueprints** tab lists the ready-made pipelines your ComfyUI already
+ships, so there is nothing to upload at all.
+
+Choose where they run in **Settings → ComfyUI**:
+
+- **Comfy Cloud** (default) — no GPU or install needed; add an API key from
+  [platform.comfy.org](https://platform.comfy.org/profile/api-keys).
+- **This computer** — your own ComfyUI at `http://127.0.0.1:8188`. It needs the
+  models and custom nodes the workflow uses.
+- **Remote** — a ComfyUI elsewhere on your network.
+
 **API keys can also be configured in Project Settings within the app.** 
 
 ### Build

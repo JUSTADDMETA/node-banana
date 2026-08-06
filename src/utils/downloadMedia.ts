@@ -22,6 +22,10 @@ function extensionFromDataUrl(dataUrl: string): string {
     "audio/ogg": "ogg",
     "audio/aac": "aac",
     "audio/mp4": "m4a",
+    // 3D models, which ComfyUI workflows can produce
+    "model/gltf-binary": "glb",
+    "model/gltf+json": "gltf",
+    "model/vnd.usdz+zip": "usdz",
   };
   return map[mime] ?? mime.split("/")[1] ?? "bin";
 }
