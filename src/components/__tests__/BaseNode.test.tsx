@@ -177,4 +177,59 @@ describe("BaseNode", () => {
       expect(screen.getByTestId("test-children")).toBeInTheDocument();
     });
   });
+
+  describe("the highlight around a node with an open settings panel", () => {
+    const settingsPanel = <div data-testid="settings-panel">Settings</div>;
+
+    /** The element carrying a `ring-*` class, and whether it holds the panel. */
+    const ringEnclosesSettings = (container: HTMLElement): boolean => {
+      const ringed = [...container.querySelectorAll<HTMLElement>("*")].filter((el) =>
+        /(^|\s)ring-\d/.test(el.className.toString())
+      );
+      const panel = screen.getByTestId("settings-panel");
+      return ringed.some((el) => el.contains(panel));
+    };
+
+    it("encloses the settings panel while the node is running", () => {
+      // It used to hug the body only, so a running node and a selected node
+      // were drawn as two different shapes. Reported from a Comfy app node,
+      // but BaseNode is shared, so every node with settings was affected.
+      const { container } = render(
+        <TestWrapper>
+          <BaseNode {...defaultProps} isExecuting settingsExpanded settingsPanel={settingsPanel} />
+        </TestWrapper>
+      );
+
+      expect(ringEnclosesSettings(container)).toBe(true);
+    });
+
+    it("encloses it when selected too, as it always did", () => {
+      const { container } = render(
+        <TestWrapper>
+          <BaseNode {...defaultProps} selected settingsExpanded settingsPanel={settingsPanel} />
+        </TestWrapper>
+      );
+
+      expect(ringEnclosesSettings(container)).toBe(true);
+    });
+
+    it("draws one highlight, not two, when a running node is also selected", () => {
+      const { container } = render(
+        <TestWrapper>
+          <BaseNode
+            {...defaultProps}
+            selected
+            isExecuting
+            settingsExpanded
+            settingsPanel={settingsPanel}
+          />
+        </TestWrapper>
+      );
+
+      const ringed = [...container.querySelectorAll<HTMLElement>("*")].filter((el) =>
+        /(^|\s)ring-\d/.test(el.className.toString())
+      );
+      expect(ringed).toHaveLength(1);
+    });
+  });
 });
