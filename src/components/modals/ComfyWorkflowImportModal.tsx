@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 
 import { ComfyMark } from "@/components/icons/ComfyMark";
+import { ComfyNodePreview } from "./ComfyNodePreview";
 import {
   ComfySettingsTab,
   useComfySettingsDraft,
@@ -486,11 +487,18 @@ export function ComfyWorkflowImportModal({
     []
   );
 
+  // Derived once, so the preview shows the settings that will actually be
+  // attached rather than a second guess at them.
+  const params = useMemo(
+    () =>
+      (inspection?.widgetCandidates ?? [])
+        .filter((c) => roles[bindingKey(c.nodeId, c.inputKey)] === "setting")
+        .map(paramFromCandidate),
+    [inspection, roles]
+  );
+
   const attach = useCallback(() => {
     if (!inspection) return;
-    const params = inspection.widgetCandidates
-      .filter((c) => roles[bindingKey(c.nodeId, c.inputKey)] === "setting")
-      .map(paramFromCandidate);
     // The candidate list travels back to the node so the picks can be revisited.
     // The graph is dropped (the app already carries it), as are the blueprint
     // listing and the import-time warnings — both describe the upload, not the
@@ -507,7 +515,7 @@ export function ComfyWorkflowImportModal({
       }),
       { ...snapshot, blueprints: [], warnings: [] }
     );
-  }, [inspection, roles, name, source, inputs, outputs, onAttach]);
+  }, [inspection, params, name, source, inputs, outputs, onAttach]);
 
   if (!isOpen) return null;
 
@@ -531,6 +539,9 @@ export function ComfyWorkflowImportModal({
         : null;
   const showBlueprintAdd =
     !reconfigure && tab === "blueprints" && blueprints !== null && blueprints.length > 0;
+  // The preview is of the node being built, so it belongs to that step alone —
+  // not to the file picker, the connection settings or the help text.
+  const showPreview = Boolean(isMain && inspection);
 
   const dialog = (
     <div
@@ -546,7 +557,11 @@ export function ComfyWorkflowImportModal({
         aria-modal="true"
         aria-labelledby="comfy-import-title"
         tabIndex={-1}
-        className="bg-neutral-800 rounded-xl w-[600px] border border-neutral-700 shadow-2xl overflow-clip flex flex-col max-h-[82vh] focus:outline-none animate-dialog-panel"
+        // Wider only where there is a second column to hold: every other step
+        // is a single list, and stretching it would leave a hall of empty grey.
+        className={`bg-neutral-800 rounded-xl border border-neutral-700 shadow-2xl overflow-clip flex flex-col max-h-[82vh] focus:outline-none animate-dialog-panel transition-[width] duration-200 ${
+          showPreview ? "w-[880px]" : "w-[600px]"
+        }`}
         onKeyDown={trapFocus}
       >
         <div className="px-4 pt-4 pb-0 shrink-0 animate-dialog-section">
@@ -639,11 +654,14 @@ export function ComfyWorkflowImportModal({
           )}
         </div>
 
+        {/* Two columns while a node is being built: the picks scroll on the
+            left, the node they describe stands still on the right. */}
+        <div className="flex-1 min-h-0 flex">
         {/* The vertical padding lives on the inner wrapper, not here: a sticky
             heading inside a padded scroller stops at the *content* edge, and
             rows then scroll through the padding band above it in full view. */}
         <div
-          className="flex-1 min-h-0 overflow-y-auto px-4 animate-dialog-section"
+          className="flex-1 min-w-0 overflow-y-auto px-4 animate-dialog-section"
           style={{ animationDelay: "80ms" }}
         >
           <div className="py-4">
@@ -715,6 +733,24 @@ export function ComfyWorkflowImportModal({
             />
           )}
           </div>
+        </div>
+
+        {showPreview && inspection && (
+          // 8px to the dialog's outer edge on the three sides it can reach.
+          <div
+            className="w-[400px] shrink-0 py-2 pr-2 animate-dialog-section"
+            style={{ animationDelay: "120ms" }}
+          >
+            <ComfyNodePreview
+              name={name}
+              source={source === "blueprint" ? "blueprint" : "upload"}
+              nodeCount={inspection.nodeCount}
+              inputs={inputs}
+              params={params}
+              outputs={outputs}
+            />
+          </div>
+        )}
         </div>
 
         <div
