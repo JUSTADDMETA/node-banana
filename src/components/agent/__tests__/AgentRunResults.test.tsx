@@ -489,6 +489,50 @@ describe("AgentRunResults viewer", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("adds an output to the chat from its preview or the viewer, and marks it while it is added", () => {
+    const toggleAttachment = vi.fn();
+    const attached = new Set<string>();
+    const transcript = { ...actions(), attached, toggleAttachment };
+    const outputs: AgentRunOutput[] = [
+      image("img-1"),
+      image("img-2"),
+      // Nothing the model could see: no library record, or a video without its frame.
+      image("live-1", "gen", { assetId: undefined, sha256: undefined, live: true }),
+      { ...image("vid-1"), kind: "video", hasPoster: false },
+    ];
+    const run = record({ outputs });
+    const { rerenderCard } = renderCard(run, { transcript });
+
+    const toggles = screen.getAllByRole("button", { name: "Add Generate Image's image to the chat" });
+    expect(toggles).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Add Generate Image's video to the chat" })).toBeNull();
+    expect(toggles[1]).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggles[1]);
+    const added = { assetId: "img-2", kind: "image", nodeId: "gen", nodeTitle: "Generate Image", tabId: "tab-a", sha256: SHA };
+    expect(toggleAttachment).toHaveBeenLastCalledWith(added);
+
+    attached.add("img-2");
+    rerenderCard(run);
+    expect(screen.getAllByRole("button", { name: "Add Generate Image's image to the chat" })[1]).toHaveAttribute("aria-pressed", "true");
+
+    // The viewer says so, and takes it out again; the other image can be added from there too.
+    fireEvent.click(screen.getAllByRole("button", { name: "Open Generate Image's image" })[1]);
+    const viewer = screen.getByRole("dialog", { name: "Run workflow" });
+    const inChat = within(viewer).getByRole("button", { name: "Added to chat" });
+    expect(inChat).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(inChat);
+    expect(toggleAttachment).toHaveBeenLastCalledWith(added);
+    fireEvent.click(within(viewer).getAllByRole("button", { name: "Previous" })[0]);
+    fireEvent.click(within(viewer).getByRole("button", { name: "Add to chat" }));
+    expect(toggleAttachment).toHaveBeenLastCalledWith({ ...added, assetId: "img-1" });
+  });
+
+  it("offers no way to add outputs where no message box takes them", () => {
+    renderCard(record({ outputs: [image("img-1")] }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Generate Image's image" }));
+    expect(screen.queryByRole("button", { name: /to the chat|Add to chat/ })).toBeNull();
+  });
+
   it("steps through the outputs in the row's order, not the order they arrived in", () => {
     // b finished first, so it was recorded first; the row (and so the viewer) reads a, then b.
     renderCard(record({ plannedNodeIds: ["a", "b"], outputs: [image("b0", "b", { nodeTitle: "Second" }), image("a0", "a", { nodeTitle: "First" })] }));

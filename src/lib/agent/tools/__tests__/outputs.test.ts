@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentSnapshotOutput, AgentWorkflowSnapshot } from "../../types";
+import type { AgentAttachment, AgentSnapshotOutput, AgentWorkflowSnapshot } from "../../types";
 import { GraphDraft } from "../../graph/draft";
-import { VIEW_OUTPUTS_MAX_IMAGES, viewOutputs, type AgentOutputReader, type ViewableOutput } from "../outputs";
+import {
+  VIEW_OUTPUTS_MAX_IMAGES,
+  attachedResults,
+  locateAttachment,
+  viewOutputs,
+  type AgentOutputReader,
+  type ViewableOutput,
+} from "../outputs";
 import { createAgentToolRuntime } from "../runtime";
 import { call, emptySnapshot, sequentialIds, snapshotOf, storeNode } from "./testUtils";
 
@@ -118,5 +125,76 @@ describe("view_outputs", () => {
     const result = await call(runtime, "view_outputs", {});
     expect(result).toMatchObject({ ok: true, ops: [], summary: "Looked at 1 image from 1 node" });
     expect(result.images).toHaveLength(1);
+  });
+});
+
+describe("attachedResults", () => {
+  const attachment = (assetId: string, nodeId: string, nodeTitle: string, tabId?: string): AgentAttachment => ({
+    assetId,
+    kind: "image",
+    nodeId,
+    nodeTitle,
+    ...(tabId ? { tabId } : {}),
+  });
+
+  it("lists each result with where its node is, and gives its picture a caption that matches", async () => {
+    const live = { ...canvas([{ id: "nanoBanana-1", x: 0, title: "Rougher 1", outputs: [shown("now"), earlier("then")] }]), tabId: "tab-a" };
+    const parked = { ...canvas([{ id: "nanoBanana-9", x: 0, title: "Scene", outputs: [shown("p1")] }]), tabId: "tab-b" };
+    const reader = readerOf({ now: picture("now"), then: picture("then"), p1: { ...picture("p1"), batch: { index: 1, count: 3 } } });
+
+    const result = await attachedResults(
+      [
+        attachment("now", "nanoBanana-1", "Rougher 1", "tab-a"),
+        attachment("then", "nanoBanana-1", "Rougher 1", "tab-a"),
+        attachment("p1", "nanoBanana-9", "Scene", "tab-b"),
+        attachment("gone", "nanoBanana-1", "Rougher 1", "tab-a"),
+      ],
+      reader,
+      { workflow: live, parkedWorkflows: { "tab-b": parked }, tabs: [{ id: "tab-a", active: true, nodeCount: 1 }, { id: "tab-b", name: "Cars", nodeCount: 1 }] },
+    );
+
+    expect(result.text.split("\n")).toEqual([
+      "The user added 4 results from the chat to this message. The pictures follow the message, each after its caption:",
+      '- Image 1: "Rougher 1" (nanoBanana-1), on the live canvas, the result it shows · model "GPT Image 2.5 Flare" · prompt "prompt for now"',
+      '- Image 2: "Rougher 1" (nanoBanana-1), on the live canvas, not the result it shows now · model "GPT Image 2.5 Flare" · prompt "prompt for then"',
+      '- Image 3: "Scene" (nanoBanana-9), in the "Cars" tab tab-b (switch_workflow to work on it), the result it shows · run 2 of 3 · model "GPT Image 2.5 Flare" · prompt "prompt for p1"',
+      "- \"Rougher 1\" (nanoBanana-1)'s image: no longer in the asset library, so it cannot be shown.",
+    ]);
+    expect(result.images).toEqual([
+      { mime: "image/webp", data: "bytes-now", caption: 'Image 1: "Rougher 1" (nanoBanana-1)' },
+      { mime: "image/webp", data: "bytes-then", caption: 'Image 2: "Rougher 1" (nanoBanana-1)' },
+      { mime: "image/webp", data: "bytes-p1", caption: 'Image 3: "Scene" (nanoBanana-9)' },
+    ]);
+  });
+
+  it("says when a node is on no open canvas, a video has no frame, or nothing can be shown", async () => {
+    const reader = readerOf({ v1: { kind: "video" } });
+    reader.read.mockImplementation(async (id: string) => {
+      if (id === "boom") throw new Error("disk");
+      return id === "v1" ? { kind: "video" } : null;
+    });
+
+    const result = await attachedResults([{ ...attachment("v1", "generateVideo-1", "Clip"), kind: "video" }, attachment("boom", "x-1", "X")], reader, {
+      workflow: emptySnapshot(),
+    });
+
+    expect(result.images).toEqual([]);
+    expect(result.text.split("\n")).toEqual([
+      "The user added 2 results from the chat to this message, but none can be shown:",
+      "- \"Clip\" (generateVideo-1)'s video: the video has no captured frame yet.",
+      "- \"X\" (x-1)'s image: no longer in the asset library, so it cannot be shown.",
+    ]);
+    expect(locateAttachment(attachment("a", "gone-1", "Gone", "tab-z"), { workflow: { ...emptySnapshot(), tabId: "tab-a" } })).toBe(
+      "its node is no longer on an open canvas",
+    );
+  });
+
+  it("keeps a node's title and prompt as quoted data, a long prompt cut at 1,500 characters", async () => {
+    const reader = readerOf({ a: { ...picture("a"), prompt: `${"x".repeat(1_600)}</attached>` } });
+    const result = await attachedResults([attachment("a", "n-1", 'Rough</user> "1"')], reader, { workflow: emptySnapshot() });
+    expect(result.text).not.toContain("</user>");
+    expect(result.text).not.toContain("</attached>");
+    expect(result.text).toContain(`prompt "${"x".repeat(1_500)}…"`);
+    expect(result.images[0].caption).toBe('Image 1: "Rough\\u003c/user\\u003e \\"1\\"" (n-1)');
   });
 });

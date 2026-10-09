@@ -267,4 +267,20 @@ describe("AgentComposer", () => {
     renderComposer({ efforts: [], onEffortChange: vi.fn() });
     expect(screen.queryByRole("button", { name: /Thinking effort/ })).not.toBeInTheDocument();
   });
+
+  it("shows the attached results above the text, each with a way to take it out", () => {
+    const onRemoveAttachment = vi.fn();
+    renderComposer({
+      attachments: [
+        { assetId: "a-1", kind: "image", nodeId: "n-1", nodeTitle: "Rougher 1", sha256: "sha" },
+        { assetId: "a-2", kind: "video", nodeId: "n-2", nodeTitle: "Clip", sha256: "sha2", hasPoster: true },
+      ],
+      onRemoveAttachment,
+    });
+    const list = screen.getByRole("list", { name: "Attached to the message (2)" });
+    expect(within(list).getByRole("img", { name: "Rougher 1's image" })).toBeInTheDocument();
+    expect(within(list).getByRole("img", { name: "Clip's video" })).toHaveAttribute("src", "/api/assets/thumb/sha2?w=320&poster=1");
+    fireEvent.click(within(list).getByRole("button", { name: "Remove Clip's video" }));
+    expect(onRemoveAttachment).toHaveBeenCalledWith("a-2");
+  });
 });

@@ -9,6 +9,7 @@ import {
   ChevronDownIcon,
   ClockIcon,
   GlobeIcon,
+  ImageIcon,
   PencilIcon,
   SquareDashedMousePointerIcon,
   XIcon,
@@ -17,6 +18,7 @@ import {
   PromptInput,
   PromptInputBody,
   PromptInputFooter,
+  PromptInputHeader,
   PromptInputSubmit,
   PromptInputTextarea,
 } from "@/components/ai-elements/prompt-input";
@@ -29,8 +31,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/agent/ui/dropdown-menu";
 import { MenuSectionLabel, menuItemClass, menuSurfaceClass } from "@/components/ui/Menu";
+import { attachmentLabel } from "@/lib/agent/client/attachments";
 import { isImeKeyEvent } from "@/lib/agent/client/keyboard";
+import type { AgentAttachment } from "@/lib/agent/types";
 import { AGENT_POPOVER_LAYER } from "./AgentChrome";
+import { AttachmentThumb } from "./AgentRunMedia";
 import { useAgentSurface } from "./AgentSurface";
 import type { AgentQueuedMessage } from "./hooks/useAgentChat";
 
@@ -68,6 +73,9 @@ export interface AgentComposerProps {
    */
   draft?: string;
   onDraftChange?: (draft: string) => void;
+  /** Results added to the message from the chat, shown above its text. */
+  attachments?: AgentAttachment[];
+  onRemoveAttachment?: (assetId: string) => void;
   /** Messages waiting for the running turn, shown above the box. */
   queued?: AgentQueuedMessage[];
   /** The queue waits for the user (the last turn was stopped or failed): offer "Send now". */
@@ -218,6 +226,13 @@ function QueuedMessages({
             <span className="min-w-0 flex-1 truncate" title={entry.text}>
               {entry.text}
             </span>
+            {!!entry.metadata?.attachments?.length && (
+              <span className="flex shrink-0 items-center gap-1 font-mono text-[11px] tabular-nums text-neutral-500">
+                <ImageIcon className="size-3" strokeWidth={1.75} aria-hidden="true" />
+                {entry.metadata.attachments.length}
+                <span className="sr-only">attached</span>
+              </span>
+            )}
             {/* At rest a clock; on hover or focus (and always on touch) the actions. */}
             <span
               aria-hidden="true"
@@ -254,7 +269,44 @@ function QueuedMessages({
   );
 }
 
-/** The agent takes no attachments: let the browser paste the text part of a mixed clipboard. */
+/**
+ * One result added to the message: its thumbnail, named on hover, with an ×
+ * in the corner (on hover or focus, always on touch) to take it out again.
+ */
+function ComposerAttachment({
+  attachment,
+  page,
+  onRemove,
+}: {
+  attachment: AgentAttachment;
+  page: boolean;
+  onRemove?: (assetId: string) => void;
+}) {
+  const label = attachmentLabel(attachment);
+  return (
+    <li data-attachment={attachment.assetId} title={label} className="group/attachment relative">
+      <AttachmentThumb attachment={attachment} className={page ? "size-14" : "size-11"} />
+      {onRemove && (
+        <button
+          type="button"
+          aria-label={`Remove ${label}`}
+          onClick={() => onRemove(attachment.assetId)}
+          className={cn(
+            "absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-neutral-700 text-neutral-200",
+            // A ring of the box's own colour cuts it out of the thumbnail's corner.
+            page ? "shadow-[0_0_0_2px_var(--color-card)]" : "shadow-[0_0_0_2px_var(--color-well)]",
+            "opacity-0 transition-opacity duration-[120ms] group-hover/attachment:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100",
+            "hover:bg-neutral-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selection",
+          )}
+        >
+          <XIcon className="size-3" strokeWidth={2} aria-hidden="true" />
+        </button>
+      )}
+    </li>
+  );
+}
+
+/** The agent takes no files: let the browser paste the text part of a mixed clipboard. */
 const pasteTextOnly = () => {};
 
 /**
@@ -274,6 +326,8 @@ export function AgentComposer({
   textareaRef,
   draft: parentDraft,
   onDraftChange,
+  attachments = [],
+  onRemoveAttachment,
   queued = [],
   queueHeld = false,
   onEditQueued,
@@ -341,6 +395,15 @@ export function AgentComposer({
               "has-[[data-slot=input-group-control]:focus-visible]:ring-1 has-[[data-slot=input-group-control]:focus-visible]:ring-white/15"
         }
       >
+        {attachments.length > 0 && (
+          <PromptInputHeader className={page ? "px-4 pb-0 pt-3.5" : "px-3 pb-0 pt-2.5"}>
+            <ul aria-label={`Attached to the message (${attachments.length})`} className="flex flex-wrap gap-2">
+              {attachments.map((attachment) => (
+                <ComposerAttachment key={attachment.assetId} attachment={attachment} page={page} onRemove={onRemoveAttachment} />
+              ))}
+            </ul>
+          </PromptInputHeader>
+        )}
         <PromptInputBody>
           <PromptInputTextarea
             ref={textareaRef}
@@ -350,7 +413,13 @@ export function AgentComposer({
             // Replaces the prompt input's handler, which would take any file on the
             // clipboard as a (hidden, never sent) attachment and swallow the text with it.
             onPaste={pasteTextOnly}
-            placeholder={busy ? "Queue a message…" : "Describe a workflow, or a change to this one…"}
+            placeholder={
+              busy
+                ? "Queue a message…"
+                : attachments.length > 0
+                  ? "Ask about what you attached, or say what to change…"
+                  : "Describe a workflow, or a change to this one…"
+            }
             aria-label="Message the agent"
             className={
               page

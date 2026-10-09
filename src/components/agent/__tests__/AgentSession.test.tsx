@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useEffect, type ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
-import type { AgentHarnessStatus, AgentUIMessage } from "@/lib/agent/types";
+import type { AgentAttachment, AgentHarnessStatus, AgentUIMessage } from "@/lib/agent/types";
 
 const snapshot = vi.hoisted(() => ({ nodes: [], edges: [], groups: [], selectedNodeIds: [] }));
 vi.mock("@/lib/agent/graph/snapshot", () => ({ buildAgentSnapshot: vi.fn(() => snapshot) }));
@@ -28,7 +28,12 @@ vi.mock("@/utils/logger", () => ({
 }));
 
 import { AgentPanel } from "@/components/agent/AgentPanel";
-import { AgentSessionProvider, useAgentSession, type AgentSessionValue } from "@/components/agent/AgentSession";
+import {
+  AgentSessionProvider,
+  useAgentSession,
+  useAgentTranscriptActions,
+  type AgentSessionValue,
+} from "@/components/agent/AgentSession";
 import { useToast } from "@/components/Toast";
 import { AGENT_HISTORY_KEY, type AgentConversation } from "@/lib/agent/client/history";
 import { AGENT_SETTINGS_KEY } from "@/lib/agent/client/settings";
@@ -122,12 +127,40 @@ function Probe() {
   );
 }
 
+const rougher = (n: number): AgentAttachment => ({
+  assetId: `asset-${n}`,
+  kind: "image",
+  nodeId: `nanoBanana-${n}`,
+  nodeTitle: `Rougher ${n}`,
+  tabId: "tab-1",
+  sha256: `sha-${n}`,
+});
+
+/** A results card's attach buttons, as the transcript's cards reach the session. */
+function AttachProbe() {
+  const actions = useAgentTranscriptActions();
+  return (
+    <div data-testid="attached" data-ids={[...(actions?.attached ?? [])].join(",")}>
+      {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+        <button key={n} type="button" onClick={() => actions?.toggleAttachment?.(rougher(n))}>
+          {`Attach ${n}`}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The bodies the chat route was sent, parsed. */
+const chatBodies = () =>
+  fetchMock.mock.calls.filter(([url]) => String(url) === "/api/agent/chat").map(([, init]) => JSON.parse(String(init?.body)));
+
 function Harness({ children }: { children?: ReactNode }) {
   return (
     <ReactFlowProvider>
       <AgentSessionProvider>
         {children}
         <Probe />
+        <AttachProbe />
       </AgentSessionProvider>
     </ReactFlowProvider>
   );
@@ -373,6 +406,66 @@ describe("AgentSessionProvider", () => {
     expect(session.conversations).toEqual([]);
     expect(screen.getByTestId("probe")).not.toHaveAttribute("data-chat-id", "chat-saved");
     expect(session.chat.messages).toEqual([]);
+  });
+
+  it("sends the results added from the chat with the next message, then clears them", async () => {
+    chatChunks.push(reply("He looks rougher now."));
+    render(
+      <Harness>
+        <AgentPanel open onClose={vi.fn()} buttonRight={15} buttonBottom={173} />
+      </Harness>,
+    );
+    const textarea = (await screen.findByRole("textbox", { name: "Message the agent" })) as HTMLTextAreaElement;
+    fireEvent.click(screen.getByRole("button", { name: "Attach 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Attach 2" }));
+    // Pressed again: taken out.
+    fireEvent.click(screen.getByRole("button", { name: "Attach 2" }));
+    expect(screen.getByTestId("attached")).toHaveAttribute("data-ids", "asset-1");
+    const box = screen.getByRole("list", { name: "Attached to the message (1)" });
+    expect(within(box).getByRole("img", { name: "Rougher 1's image" })).toHaveAttribute("src", "/api/assets/thumb/sha-1?w=320");
+    expect(textarea).toHaveAttribute("placeholder", "Ask about what you attached, or say what to change…");
+
+    fireEvent.change(textarea, { target: { value: "Make him rougher" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    await waitFor(() => expect(screen.getByTestId("probe")).toHaveTextContent("Make him rougher | He looks rougher now."));
+    const sent = chatBodies()[0].messages.at(-1);
+    expect(sent.metadata).toEqual({ attachments: [rougher(1)] });
+    expect(screen.queryByRole("list", { name: /Attached to the message/ })).toBeNull();
+    expect(screen.getByTestId("attached")).toHaveAttribute("data-ids", "");
+    // The sent message shows what it carried.
+    const panel = screen.getByTestId("agent-panel");
+    expect(within(within(panel).getByRole("list", { name: "Attached (1)" })).getByRole("img", { name: "Rougher 1's image" })).toBeInTheDocument();
+  });
+
+  it("caps what one message carries, and gives a queued message's results back with it to edit", async () => {
+    chatGate = new Promise(() => {});
+    render(
+      <Harness>
+        <AgentPanel open onClose={vi.fn()} buttonRight={15} buttonBottom={173} />
+      </Harness>,
+    );
+    const textarea = (await screen.findByRole("textbox", { name: "Message the agent" })) as HTMLTextAreaElement;
+    act(() => {
+      session.chat.send("Build something");
+    });
+    await waitFor(() => expect(chatSignals).toHaveLength(1));
+
+    for (const n of [1, 2, 3, 4, 5, 6, 7]) fireEvent.click(screen.getByRole("button", { name: `Attach ${n}` }));
+    expect(screen.getByTestId("attached")).toHaveAttribute("data-ids", "asset-1,asset-2,asset-3,asset-4,asset-5,asset-6");
+    expect(useToast.getState().message).toBe("A message can carry 6 results at most");
+    for (const n of [3, 4, 5, 6]) fireEvent.click(screen.getByRole("button", { name: `Attach ${n}` }));
+
+    // Queued while the turn runs: the results go with it, and the box is free for the next.
+    fireEvent.change(textarea, { target: { value: "Then make them rougher" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    const queue = await screen.findByRole("region", { name: "Queued messages (1)" });
+    expect(queue).toHaveTextContent("Then make them rougher2attached");
+    expect(screen.queryByRole("list", { name: /Attached to the message/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Attach 7" }));
+    fireEvent.click(within(queue).getByRole("button", { name: "Edit queued message: Then make them rougher" }));
+    expect(textarea.value).toBe("Then make them rougher");
+    expect(screen.getByTestId("attached")).toHaveAttribute("data-ids", "asset-7,asset-1,asset-2");
   });
 
   it("stops a running turn when the page's session goes away", async () => {

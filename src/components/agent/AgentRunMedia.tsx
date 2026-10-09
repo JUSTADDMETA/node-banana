@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { CheckIcon, CopyIcon, LocateFixedIcon, Maximize2Icon, PlayIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LocateFixedIcon, Maximize2Icon, MessageSquarePlusIcon, PlayIcon } from "lucide-react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { cn } from "@/components/agent/lib/utils";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/agent/ui/tooltip";
 import { AssetPlaceholder } from "@/components/assets/AssetTile";
 import { CHROME_ICON_BUTTON } from "@/components/chromeStyles";
 import { assetFileUrl, assetThumbUrl } from "@/lib/assets/client/api";
+import { attachmentLabel, attachmentThumbSrc } from "@/lib/agent/client/attachments";
 import { getNodeHandles } from "@/lib/nodes/handles";
-import type { AgentRunOutput } from "@/lib/agent/types";
+import type { AgentAttachment, AgentRunOutput } from "@/lib/agent/types";
 import { AGENT_ICON, AGENT_POPOVER_LAYER } from "./AgentChrome";
 import type { AgentSurface } from "./AgentSurface";
 
@@ -69,6 +70,22 @@ export function CardIconButton({
         <TooltipContent className={AGENT_POPOVER_LAYER}>{blocked ? `${label}: ${disabledReason}` : label}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
+  );
+}
+
+/** An attached result's thumbnail (the composer's, a sent message's): square, its video marked. Size it with `className`. */
+export function AttachmentThumb({ attachment, className }: { attachment: AgentAttachment; className?: string }) {
+  return (
+    <span className={cn("relative block overflow-hidden rounded-lg bg-well", className)}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={attachmentThumbSrc(attachment)} alt={attachmentLabel(attachment)} draggable={false} decoding="async" className="size-full object-cover" />
+      {attachment.kind === "video" && (
+        <span aria-hidden="true" className="absolute inset-0 flex items-center justify-center bg-black/20 text-white">
+          <PlayIcon className="size-3.5" strokeWidth={0} fill="currentColor" />
+        </span>
+      )}
+      <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[inherit] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]" />
+    </span>
   );
 }
 
@@ -244,6 +261,14 @@ export interface RunPreviewRowProps {
   canOpen?: (outputId: string) => boolean;
   /** Bring a node into view on the canvas; absent outside the agent session. */
   onShowNode?: (nodeId: string) => void;
+  /** Adding previews to the unsent message; absent where no message box takes them. */
+  attach?: RunPreviewAttach;
+}
+
+export interface RunPreviewAttach {
+  /** Whether the output is added to the message, or null when it can't be (no library record, nothing the model can see). */
+  state: (outputId: string) => boolean | null;
+  toggle: (outputId: string) => void;
 }
 
 /** The row's fixed height: every preview is this tall, as wide as its own shape makes it. */
@@ -307,7 +332,7 @@ function useRowWidth(shown: boolean, fallback: number) {
  * PREVIEW_ROW_MAX_WIDTH (the transcript is a size container, so `cqw` is the
  * chat's width); in the window it runs past the text's inset to the edges.
  */
-export function RunPreviewRow({ items, liveSources, surface, batched, onOpen, canOpen, onShowNode }: RunPreviewRowProps) {
+export function RunPreviewRow({ items, liveSources, surface, batched, onOpen, canOpen, onShowNode, attach }: RunPreviewRowProps) {
   const height = PREVIEW_HEIGHT[surface];
   const { ref, width } = useRowWidth(items.length > 0, ROW_WIDTH_FALLBACK[surface]);
   // Natural shapes of outputs whose record has none (a live output's image), once loaded.
@@ -345,10 +370,14 @@ export function RunPreviewRow({ items, liveSources, surface, batched, onOpen, ca
         const overflow = more > 0 && index === fit - 1;
         const batchIndex = item.output ? item.output.batchIndex : item.pending.batchIndex;
         const title = item.output ? item.output.nodeTitle : item.pending.nodeTitle;
+        const attached = attach && item.output && !overflow ? attach.state(item.output.id) : null;
         return (
           <figure key={item.key} className="m-0 flex shrink-0 flex-col gap-[7px]" style={{ width: frameWidth }}>
-            <div className="relative overflow-hidden rounded-[10px] bg-well" style={{ width: frameWidth, height }}>
+            <div className="group/frame relative overflow-hidden rounded-[10px] bg-well" style={{ width: frameWidth, height }}>
               <PreviewFrame item={item} liveSrc={item.output ? liveSources[item.output.id] : undefined} onOpen={onOpen} onShowNode={onShowNode} onMeasure={onMeasure} />
+              {attached !== null && item.output && (
+                <AttachToggle output={item.output} on={attached} onToggle={() => attach!.toggle(item.output!.id)} />
+              )}
               {overflow && (
                 <button
                   type="button"
@@ -375,6 +404,43 @@ export function RunPreviewRow({ items, liveSources, surface, batched, onOpen, ca
         );
       })}
     </div>
+  );
+}
+
+/**
+ * The corner button that adds a preview to the unsent message: shown on hover
+ * or focus (always on touch), and kept, filled, with a ring round the preview,
+ * while the preview is added. Pressing it again takes it out.
+ */
+function AttachToggle({ output, on, onToggle }: { output: AgentRunOutput; on: boolean; onToggle: () => void }) {
+  const label = `Add ${output.nodeTitle}'s ${output.kind === "video" ? "video" : "image"} to the chat`;
+  return (
+    <>
+      {on && <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[10px] shadow-[inset_0_0_0_2px_var(--color-selection)]" />}
+      <TooltipProvider delayDuration={400}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={label}
+              aria-pressed={on}
+              data-attach-toggle={output.id}
+              onClick={onToggle}
+              className={cn(
+                "absolute left-1.5 top-1.5 flex size-6 items-center justify-center rounded-md text-white transition-[opacity,background-color] duration-150 motion-reduce:transition-none",
+                "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-selection",
+                on
+                  ? "bg-selection opacity-100 hover:bg-[#2f6fdc]"
+                  : "bg-black/55 opacity-0 hover:bg-black/75 group-hover/frame:opacity-100 pointer-coarse:opacity-100",
+              )}
+            >
+              {on ? <CheckIcon size={14} strokeWidth={2.25} aria-hidden="true" /> : <MessageSquarePlusIcon size={13} strokeWidth={2} aria-hidden="true" />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className={AGENT_POPOVER_LAYER}>{on ? "Added to the chat · remove" : "Add to the chat"}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </>
   );
 }
 

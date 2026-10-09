@@ -153,6 +153,8 @@ export interface HarnessTurnParams {
   history: Array<{ role: "user" | "assistant"; text: string }>;
   /** This turn's user message, already combined with the canvas context. */
   prompt: string;
+  /** Pictures the user attached to this message: sent after the prompt, each after its caption. */
+  images?: AgentToolImage[];
   systemPrompt: string;
   tools: AgentToolRuntime;
   model?: string;
@@ -606,6 +608,29 @@ export interface AgentResearchTarget {
   nodeType?: string;
 }
 
+/**
+ * A result the user added to their message from the chat (a results card or
+ * its viewer). The message carries the asset id and what to show it by; the
+ * server reads the picture from the library, and the model sees it.
+ */
+/** Results one message can carry: each is about 1,400 tokens at 1024px. */
+export const AGENT_MAX_ATTACHMENTS = 6;
+
+export interface AgentAttachment {
+  /** The asset library record the picture comes from. */
+  assetId: string;
+  kind: "image" | "video";
+  nodeId: string;
+  /** The node's title when the result was made. */
+  nodeTitle: string;
+  /** The workflow tab its node is in. */
+  tabId?: string;
+  /** The file's hash, for the thumbnail (/api/assets/thumb/<sha256>). */
+  sha256?: string;
+  /** A video with a stored poster frame (what the model sees of it). */
+  hasPoster?: boolean;
+}
+
 export interface AgentMessageMetadata {
   harness?: AgentHarnessId;
   model?: string;
@@ -613,6 +638,8 @@ export interface AgentMessageMetadata {
   modelLabel?: string;
   /** On a user message: this turn looks up prompting tips for that model (web on, canvas tools off). */
   research?: AgentResearchTarget;
+  /** On a user message: the results the user added to it, in order. */
+  attachments?: AgentAttachment[];
 }
 
 export interface AgentToolUIOutput {

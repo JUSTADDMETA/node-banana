@@ -25,6 +25,7 @@ import {
   shouldPollReadiness,
   type AgentReadiness,
 } from "@/lib/agent/client/readiness";
+import { mergeAttachments, toggleAttachment as toggled } from "@/lib/agent/client/attachments";
 import { researchMessage, researchTargetForSelection } from "@/lib/agent/client/research";
 import { findLatestAgentSession } from "@/lib/agent/client/session";
 import { confirmStopAgent, setAgentTurnStop } from "@/lib/agent/client/stopGuard";
@@ -34,6 +35,8 @@ import { useAgentSettings } from "@/lib/agent/client/useAgentSettings";
 import { useAgentStatus } from "@/lib/agent/client/useAgentStatus";
 import {
   AGENT_HARNESS_IDS,
+  AGENT_MAX_ATTACHMENTS,
+  type AgentAttachment,
   type AgentDataParts,
   type AgentErrorCode,
   type AgentGraphOpBatch,
@@ -137,6 +140,13 @@ export interface AgentSessionValue {
   /** The unsent message, shared by both composers (it outlives either composer unmounting). */
   draft: string;
   setDraft: Dispatch<SetStateAction<string>>;
+  /** Results added to the unsent message from the chat, in the order they were added; shared like the draft. */
+  attachments: AgentAttachment[];
+  removeAttachment: (assetId: string) => void;
+  /** The composer's send: the draft's text with the attachments, which then clear. Queued while a turn runs. */
+  submit: (text: string) => boolean;
+  /** A queued message back into the composer to be edited: its text after the draft's, its attachments with the draft's. */
+  editQueued: (id: string) => boolean;
   /** The composer's context chips: the selection, a harness switch, the prompting-tips action. */
   notes: AgentComposerNote[];
   /** The live canvas has nodes (the empty state's suggestions depend on it). */
@@ -188,6 +198,10 @@ export interface AgentTranscriptActions {
   showOnCanvas: (target?: AgentCanvasTarget) => boolean;
   /** A turn runs: a run in another tab waits, since switching tabs would stop the turn. */
   busy: boolean;
+  /** The asset ids of the results added to the unsent message. */
+  attached?: ReadonlySet<string>;
+  /** Add a result to the unsent message, or take it out again; absent where no message box takes them. */
+  toggleAttachment?: (attachment: AgentAttachment) => void;
 }
 
 const AgentSessionContext = createContext<AgentSessionValue | null>(null);
@@ -364,6 +378,43 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
   // Kept here, not in a composer: a composer unmounts whenever the harness
   // isn't ready (switching harness, a re-check), and the unsent text must survive.
   const [draft, setDraft] = useState("");
+  // Results added from either surface's cards or viewer, for the next message.
+  const [attachments, setAttachments] = useState<AgentAttachment[]>([]);
+  const toggleAttachment = useCallback(
+    (attachment: AgentAttachment) => {
+      const next = toggled(attachments, attachment);
+      if (next.full) {
+        useToast.getState().show(`A message can carry ${AGENT_MAX_ATTACHMENTS} results at most`, "info");
+        return;
+      }
+      setAttachments(next.list);
+    },
+    [attachments],
+  );
+  const removeAttachment = useCallback((assetId: string) => {
+    setAttachments((current) => current.filter((item) => item.assetId !== assetId));
+  }, []);
+  const submit = useCallback(
+    (text: string) => {
+      const sent = send(text, attachments.length > 0 ? { attachments } : undefined);
+      if (sent && attachments.length > 0) setAttachments([]);
+      return sent;
+    },
+    [send, attachments],
+  );
+  const takeQueued = chat.takeQueued;
+  const editQueued = useCallback(
+    (id: string) => {
+      const entry = takeQueued(id);
+      if (!entry) return false;
+      setDraft((current) => (current.trim() ? `${current}\n${entry.text}` : entry.text));
+      const carried = entry.metadata?.attachments;
+      if (carried?.length) setAttachments((current) => mergeAttachments(current, carried));
+      return true;
+    },
+    [takeQueued],
+  );
+  const attached = useMemo<ReadonlySet<string>>(() => new Set(attachments.map((item) => item.assetId)), [attachments]);
 
   // --- History ---------------------------------------------------------------
   const history = useAgentHistory();
@@ -564,8 +615,8 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
 
   const presenceValue = useMemo<AgentPresenceValue>(() => ({ busy, presence }), [busy, presence]);
   const transcriptActions = useMemo<AgentTranscriptActions>(
-    () => ({ chatId, send, showOnCanvas, busy }),
-    [chatId, send, showOnCanvas, busy],
+    () => ({ chatId, send, showOnCanvas, busy, attached, toggleAttachment }),
+    [chatId, send, showOnCanvas, busy, attached, toggleAttachment],
   );
   const value: AgentSessionValue = {
     harness,
@@ -597,6 +648,10 @@ export function AgentSessionProvider({ children }: { children: ReactNode }) {
     busy,
     draft,
     setDraft,
+    attachments,
+    removeAttachment,
+    submit,
+    editQueued,
     notes,
     canvasHasNodes,
     conversations: history.conversations,

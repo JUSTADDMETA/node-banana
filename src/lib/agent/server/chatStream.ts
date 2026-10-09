@@ -31,6 +31,8 @@ import { buildAgentSystemPrompt, buildTurnPrompt } from "../prompt";
 import type { ProviderKeys } from "@/lib/providers/keys";
 import { TOOL_NAMES } from "../tools/definitions";
 import { createAgentToolRuntime, type AgentToolRuntimeOptions } from "../tools/runtime";
+import { libraryOutputReader } from "../tools/libraryOutputs";
+import { attachedResults, type AgentOutputReader } from "../tools/outputs";
 import { filePromptNotesStore, type PromptNotesStore } from "../prompting/notesStore";
 import {
   buildResearchSystemPrompt,
@@ -40,6 +42,7 @@ import {
   SAVE_PROMPT_NOTES,
 } from "../prompting/research";
 import type {
+  AgentAttachment,
   AgentChatRequestBody,
   AgentErrorCode,
   AgentGraphOpBatch,
@@ -60,7 +63,7 @@ import type {
   HarnessEvent,
   HarnessTurnParams,
 } from "../types";
-import { AGENT_OPENING_STATUS, WEB_TOOL_PENDING } from "../types";
+import { AGENT_MAX_ATTACHMENTS, AGENT_OPENING_STATUS, WEB_TOOL_PENDING } from "../types";
 
 export type AgentUIMessageChunk = InferUIMessageChunk<AgentUIMessage>;
 
@@ -265,6 +268,8 @@ export interface AgentConversation {
   userText: string;
   /** Set when the last message asks to look up prompting tips for a model. */
   research?: AgentResearchTarget;
+  /** The results the user added to this turn's message, in order. */
+  attachments?: AgentAttachment[];
 }
 
 const LAST_MESSAGE_PROBLEM = "the last message must be the user's, with text in it.";
@@ -284,10 +289,48 @@ export function readConversation(messages: readonly AgentUIMessage[]): AgentConv
   for (const message of messages.slice(0, -1)) {
     if (message.role !== "user" && message.role !== "assistant") continue;
     const text = messageText(message);
-    if (text) history.push({ role: message.role, text });
+    // A replayed message's pictures are not sent again: it says what it carried.
+    const attached = message.role === "user" ? readAttachments(message.metadata?.attachments) : [];
+    const note = attached.length > 0 ? `\n(Attached from the chat: ${attached.map((item) => `${item.nodeTitle}'s ${item.kind}`).join(", ")}.)` : "";
+    if (text) history.push({ role: message.role, text: text + note });
   }
   const research = researchTargetSchema.safeParse(last.metadata?.research);
-  return { history, userText, ...(research.success ? { research: research.data } : {}) };
+  const attachments = readAttachments(last.metadata?.attachments);
+  return {
+    history,
+    userText,
+    ...(research.success ? { research: research.data } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
+}
+
+const attachmentSchema = z
+  .object({
+    assetId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    kind: z.enum(["image", "video"]),
+    nodeId: z.string().min(1).max(200),
+    nodeTitle: z.string().max(500),
+    tabId: tabIdSchema.optional().catch(undefined),
+  })
+  .transform(({ assetId, kind, nodeId, nodeTitle, tabId }): AgentAttachment => ({
+    assetId,
+    kind,
+    nodeId,
+    nodeTitle,
+    ...(tabId ? { tabId } : {}),
+  }));
+
+/**
+ * A message's attached results, as far as they can be read: an entry that
+ * doesn't parse is left out, never a reason to refuse the turn. The asset id
+ * is all the server uses to find the picture; the rest only names it.
+ */
+function readAttachments(value: unknown): AgentAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const parsed = attachmentSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  }).slice(0, AGENT_MAX_ATTACHMENTS);
 }
 
 function messageText(message: AgentUIMessage): string {
@@ -867,7 +910,9 @@ export interface AgentChatStreamOptions {
   /** Defaults to the real system prompt. */
   buildSystemPrompt?: (opts: { harness: AgentHarnessId }) => string;
   /** Defaults to the real turn prompt (canvas context + the user's words). */
-  buildTurnPrompt?: (opts: { userText: string; snapshot: AgentWorkflowSnapshot; tabs?: AgentTabSummary[] }) => string;
+  buildTurnPrompt?: (opts: { userText: string; snapshot: AgentWorkflowSnapshot; tabs?: AgentTabSummary[]; attached?: string }) => string;
+  /** Reads the pictures of results the user attached; the asset library by default. */
+  outputReader?: AgentOutputReader;
   /** Prompting notes per model; ~/.node-banana/prompt-notes by default. */
   promptNotes?: PromptNotesStore;
   /** How long to wait for a stopped turn on the same chat to wind down. */
@@ -999,6 +1044,13 @@ async function runClaimedTurn(
         ...(body.tabs ? { tabs: body.tabs } : {}),
         ...(body.parkedWorkflows ? { parkedWorkflows: body.parkedWorkflows } : {}),
       });
+      const attached = conversation.attachments
+        ? await attachedResults(conversation.attachments, options.outputReader ?? libraryOutputReader(), {
+            workflow: body.workflow,
+            ...(body.parkedWorkflows ? { parkedWorkflows: body.parkedWorkflows } : {}),
+            ...(body.tabs ? { tabs: body.tabs } : {}),
+          })
+        : null;
       params = {
         history: conversation.history,
         prompt:
@@ -1007,7 +1059,9 @@ async function runClaimedTurn(
             userText: conversation.userText,
             snapshot: body.workflow,
             ...(body.tabs ? { tabs: body.tabs } : {}),
+            ...(attached ? { attached: attached.text } : {}),
           }),
+        ...(attached && attached.images.length > 0 ? { images: attached.images } : {}),
         systemPrompt: (options.buildSystemPrompt ?? buildAgentSystemPrompt)({ harness: harness.id }),
         tools: wrapToolRuntime(runtime, turn, { chatId: body.id }),
         signal,
@@ -1027,6 +1081,7 @@ async function runClaimedTurn(
     resumed: Boolean(params.sessionId),
     research: Boolean(conversation.research),
     historyLength: conversation.history.length,
+    attachmentCount: conversation.attachments?.length,
     nodeCount: body.workflow.nodes.length,
     tabCount: body.tabs?.length,
   });

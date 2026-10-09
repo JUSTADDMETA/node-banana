@@ -138,6 +138,10 @@ export function AgentChatView() {
     busy,
     draft,
     setDraft,
+    attachments,
+    removeAttachment,
+    submit,
+    editQueued: takeQueuedIntoDraft,
     notes,
     canvasHasNodes,
     conversations,
@@ -239,12 +243,9 @@ export function AgentChatView() {
   // A queued message goes back into the box to be edited (after anything already typed there).
   const editQueued = useCallback(
     (id: string) => {
-      const text = chat.takeQueued(id);
-      if (text === undefined) return;
-      setDraft((current) => (current.trim() ? `${current}\n${text}` : text));
-      focusInput();
+      if (takeQueuedIntoDraft(id)) focusInput();
     },
-    [chat, setDraft, focusInput],
+    [takeQueuedIntoDraft, focusInput],
   );
   // Stable, so a finished message (memoised) skips the re-render for every streamed token and keystroke.
   const noticeSignIn = useCallback<AgentNoticeSignIn>((target, noticeCode) => void startSignIn(target, noticeCode), [startSignIn]);
@@ -392,12 +393,14 @@ export function AgentChatView() {
             effort={effort}
             defaultEffort={modelOption?.defaultEffort}
             onEffortChange={chooseEffort}
-            onSend={chat.send}
+            onSend={submit}
             onStop={chat.stop}
             notes={notes}
             textareaRef={textareaRef}
             draft={draft}
             onDraftChange={setDraft}
+            attachments={attachments}
+            onRemoveAttachment={removeAttachment}
             queued={chat.queued}
             queueHeld={chat.queueHeld}
             onEditQueued={editQueued}

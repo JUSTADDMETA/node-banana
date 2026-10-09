@@ -4,7 +4,14 @@
  * id into a downsized image and what made it.
  */
 
-import type { AgentSnapshotOutput, AgentToolImage, AgentToolResult } from "../types";
+import type {
+  AgentAttachment,
+  AgentSnapshotOutput,
+  AgentTabSummary,
+  AgentToolImage,
+  AgentToolResult,
+  AgentWorkflowSnapshot,
+} from "../types";
 import type { DraftNode, GraphDraft } from "../graph/draft";
 import { titleOf } from "../graph/draft";
 import { asName } from "../graph/describe";
@@ -12,6 +19,8 @@ import { asName } from "../graph/describe";
 /** Images per call: about 1,400 tokens each at 1024px, so a dozen stays well inside a turn. */
 export const VIEW_OUTPUTS_MAX_IMAGES = 12;
 const PROMPT_LIMIT = 280;
+/** An attached result's prompt is often what the user wants changed: most of it, not a glimpse. */
+const ATTACHED_PROMPT_LIMIT = 1_500;
 
 /** One result as the model sees it: a picture when there is one, and what made it. */
 export interface ViewableOutput {
@@ -130,4 +139,71 @@ export async function viewOutputs(draft: GraphDraft, reader: AgentOutputReader, 
     ...(seenNodes.size > 0 ? { focusNodeIds: [...seenNodes] } : {}),
     ...(images.length > 0 ? { images } : {}),
   };
+}
+
+/** The canvases a turn was sent with: where an attached result's node is now. */
+export interface AttachmentCanvases {
+  workflow: AgentWorkflowSnapshot;
+  parkedWorkflows?: Record<string, AgentWorkflowSnapshot>;
+  tabs?: readonly AgentTabSummary[];
+}
+
+/** Where an attached result's node is, and whether it still shows that result: for its caption. */
+export function locateAttachment(attachment: AgentAttachment, canvases: AttachmentCanvases): string {
+  const { workflow, parkedWorkflows, tabs } = canvases;
+  const live = !attachment.tabId || !workflow.tabId || attachment.tabId === workflow.tabId;
+  const snapshot = live ? workflow : parkedWorkflows?.[attachment.tabId!];
+  const node = snapshot?.nodes.find((candidate) => candidate.id === attachment.nodeId);
+  if (!snapshot || !node) return "its node is no longer on an open canvas";
+  const shown = node.outputs?.some((output) => output.assetId === attachment.assetId && output.current);
+  const state = shown ? "the result it shows" : "not the result it shows now";
+  if (live) return `on the live canvas, ${state}`;
+  const name = tabs?.find((tab) => tab.id === attachment.tabId)?.name;
+  return `in the ${name ? `${asName(name)} ` : ""}tab ${attachment.tabId} (switch_workflow to work on it), ${state}`;
+}
+
+/**
+ * The results the user attached to their message, read as view_outputs reads
+ * a node's. `text` lists them for the turn's prompt (where each node is, its
+ * model and prompt, or why it can't be shown); each picture follows the
+ * message after a short caption that matches its line.
+ */
+export async function attachedResults(
+  attachments: readonly AgentAttachment[],
+  reader: AgentOutputReader,
+  canvases: AttachmentCanvases,
+): Promise<{ text: string; images: AgentToolImage[] }> {
+  const read = await Promise.all(attachments.map((attachment) => reader.read(attachment.assetId).catch(() => null)));
+  const lines: string[] = [];
+  const images: AgentToolImage[] = [];
+  attachments.forEach((attachment, index) => {
+    const name = `${asName(attachment.nodeTitle)} (${attachment.nodeId})`;
+    const found = read[index];
+    if (!found) {
+      lines.push(`- ${name}'s ${attachment.kind}: no longer in the asset library, so it cannot be shown.`);
+      return;
+    }
+    if (!found.image) {
+      const why = found.kind === "video" ? "the video has no captured frame yet" : "its picture could not be read";
+      lines.push(`- ${name}'s ${found.kind}: ${why}.`);
+      return;
+    }
+    const label = `Image ${images.length + 1}: ${name}`;
+    lines.push(
+      [
+        `- ${label}, ${locateAttachment(attachment, canvases)}${found.kind === "video" ? ", the video's first frame" : ""}`,
+        found.batch ? `run ${found.batch.index + 1} of ${found.batch.count}` : "",
+        found.model ? `model ${asName(found.model)}` : "",
+        found.prompt ? `prompt ${asName(found.prompt, ATTACHED_PROMPT_LIMIT)}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    );
+    images.push({ mime: found.image.mime, data: found.image.data, caption: label });
+  });
+  const head =
+    images.length > 0
+      ? `The user added ${plural(attachments.length, "result")} from the chat to this message. The pictures follow the message, each after its caption:`
+      : `The user added ${plural(attachments.length, "result")} from the chat to this message, but none can be shown:`;
+  return { text: [head, ...lines].join("\n"), images };
 }

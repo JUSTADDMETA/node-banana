@@ -7,6 +7,7 @@ import {
   DownloadIcon,
   LibraryBigIcon,
   LocateFixedIcon,
+  MessageSquarePlusIcon,
   PauseIcon,
   RotateCcwIcon,
   SquareIcon,
@@ -16,6 +17,7 @@ import { useShallow } from "zustand/shallow";
 import { MediaViewer, type MediaViewerAction, type MediaViewerItem } from "@/components/MediaViewer";
 import { cn } from "@/components/agent/lib/utils";
 import { assetFileUrl, fetchAssetExistence } from "@/lib/assets/client/api";
+import { attachmentOf } from "@/lib/agent/client/attachments";
 import { NODE_TITLES } from "@/lib/nodes/handles";
 import { MAX_RUN_OUTPUTS, chatRunBlockedReason, nodeTextOutputs, rerunChatRun, stopChatRun, useLatestRun } from "@/lib/agent/client/runs";
 import type { AgentRunOutput, AgentRunRecord, AgentRunStatus } from "@/lib/agent/types";
@@ -35,6 +37,7 @@ import {
   RunPreviewRow,
   RunTextCard,
   type PendingOutput,
+  type RunPreviewAttach,
   type RunVisual,
 } from "./AgentRunMedia";
 import { useAgentTranscriptActions } from "./AgentSession";
@@ -432,6 +435,27 @@ export function AgentRunResults({ record: stored, embedded = false }: AgentRunRe
   const viewed = viewerIndex >= 0 ? record.outputs.find((output) => output.id === viewing) : undefined;
   const closeViewer = () => setViewing(null);
 
+  // Adding an output to the unsent message, from its preview or the viewer.
+  const toggleAttachment = transcript?.toggleAttachment;
+  const attachedIds = transcript?.attached;
+  const attachmentFor = (outputId: string) => {
+    const output = record.outputs.find((candidate) => candidate.id === outputId);
+    return output ? attachmentOf(output, record.tabId) : null;
+  };
+  const attach: RunPreviewAttach | undefined = toggleAttachment
+    ? {
+        state: (outputId) => {
+          const attachment = attachmentFor(outputId);
+          return attachment ? !!attachedIds?.has(attachment.assetId) : null;
+        },
+        toggle: (outputId) => {
+          const attachment = attachmentFor(outputId);
+          if (attachment) toggleAttachment(attachment);
+        },
+      }
+    : undefined;
+  const viewedAttached = viewed && attach ? attach.state(viewed.id) : null;
+
   const nodesInView = record.ranNodeIds.length > 0 ? record.ranNodeIds : record.plannedNodeIds;
   const showNode = transcript
     ? (nodeId: string) => transcript.showOnCanvas({ tabId: record.tabId, nodeIds: [nodeId] })
@@ -449,6 +473,16 @@ export function AgentRunResults({ record: stored, embedded = false }: AgentRunRe
             downloadMedia(src, viewed.kind === "video" ? "video" : "image").catch((error) => console.error("Run output download failed:", error));
           },
         },
+        ...(attach && viewedAttached !== null
+          ? [
+              {
+                label: viewedAttached ? "Added to chat" : "Add to chat",
+                icon: viewedAttached ? CheckIcon : MessageSquarePlusIcon,
+                pressed: viewedAttached,
+                onClick: () => attach.toggle(viewed.id),
+              },
+            ]
+          : []),
         ...(showNode
           ? [
               {
@@ -560,6 +594,7 @@ export function AgentRunResults({ record: stored, embedded = false }: AgentRunRe
         onOpen={open}
         canOpen={canOpen}
         onShowNode={showNode}
+        attach={attach}
       />
 
       {hasRows && (

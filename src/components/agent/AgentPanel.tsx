@@ -75,6 +75,10 @@ export function AgentPanel({ open, onClose, buttonRight, buttonBottom }: AgentPa
     busy,
     draft,
     setDraft,
+    attachments,
+    removeAttachment,
+    submit,
+    editQueued: takeQueuedIntoDraft,
     notes,
     canvasHasNodes,
     conversations,
@@ -189,12 +193,9 @@ export function AgentPanel({ open, onClose, buttonRight, buttonBottom }: AgentPa
   // A queued message goes back into the box to be edited (after anything already typed there).
   const editQueued = useCallback(
     (id: string) => {
-      const text = chat.takeQueued(id);
-      if (text === undefined) return;
-      setDraft((current) => (current.trim() ? `${current}\n${text}` : text));
-      focusInput();
+      if (takeQueuedIntoDraft(id)) focusInput();
     },
-    [chat, setDraft, focusInput],
+    [takeQueuedIntoDraft, focusInput],
   );
   const dismissError = useCallback(() => {
     chat.clearError();
@@ -375,12 +376,14 @@ export function AgentPanel({ open, onClose, buttonRight, buttonBottom }: AgentPa
             effort={effort}
             defaultEffort={modelOption?.defaultEffort}
             onEffortChange={chooseEffort}
-            onSend={chat.send}
+            onSend={submit}
             onStop={chat.stop}
             notes={notes}
             textareaRef={textareaRef}
             draft={draft}
             onDraftChange={setDraft}
+            attachments={attachments}
+            onRemoveAttachment={removeAttachment}
             queued={chat.queued}
             queueHeld={chat.queueHeld}
             onEditQueued={editQueued}

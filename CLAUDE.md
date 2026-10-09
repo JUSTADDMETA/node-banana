@@ -421,6 +421,16 @@ too), which the full-page chat alone draws as a minimap (`AgentWorkflowPreview`)
 with Open in canvas. What a reply made (that minimap, then the Run card) comes
 after its text, so the summary reads first.
 
+Attachments: a results preview's corner button, or Add to chat in its viewer,
+adds that output to the unsent message (`attachments` in the session, shared by
+both composers like the draft, at most `AGENT_MAX_ATTACHMENTS`). Only an image,
+or a video with its poster frame, that the library holds can be added. The
+message carries asset ids and names in its metadata, never bytes; the chat
+route reads each picture from the library as `view_outputs` does
+(`attachedResults` in `src/lib/agent/tools/outputs.ts`), lists them in an
+`<attached>` block after the user's words, and sends the pictures after the
+prompt (Claude image blocks, Codex `image` inputs).
+
 Reviewing results: `view_outputs` shows the model what the nodes generated.
 The snapshot names each node's results by asset library id (`outputs`: the
 one it shows, then up to three newer, never bytes); the tool reads them from

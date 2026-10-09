@@ -35,6 +35,8 @@ export interface MediaViewerAction {
   /** A key that fires it while the viewer is open: "Enter", "d". */
   shortcut?: string;
   disabled?: boolean;
+  /** A toggle, and whether it is on (outlined in the selection colour): "Add to chat" once added. */
+  pressed?: boolean;
 }
 
 export interface MediaViewerProps {
@@ -393,17 +395,20 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
         {/* The rail swaps outright: fading text read badly against the image's crossfade. */}
         <RailTitle key={current.id} item={current} />
         <div className="flex shrink-0 flex-col gap-1.5">
-          {actions.map((action) => {
+          {actions.map((action, index) => {
             const Icon = action.icon;
             return (
               <button
-                key={action.label}
+                // By place: a toggle's label changes with it, and the button must keep its focus.
+                key={index}
                 type="button"
                 disabled={action.disabled}
+                aria-pressed={action.pressed}
                 onClick={action.onClick}
                 className={cn(
                   "flex h-9 w-full items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] disabled:opacity-40",
                   ACTION_TONE[action.tone ?? "default"],
+                  action.pressed && "border-selection text-white hover:border-selection",
                 )}
               >
                 <Icon size={15} strokeWidth={2} />
