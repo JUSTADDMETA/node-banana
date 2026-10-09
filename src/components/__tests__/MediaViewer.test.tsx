@@ -167,6 +167,43 @@ describe("MediaViewer", () => {
     expect(props.onClose).toHaveBeenCalledTimes(2);
   });
 
+  it("opens a prompt longer than four lines in full, and starts the next item closed", () => {
+    // jsdom lays nothing out: a clamped heading overflows when its text is long.
+    const overflows = (element: Element) => element.classList.contains("line-clamp-4") && (element.textContent ?? "").length > 80;
+    const scroll = vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+      return overflows(this) ? 140 : 80;
+    });
+    const client = vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(80);
+    try {
+      const prompt = "A ripe banana on a wooden table, in soft window light from the left, shot on a 50mm lens with a shallow depth of field and grain";
+      const long = [{ ...items[0], title: prompt }, ...items.slice(1)];
+      const { props, rerender } = renderViewer({ items: long });
+      const rail = screen.getByTestId("media-viewer-rail");
+      const text = within(rail).getByText(prompt);
+      expect(text).toHaveClass("line-clamp-4");
+
+      const more = within(rail).getByRole("button", { name: "Show full prompt" });
+      expect(more).toHaveAttribute("aria-expanded", "false");
+      expect(more).toHaveAttribute("aria-controls", text.id);
+      fireEvent.click(more);
+      expect(text).not.toHaveClass("line-clamp-4");
+      expect(text).toHaveClass("overflow-y-auto");
+      fireEvent.click(within(rail).getByRole("button", { name: "Show less" }));
+      expect(text).toHaveClass("line-clamp-4");
+
+      fireEvent.click(within(rail).getByRole("button", { name: "Show full prompt" }));
+      // A short heading has nothing more to show; the long one is closed again when it comes back.
+      rerender(<MediaViewer {...props} items={long} index={1} />);
+      expect(within(rail).queryByRole("button", { name: /Show (full prompt|less)/ })).toBeNull();
+      rerender(<MediaViewer {...props} items={long} index={0} />);
+      expect(within(rail).getByText(prompt)).toHaveClass("line-clamp-4");
+      expect(within(rail).getByRole("button", { name: "Show full prompt" })).toHaveAttribute("aria-expanded", "false");
+    } finally {
+      scroll.mockRestore();
+      client.mockRestore();
+    }
+  });
+
   it("renders nothing while closed", () => {
     renderViewer({ open: false });
     expect(screen.queryByRole("dialog")).toBeNull();

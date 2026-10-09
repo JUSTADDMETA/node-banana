@@ -1,8 +1,8 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Play, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Play, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog } from "@/components/ui/Dialog";
 import { useVideoBlobUrl } from "@/hooks/useVideoBlobUrl";
 import { CHROME_SURFACE, LIGHTBOX_BUTTON } from "./chromeStyles";
@@ -126,19 +126,59 @@ function StageMedia({ item, className, hidden, onReady }: { item: MediaViewerIte
   );
 }
 
+/**
+ * The heading, four lines at rest. A longer one (a prompt) gets "Show full
+ * prompt", which opens the rest in place, scrolling inside the rail when it
+ * would push the actions off. Keyed by item, so the next one starts closed.
+ */
 function RailTitle({ item }: { item: MediaViewerItem }) {
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const textId = useId();
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  useLayoutEffect(() => {
+    const text = textRef.current;
+    if (!text || expanded) return;
+    const measure = () => setClamped(text.scrollHeight > text.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(text);
+    return () => observer.disconnect();
+  }, [item.title, expanded]);
   if (!item.title) return null;
   return (
-    <p className="line-clamp-4 select-text text-sm font-medium leading-5 tracking-[-0.01em] text-neutral-100" title={item.title}>
-      {item.title}
-    </p>
+    <div className="flex min-h-0 flex-col items-start gap-1.5">
+      <p
+        ref={textRef}
+        id={textId}
+        className={cn(
+          "w-full select-text text-sm font-medium leading-5 tracking-[-0.01em] text-neutral-100",
+          expanded ? "min-h-0 overflow-y-auto overscroll-contain whitespace-pre-wrap pr-1" : "line-clamp-4",
+        )}
+      >
+        {item.title}
+      </p>
+      {(clamped || expanded) && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={textId}
+          onClick={() => setExpanded((open) => !open)}
+          className="flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 -ml-1.5 text-[11px] font-medium text-neutral-400 transition-colors duration-[120ms] hover:bg-white/7 hover:text-white"
+        >
+          {expanded ? "Show less" : "Show full prompt"}
+          <ChevronDown size={13} strokeWidth={2} className={cn("transition-transform duration-[120ms]", expanded && "rotate-180")} />
+        </button>
+      )}
+    </div>
   );
 }
 
 function RailDetails({ item }: { item: MediaViewerItem }) {
   if (!item.details || item.details.length === 0) return null;
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex shrink-0 flex-col gap-4">
       <div className="h-px bg-white/8" />
       <dl className="flex flex-col gap-2">
         <span className="text-[10px] uppercase tracking-[0.06em] text-neutral-500">Details</span>
@@ -312,8 +352,9 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
       </div>
 
       {/* Rail */}
+      {/* Only the heading gives way when the rail runs out of height: a whole prompt scrolls, the rest stays put. */}
       <aside className={cn(CHROME_SURFACE, "flex w-80 shrink-0 flex-col gap-4 rounded-xl p-4")} data-testid="media-viewer-rail">
-        <div className="flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between">
           <span className="font-mono text-[11px] tabular-nums text-neutral-400">
             {index + 1} of {count}
           </span>
@@ -350,8 +391,8 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
         </div>
 
         {/* The rail swaps outright: fading text read badly against the image's crossfade. */}
-        <RailTitle item={current} />
-        <div className="flex flex-col gap-1.5">
+        <RailTitle key={current.id} item={current} />
+        <div className="flex shrink-0 flex-col gap-1.5">
           {actions.map((action) => {
             const Icon = action.icon;
             return (
@@ -374,7 +415,7 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
         <RailDetails item={current} />
 
         <div className="flex-1" />
-        {footer}
+        {footer && <div className="flex shrink-0 flex-col">{footer}</div>}
       </aside>
     </Dialog>
   );
