@@ -146,7 +146,7 @@ function EffortPicker({
               value={level}
               className={cn(
                 menuItemClass,
-                "relative cursor-default rounded-sm outline-none select-none",
+                "relative cursor-pointer rounded-sm outline-none select-none",
                 "focus:bg-neutral-700 focus:text-neutral-100 data-highlighted:bg-neutral-700 data-highlighted:text-neutral-100",
                 "[&>span[data-slot=dropdown-menu-radio-item-indicator]]:hidden",
               )}

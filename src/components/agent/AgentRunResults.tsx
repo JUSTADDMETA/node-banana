@@ -659,7 +659,7 @@ export function AgentRunResults({ record: stored, embedded = false }: AgentRunRe
                 closeViewer();
                 useAssetStore.getState().setAppView("assets");
               }}
-              className="flex h-7 items-center justify-center gap-2 rounded-md text-[11px] font-medium text-neutral-400 transition-colors duration-[120ms] hover:bg-white/7 hover:text-white"
+              className="flex h-7 cursor-pointer items-center justify-center gap-2 rounded-md text-[11px] font-medium text-neutral-400 transition-colors duration-[120ms] hover:bg-white/7 hover:text-white"
             >
               <LibraryBigIcon size={14} strokeWidth={1.75} />
               <span>Open in Assets</span>

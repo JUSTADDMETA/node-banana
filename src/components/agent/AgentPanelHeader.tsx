@@ -77,7 +77,7 @@ export function describeReadiness(readiness: AgentReadiness): string {
 /** Rows of the agent's menus: the Instrument menu's 28px items, with a check on the chosen one. */
 export const MENU_ROW = cn(
   menuItemClass,
-  "relative cursor-default rounded-sm outline-none select-none",
+  "relative cursor-pointer rounded-sm outline-none select-none",
   "focus:bg-neutral-700 focus:text-neutral-100 data-highlighted:bg-neutral-700 data-highlighted:text-neutral-100",
   "data-disabled:pointer-events-none data-disabled:opacity-30",
   // Radix renders its own indicator slot; this row draws the check itself.

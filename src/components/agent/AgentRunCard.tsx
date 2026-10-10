@@ -138,14 +138,14 @@ function plural(count: number, noun: string): string {
 /** Rows of the alternatives menu: the Instrument menu's 28px items (as the header's harness menu). */
 const MENU_ROW = cn(
   menuItemClass,
-  "relative cursor-default rounded-none outline-none select-none",
+  "relative cursor-pointer rounded-none outline-none select-none",
   "focus:bg-neutral-700 focus:text-neutral-100 data-highlighted:bg-neutral-700 data-highlighted:text-neutral-100",
   "data-disabled:pointer-events-none data-disabled:opacity-30",
 );
 
 /** The run count's steps: 22px squares in a well, as MenuStepper's. */
 const STEP = cn(
-  "flex size-[22px] cursor-default items-center justify-center rounded-[6px] p-0 text-neutral-400 outline-none",
+  "flex size-[22px] cursor-pointer items-center justify-center rounded-[6px] p-0 text-neutral-400 outline-none",
   "data-highlighted:bg-white/8 data-highlighted:text-neutral-100 data-disabled:pointer-events-none data-disabled:opacity-30",
 );
 

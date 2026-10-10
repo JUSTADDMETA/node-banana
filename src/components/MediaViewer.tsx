@@ -167,7 +167,7 @@ function RailTitle({ item }: { item: MediaViewerItem }) {
           aria-expanded={expanded}
           aria-controls={textId}
           onClick={() => setExpanded((open) => !open)}
-          className="flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 -ml-1.5 text-[11px] font-medium text-neutral-400 transition-colors duration-[120ms] hover:bg-white/7 hover:text-white"
+          className="flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 -ml-1.5 text-[11px] font-medium text-neutral-400 transition-colors duration-[120ms] hover:bg-white/7 hover:text-white"
         >
           {expanded ? "Show less" : "Show full prompt"}
           <ChevronDown size={13} strokeWidth={2} className={cn("transition-transform duration-[120ms]", expanded && "rotate-180")} />
@@ -279,7 +279,7 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
       disabled={side === "prev" ? !hasPrev : !hasNext}
       onClick={() => go(side === "prev" ? index - 1 : index + 1)}
       className={cn(
-        "absolute top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full disabled:opacity-0",
+        "absolute top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full enabled:cursor-pointer disabled:opacity-0",
         LIGHTBOX_BUTTON,
         side === "prev" ? "left-3" : "right-3",
       )}
@@ -335,7 +335,7 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
                   onClick={() => go(i)}
                   style={{ width: size, height: size, transitionTimingFunction: EASE }}
                   className={cn(
-                    "relative shrink-0 overflow-hidden bg-well transition-[width,height,opacity,border-radius,box-shadow] duration-[240ms] motion-reduce:transition-none",
+                    "relative shrink-0 cursor-pointer overflow-hidden bg-well transition-[width,height,opacity,border-radius,box-shadow] duration-[240ms] motion-reduce:transition-none",
                     active ? "rounded-[10px] opacity-100 shadow-[inset_0_0_0_2px_#3b82f6]" : "rounded-lg shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] hover:opacity-100",
                     !active && (near ? "opacity-85" : "opacity-60"),
                   )}
@@ -366,7 +366,7 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
               aria-label="Previous"
               disabled={!hasPrev}
               onClick={() => go(index - 1)}
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-white/4 text-neutral-200 transition-colors hover:bg-white/8 disabled:opacity-30 disabled:hover:bg-white/4"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-white/4 text-neutral-200 transition-colors enabled:cursor-pointer hover:bg-white/8 disabled:opacity-30 disabled:hover:bg-white/4"
             >
               <ChevronLeft size={16} strokeWidth={2} />
             </button>
@@ -375,7 +375,7 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
               aria-label="Next"
               disabled={!hasNext}
               onClick={() => go(index + 1)}
-              className="flex h-7 w-7 items-center justify-center rounded-md bg-white/4 text-neutral-200 transition-colors hover:bg-white/8 disabled:opacity-30 disabled:hover:bg-white/4"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-white/4 text-neutral-200 transition-colors enabled:cursor-pointer hover:bg-white/8 disabled:opacity-30 disabled:hover:bg-white/4"
             >
               <ChevronRight size={16} strokeWidth={2} />
             </button>
@@ -385,7 +385,7 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
               type="button"
               aria-label="Close"
               onClick={onClose}
-              className="ml-1 flex h-7 w-7 items-center justify-center rounded-md bg-white/4 text-neutral-200 transition-colors hover:bg-white/8"
+              className="ml-1 flex h-7 w-7 cursor-pointer items-center justify-center rounded-md bg-white/4 text-neutral-200 transition-colors hover:bg-white/8"
             >
               <X size={16} strokeWidth={2} />
             </button>
@@ -406,7 +406,7 @@ export function MediaViewer({ open, items, index, onIndexChange, onClose, action
                 aria-pressed={action.pressed}
                 onClick={action.onClick}
                 className={cn(
-                  "flex h-9 w-full items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] disabled:opacity-40",
+                  "flex h-9 w-full items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors duration-[160ms] enabled:cursor-pointer disabled:opacity-40",
                   ACTION_TONE[action.tone ?? "default"],
                   action.pressed && "border-selection text-white hover:border-selection",
                 )}

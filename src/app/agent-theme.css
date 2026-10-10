@@ -255,6 +255,12 @@
     border-color: var(--border);
     outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
   }
+  /* Tailwind 4 leaves buttons on the arrow; in the chat every control shows the
+     hand. In the base layer, so a cursor-* utility on an element still wins. */
+  :where(.nb-agent, [data-slot])
+    :where(button:not(:disabled), [role="button"]:not([aria-disabled="true"]), a[href], summary) {
+    cursor: pointer;
+  }
 }
 
 /* The agent's edits: a light sweep across the cards of each node it just
