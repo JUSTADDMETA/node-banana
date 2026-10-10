@@ -1012,6 +1012,17 @@ describe("WorkflowCanvas", () => {
       // ReactFlow is configured with defaultEdgeOptions={{ type: "editable" }}
       expect(document.querySelector(".react-flow")).toBeInTheDocument();
     });
+
+    it("never pans while a marquee nears the canvas edge", () => {
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+
+      // React Flow 12.11 does by default, under selections measured before the pan
+      expect(mockReactFlowProps.current).toMatchObject({ autoPanOnSelection: false });
+    });
   });
 
   describe("Clipboard Paste", () => {

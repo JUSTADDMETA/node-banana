@@ -936,6 +936,8 @@ function SplitGridTemplateModalInner({ nodeId, nodeData, onClose }: SplitGridTem
               // The router is a fixed, always-visible overlay on the right, so
               // panning toward it mid-connection only jostles the graph.
               autoPanOnConnect={false}
+              // React Flow 12.11 also pans when a marquee nears the edge; this canvas never has
+              autoPanOnSelection={false}
               deleteKeyCode={["Backspace", "Delete"]}
               defaultEdgeOptions={{ type: TEMPLATE_EDGE_TYPE, animated: false }}
               proOptions={{ hideAttribution: true }}

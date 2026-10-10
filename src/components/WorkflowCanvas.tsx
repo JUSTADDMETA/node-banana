@@ -2617,6 +2617,10 @@ export function WorkflowCanvas() {
             : !isMacOS
         }
         selectNodesOnDrag={false}
+        // React Flow 12.11 pans when a marquee nears the edge; the marquee
+        // selections measure their nodes and edges once, on screen, and would
+        // pick by where things were before the pan
+        autoPanOnSelection={false}
         nodeDragThreshold={5}
         nodeClickDistance={5}
         zoomOnScroll={tutorialActive ? false : false}
