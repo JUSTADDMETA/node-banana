@@ -17,7 +17,8 @@ import {
   socketMinHeight,
   type SocketSpec,
 } from "@/components/nodes/ui";
-import type { ComfyAppInput, ComfyAppOutput, ComfyAppParam } from "@/lib/comfy/types";
+import { initialSeedValues } from "@/lib/comfy/seeds";
+import type { ComfyAppInput, ComfyAppOutput, ComfyAppParam, ComfySeedMode } from "@/lib/comfy/types";
 
 /**
  * The node this dialog is about to build, drawn as the canvas draws it.
@@ -62,18 +63,23 @@ export function ComfyNodePreview({
   const [expanded, setExpanded] = useState(true);
   const [mediaHeight, setMediaHeight] = useState(MEDIA_HEIGHT);
 
-  // Seeded the way the node seeds itself on attach — defaults, but no seeds,
-  // which are re-randomised per run. Edits are kept but not saved: nothing
-  // typed in a preview is, and a control that cannot be moved reads as a
-  // broken one.
+  // Seeded the way the node seeds itself on attach: defaults, and a seed
+  // chosen for each exposed seed. Edits are kept but not saved: nothing typed
+  // in a preview is, and a control that cannot be moved reads as a broken one.
   const [edits, setEdits] = useState<Record<string, unknown>>({});
+  const [seedModes, setSeedModes] = useState<Record<string, ComfySeedMode>>({});
+  // Chosen once per seed, not on every pick, or each change on the left
+  // would reroll the seeds on the right.
+  const [seeds, setSeeds] = useState<Record<string, number>>({});
+  const missingSeeds = params.filter((param) => param.isSeed && !(param.id in seeds));
+  if (missingSeeds.length > 0) setSeeds({ ...seeds, ...initialSeedValues(missingSeeds) });
   const values = useMemo(() => {
-    const seeded: Record<string, unknown> = {};
+    const seeded: Record<string, unknown> = { ...seeds };
     for (const param of params) {
       if (param.default !== undefined && !param.isSeed) seeded[param.id] = param.default;
     }
     return { ...seeded, ...edits };
-  }, [params, edits]);
+  }, [params, seeds, edits]);
 
   const inputSockets = useMemo<SocketSpec[]>(
     () =>
@@ -163,7 +169,15 @@ export function ComfyNodePreview({
               expanded={expanded}
               onToggle={hasParams ? () => setExpanded((open) => !open) : undefined}
             >
-              {hasParams ? <ComfyAppParameters params={params} values={values} onChange={setEdits} /> : undefined}
+              {hasParams ? (
+                <ComfyAppParameters
+                  params={params}
+                  values={values}
+                  onChange={setEdits}
+                  seedModes={seedModes}
+                  onSeedModeChange={(paramId, mode) => setSeedModes((modes) => ({ ...modes, [paramId]: mode }))}
+                />
+              ) : undefined}
             </ControlsCard>
           </div>
         </ReactFlowProvider>

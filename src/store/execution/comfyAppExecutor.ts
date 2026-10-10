@@ -14,6 +14,7 @@ import type { ComfyAppNodeData, ComfyRunHistoryItem, ComfyRunHistoryOutput, RunB
 import type { ComfyAppInput, ComfyResolvedOutput } from "@/lib/comfy/types";
 import type { RecordAssetResult, RecordedAssetHandle } from "@/lib/assets/types";
 import { buildComfyHeaders, comfyConfigError, getComfySettings } from "@/lib/comfy/settings";
+import { seedsForRun } from "@/lib/comfy/seeds";
 import type { NodeExecutionContext } from "./types";
 import { MissingInputError } from "./missingInput";
 import { assetParameters, assetProducer, recordOutput, recordingResult, withFolderFallback } from "./assetRecording";
@@ -248,6 +249,9 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
   let jobId: string | null = null;
   // The server derives randomised seeds from this, so it reproduces the run
   const seedKey = `${node.id}-${Date.now()}`;
+  // The seeds the node shows are the ones this run uses; `after` is what
+  // each becomes once the run is queued, by its mode.
+  const { run: params, after: nextSeeds } = seedsForRun(app.params, nodeData.paramValues ?? {}, nodeData.seedModes);
 
   try {
     const submitRes = await fetch("/api/comfy/run", {
@@ -256,7 +260,7 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
       body: JSON.stringify({
         app,
         inputs,
-        params: nodeData.paramValues ?? {},
+        params,
         randomizeSeeds: settings.randomizeSeeds,
         seedKey,
       }),
@@ -268,7 +272,14 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
     }
     const accepted = (await submitRes.json()) as ComfyRunAccepted;
     jobId = accepted.jobId;
-    updateNodeData(node.id, { jobId, runStatus: accepted.status });
+    // As ComfyUI does, the seeds move on once the run is queued, whatever it
+    // returns — so the next run in a batch takes the next seed.
+    const shown = (getFreshNode(node.id)?.data as ComfyAppNodeData | undefined)?.paramValues ?? nodeData.paramValues ?? {};
+    updateNodeData(node.id, {
+      jobId,
+      runStatus: accepted.status,
+      ...(Object.keys(nextSeeds).length > 0 ? { paramValues: { ...shown, ...nextSeeds } } : {}),
+    });
 
     let interval = INITIAL_INTERVAL;
     let consecutiveErrors = 0;
@@ -346,9 +357,9 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
 
       // Every media output is a generation like any other, so each goes to the
       // asset library under its own handle.
-      const prompt = describeRun(app.name, inputs, nodeData.paramValues ?? {});
+      const prompt = describeRun(app.name, inputs, params);
       const parameters = assetParameters({
-        ...(nodeData.paramValues ?? {}),
+        ...params,
         ...(settings.randomizeSeeds ? { seedKey } : {}),
       });
       const timestamp = Date.now();

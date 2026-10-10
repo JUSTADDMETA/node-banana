@@ -19,7 +19,7 @@ export type { AnnotationNodeData, BaseNodeData };
 import type { ImageGenerationMetadata } from "./api";
 import type { AspectRatio, Resolution, ModelType } from "./models";
 import type { LLMProvider, LLMModelType, SelectedModel, ProviderType } from "./providers";
-import type { ComfyAppDefinition, ComfyOutputType, ComfyWorkflowInspection } from "@/lib/comfy/types";
+import type { ComfyAppDefinition, ComfyOutputType, ComfySeedMode, ComfyWorkflowInspection } from "@/lib/comfy/types";
 
 export type { ComfyAppDefinition, ComfyWorkflowInspection };
 
@@ -739,6 +739,8 @@ export interface ComfyAppNodeData extends BaseNodeData {
   savedNodeId?: string;
   /** Values for `app.params`, keyed by param id. */
   paramValues: Record<string, unknown>;
+  /** What each exposed seed does after a run, keyed by param id; absent is random. */
+  seedModes?: Record<string, ComfySeedMode>;
   /** Derived from `app.inputs` — drives dynamic handles and `dynamicInputs`. */
   inputSchema?: ModelInputDef[];
   /** Produced media, keyed by `ComfyAppOutput.id`. */

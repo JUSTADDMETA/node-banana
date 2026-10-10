@@ -97,6 +97,9 @@ export interface ComfyCurve {
   interpolation?: string;
 }
 
+/** What a seed the node shows becomes after each run: ComfyUI's "control after generate". */
+export type ComfySeedMode = "random" | "fixed" | "increment" | "decrement";
+
 export interface ComfyAppParam {
   /** Stable id — `${nodeId}:${inputKey}`. */
   id: string;

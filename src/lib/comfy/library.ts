@@ -13,6 +13,7 @@
  */
 
 import { appToInputSchema } from "./nodeSchema";
+import { initialSeedValues } from "./seeds";
 import { COMFY_APPS_KEY } from "./settings";
 import type { ComfyAppNodeData } from "@/types/nodes";
 import type { ComfyAppDefinition, ComfyAppParam, ComfyWorkflowInspection } from "./types";
@@ -185,13 +186,16 @@ export function seedFromSavedComfyNode(saved: SavedComfyNode): Partial<ComfyAppN
     ...(inspection ? { inspection } : {}),
     inputSchema: appToInputSchema(app),
     savedNodeId: saved.id,
-    // Seeds are excluded exactly as they are on a fresh attach: leaving one
-    // unset is what lets the executor randomise it per run.
-    paramValues: Object.fromEntries(
-      app.params
-        .filter((param) => param.default !== undefined && !param.isSeed)
-        .map((param) => [param.id, param.default])
-    ),
+    // Seeds start as on a fresh attach: a new one each, chosen now so the
+    // node shows the seed its first run uses.
+    paramValues: {
+      ...Object.fromEntries(
+        app.params
+          .filter((param) => param.default !== undefined && !param.isSeed)
+          .map((param) => [param.id, param.default])
+      ),
+      ...initialSeedValues(app.params),
+    },
   };
 }
 
