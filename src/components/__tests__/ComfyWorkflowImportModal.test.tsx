@@ -1,10 +1,12 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 
 import { ComfyWorkflowImportModal } from "@/components/modals/ComfyWorkflowImportModal";
 import { invalidateSavedComfyNodes } from "@/hooks/useSavedComfyNodes";
 import { listSavedComfyNodes, saveComfyNode } from "@/lib/comfy/library";
+import { getComfySettings, saveComfySettings } from "@/lib/comfy/settings";
+import { useSettingsDialogStore } from "@/store/settingsDialogStore";
 import type { ComfyAppDefinition, ComfyWorkflowInspection } from "@/lib/comfy/types";
 
 /**
@@ -195,5 +197,30 @@ describe("the saved-node tab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete Upscale 2x" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(listSavedComfyNodes()).toHaveLength(0);
+  });
+});
+
+describe("the connection settings", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    useSettingsDialogStore.getState().consumeRequest();
+  });
+
+  it("opens Settings at its ComfyUI page from the gear, over this dialog", () => {
+    // One place for where workflows run: the same page the menu opens, which
+    // knows the Comfy key. A second copy of it here reported the key missing.
+    open();
+    fireEvent.click(screen.getByRole("button", { name: "ComfyUI connection settings" }));
+    expect(useSettingsDialogStore.getState().request?.page).toBe("comfy");
+    expect(screen.getByText("Inputs, settings and outputs")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save connection" })).toBeNull();
+  });
+
+  it("picks up a connection saved in Settings while it is open", () => {
+    render(<ComfyWorkflowImportModal isOpen onClose={vi.fn()} onAttach={vi.fn()} />);
+    // Cloud with no key: the dialog says what is missing.
+    expect(screen.getByText(/Add a Comfy key in Providers/)).toBeInTheDocument();
+    act(() => saveComfySettings({ ...getComfySettings(), mode: "local" }));
+    expect(screen.queryByText(/Add a Comfy key in Providers/)).toBeNull();
   });
 });
