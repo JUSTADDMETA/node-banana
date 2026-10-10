@@ -7,10 +7,11 @@ import {
   locateAttachment,
   viewOutputs,
   type AgentOutputReader,
+  type SavedOutput,
   type ViewableOutput,
 } from "../outputs";
 import { createAgentToolRuntime } from "../runtime";
-import { call, emptySnapshot, sequentialIds, snapshotOf, storeNode } from "./testUtils";
+import { call, emptySnapshot, sequentialIds, snapshotOf, storeEdge, storeNode } from "./testUtils";
 
 const picture = (assetId: string): ViewableOutput => ({
   kind: "image",
@@ -98,13 +99,61 @@ describe("view_outputs", () => {
     });
     expect(result.text).toContain("imageInput (imageInput-1) holds an uploaded file, which cannot be viewed.");
     expect(result.text).toContain("nanoBanana (nanoBanana-4), the result it shows: its picture could not be read.");
-    expect(result.text).toContain("nanoBanana (nanoBanana-5)'s result is not in the asset library (made before it, or while it was off), so it cannot be viewed.");
+    expect(result.text).toContain("nanoBanana (nanoBanana-5)'s result is not in the asset library (made before the library, copied from another workflow, or its save failed), so it cannot be viewed.");
     expect(result.text).toContain("nanoBanana (nanoBanana-1), the result it shows: no longer in the asset library.");
     expect(result.text).toContain("the video has no captured frame yet");
     expect(result.text).toContain("audio cannot be viewed");
     expect(result.text).toContain('No node "nope" on the canvas.');
     expect(result.text).toContain("6 more results were left out (at most 12 per call)");
     expect(result.images).toHaveLength(8);
+  });
+
+  it("finds in the library what a node keeps no ids for, and looks at an Output node through what feeds it", async () => {
+    const image = "data:image/png;base64,AAAA";
+    const snapshot: AgentWorkflowSnapshot = {
+      ...snapshotOf({
+        nodes: [
+          storeNode("comfyApp-1", "comfyApp", { x: 0, y: 0 }, { outputImage: image }),
+          storeNode("output-3", "output", { x: 400, y: 0 }, { image }),
+          // Shows a result whose carousel entry has no asset id.
+          storeNode("nanoBanana-1", "nanoBanana", { x: 800, y: 0 }, { outputImage: image }),
+        ],
+        edges: [storeEdge("comfyApp-1", "1000000", "output-3", "image")],
+      }),
+      workflowId: "wf-1",
+    };
+    const saved: Record<string, SavedOutput[]> = {
+      "comfyApp-1": [
+        { assetId: "c2", kind: "image", newest: true },
+        { assetId: "c1", kind: "image", newest: false },
+      ],
+    };
+    const reader = {
+      ...readerOf({ c2: picture("c2"), c1: picture("c1") }),
+      newestFrom: vi.fn(async (_workflowId: string, nodeId: string, runs: number) => (saved[nodeId] ?? []).slice(0, runs)),
+    };
+
+    const all = await viewOutputs(new GraphDraft(snapshot), reader, {});
+    expect(reader.newestFrom).toHaveBeenCalledWith("wf-1", "comfyApp-1", 1);
+    expect(all.images!.map((item) => item.caption.split(" · ")[0])).toEqual(["Image 1: comfyApp (comfyApp-1), the newest result it saved"]);
+    expect(all.text).toContain("nanoBanana (nanoBanana-1)'s result is not in the asset library");
+    expect(all.text).not.toContain("output-3");
+
+    const through = await viewOutputs(new GraphDraft(snapshot), reader, { nodeIds: ["output-3"], takes: 2 });
+    expect(through.text).toContain("output (output-3) shows what comfyApp (comfyApp-1) made: looked at that node instead.");
+    expect(through.images!.map((item) => item.caption.split(" · ")[0])).toEqual([
+      "Image 1: comfyApp (comfyApp-1), the newest result it saved",
+      "Image 2: comfyApp (comfyApp-1), an older take",
+    ]);
+    expect(through.focusNodeIds).toEqual(["comfyApp-1"]);
+
+    // Its caption for an attachment claims nothing about which result it shows.
+    expect(locateAttachment({ assetId: "c1", kind: "image", nodeId: "comfyApp-1", nodeTitle: "App" }, { workflow: snapshot })).toBe("on the live canvas");
+
+    // Without the workflow's id there is nothing to look up by.
+    const unsaved = await viewOutputs(new GraphDraft({ ...snapshot, workflowId: undefined }), reader, { nodeIds: ["comfyApp-1"] });
+    expect(unsaved.text).toContain("comfyApp (comfyApp-1)'s result is not in the asset library");
+    expect(reader.newestFrom).toHaveBeenCalledTimes(3);
   });
 
   it("captions a video by its first frame, and has nothing to show on a canvas without results", async () => {

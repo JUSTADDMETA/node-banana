@@ -32,9 +32,23 @@ export interface ViewableOutput {
   batch?: { index: number; count: number };
 }
 
+/** A result the library holds for a node, from `newestFrom`. */
+export interface SavedOutput {
+  assetId: string;
+  kind: ViewableOutput["kind"];
+  /** From the node's newest run. */
+  newest: boolean;
+}
+
 export interface AgentOutputReader {
   /** Null when the library has no such result (deleted, or made before the library). */
   read(assetId: string): Promise<ViewableOutput | null>;
+  /**
+   * The results node `nodeId` of workflow `workflowId` saved in its newest
+   * `runs` runs, newest first: for a node whose snapshot names none (one that
+   * keeps no carousel of asset ids, such as a ComfyUI app or an image tool).
+   */
+  newestFrom?(workflowId: string, nodeId: string, runs: number): Promise<SavedOutput[]>;
 }
 
 interface ViewOutputsArgs {
@@ -47,43 +61,90 @@ const nameOf = (node: DraftNode) => {
   const title = titleOf(node);
   return `${title ? asName(title) : node.type} (${node.id})`;
 };
+const list = (names: string[]) => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
 /** Nodes that hold a file the user brought, never a generated result. */
 const UPLOAD_TYPES: ReadonlySet<string> = new Set(["imageInput", "videoInput", "audioInput"]);
+/** Nodes that show what another node made: view_outputs looks at that node instead. */
+const DISPLAY_TYPES: ReadonlySet<string> = new Set(["output", "outputGallery", "imageCompare"]);
+
+const holdsMedia = (node: DraftNode) => Boolean(node.content?.image || node.content?.video || node.content?.audio || node.content?.model3d);
+
+/** The nodes feeding `node`, in the order of their connections. */
+function feedersOf(draft: GraphDraft, node: DraftNode): DraftNode[] {
+  const feeders: DraftNode[] = [];
+  for (const edge of draft.edges) {
+    if (edge.target !== node.id) continue;
+    const source = draft.getNode(edge.source);
+    if (source && !feeders.includes(source)) feeders.push(source);
+  }
+  return feeders;
+}
+
+type Wanted = { node: DraftNode; output: Pick<AgentSnapshotOutput, "assetId" | "current" | "newest">; saved: boolean };
 
 export async function viewOutputs(draft: GraphDraft, reader: AgentOutputReader, args: ViewOutputsArgs): Promise<AgentToolResult> {
   const notes: string[] = [];
-  let nodes: DraftNode[];
+  const workflowId = draft.workflowId;
+  const lookUp = reader.newestFrom && workflowId ? reader.newestFrom.bind(reader) : null;
+  // The library can name a result its snapshot doesn't: a node with media but no asset ids.
+  const findable = (node: DraftNode) => Boolean(lookUp) && holdsMedia(node) && !UPLOAD_TYPES.has(node.type);
+  let nodes: DraftNode[] = [];
+  const add = (node: DraftNode) => {
+    if (!nodes.includes(node)) nodes.push(node);
+  };
   if (args.nodeIds?.length) {
-    nodes = [];
     for (const key of args.nodeIds) {
       const node = draft.getNode(key) ?? draft.getNode(draft.refs.get(key) ?? "");
-      if (!node) notes.push(`No node "${key}" on the canvas.`);
-      else if (!nodes.includes(node)) nodes.push(node);
+      if (!node) {
+        notes.push(`No node "${key}" on the canvas.`);
+        continue;
+      }
+      const feeders = !node.outputs?.length && DISPLAY_TYPES.has(node.type) ? feedersOf(draft, node) : [];
+      if (feeders.length === 0) {
+        add(node);
+        continue;
+      }
+      notes.push(`${nameOf(node)} shows what ${list(feeders.map(nameOf))} made: looked at ${feeders.length === 1 ? "that node" : "those nodes"} instead.`);
+      feeders.forEach(add);
     }
   } else {
     // Every node with a result, left to right as the canvas reads.
     nodes = [...draft.nodes.values()]
-      .filter((node) => node.outputs?.length)
+      .filter((node) => node.outputs?.length || (findable(node) && !DISPLAY_TYPES.has(node.type)))
       .sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y);
   }
 
   const takes = Math.min(Math.max(args.takes ?? 1, 1), 4);
-  const wanted: Array<{ node: DraftNode; output: AgentSnapshotOutput }> = [];
-  for (const node of nodes) {
+  const found = await Promise.all(
+    nodes.map((node) =>
+      !node.outputs?.length && findable(node) ? lookUp!(workflowId!, node.id, takes).catch(() => [] as SavedOutput[]) : Promise.resolve([] as SavedOutput[]),
+    ),
+  );
+  const wanted: Wanted[] = [];
+  nodes.forEach((node, index) => {
     const outputs = node.outputs ?? [];
-    if (outputs.length === 0) {
-      const holds = node.content?.image || node.content?.video;
-      notes.push(
-        !holds
-          ? `${nameOf(node)} has no generated result to look at.`
-          : UPLOAD_TYPES.has(node.type)
-            ? `${nameOf(node)} holds an uploaded file, which cannot be viewed.`
-            : `${nameOf(node)}'s result is not in the asset library (made before it, or while it was off), so it cannot be viewed.`,
-      );
-      continue;
+    if (outputs.length > 0) {
+      for (const output of outputs.slice(0, takes)) wanted.push({ node, output, saved: false });
+      return;
     }
-    for (const output of outputs.slice(0, takes)) wanted.push({ node, output });
-  }
+    const saved = found[index];
+    if (saved.length > 0) {
+      for (const output of saved) wanted.push({ node, output: { assetId: output.assetId, ...(output.newest ? { newest: true as const } : {}) }, saved: true });
+      return;
+    }
+    const content = node.content;
+    notes.push(
+      !holdsMedia(node)
+        ? `${nameOf(node)} has no generated result to look at.`
+        : UPLOAD_TYPES.has(node.type)
+          ? `${nameOf(node)} holds an uploaded file, which cannot be viewed.`
+          : DISPLAY_TYPES.has(node.type)
+            ? `${nameOf(node)} shows a result no connected node made, so it cannot be viewed.`
+            : !content?.image && !content?.video
+              ? `${nameOf(node)}'s result is ${content?.audio ? "audio" : "a 3D model"}, which cannot be viewed.`
+              : `${nameOf(node)}'s result is not in the asset library (made before the library, copied from another workflow, or its save failed), so it cannot be viewed.`,
+    );
+  });
   const shown = wanted.slice(0, VIEW_OUTPUTS_MAX_IMAGES);
   if (wanted.length > shown.length) {
     notes.push(`${wanted.length - shown.length} more results were left out (at most ${VIEW_OUTPUTS_MAX_IMAGES} per call): ask for fewer nodes or takes to see them.`);
@@ -92,13 +153,17 @@ export async function viewOutputs(draft: GraphDraft, reader: AgentOutputReader, 
   const read = await Promise.all(shown.map(({ output }) => reader.read(output.assetId).catch(() => null)));
   const images: AgentToolImage[] = [];
   const seenNodes = new Set<string>();
-  shown.forEach(({ node, output }, index) => {
+  shown.forEach(({ node, output, saved }, index) => {
     const found = read[index];
-    const which = output.current
-      ? `the result it shows${output.newest ? "" : " (an older take)"}`
-      : output.newest
-        ? "its newest result, which it does not show"
-        : "an older take";
+    const which = saved
+      ? output.newest
+        ? "the newest result it saved"
+        : "an older take"
+      : output.current
+        ? `the result it shows${output.newest ? "" : " (an older take)"}`
+        : output.newest
+          ? "its newest result, which it does not show"
+          : "an older take";
     if (!found) {
       notes.push(`${nameOf(node)}, ${which}: no longer in the asset library.`);
       return;
@@ -155,11 +220,12 @@ export function locateAttachment(attachment: AgentAttachment, canvases: Attachme
   const snapshot = live ? workflow : parkedWorkflows?.[attachment.tabId!];
   const node = snapshot?.nodes.find((candidate) => candidate.id === attachment.nodeId);
   if (!snapshot || !node) return "its node is no longer on an open canvas";
+  // A node that keeps no carousel of asset ids (a ComfyUI app, an image tool) can't say which it shows.
   const shown = node.outputs?.some((output) => output.assetId === attachment.assetId && output.current);
-  const state = shown ? "the result it shows" : "not the result it shows now";
-  if (live) return `on the live canvas, ${state}`;
+  const state = !node.outputs?.length ? "" : shown ? ", the result it shows" : ", not the result it shows now";
+  if (live) return `on the live canvas${state}`;
   const name = tabs?.find((tab) => tab.id === attachment.tabId)?.name;
-  return `in the ${name ? `${asName(name)} ` : ""}tab ${attachment.tabId} (switch_workflow to work on it), ${state}`;
+  return `in the ${name ? `${asName(name)} ` : ""}tab ${attachment.tabId} (switch_workflow to work on it)${state}`;
 }
 
 /**

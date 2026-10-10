@@ -437,7 +437,11 @@ one it shows, then up to three newer, never bytes); the tool reads them from
 the library (`libraryOutputs.ts`: images downsized to 1024px webp, a video's
 captured frame) and returns them as images after their captions, MCP image
 blocks for Claude and `inputImage` data URLs for Codex. Uploads, audio and 3D
-cannot be viewed, and a run started in the same turn is not in it yet. Codex's
+cannot be viewed, and a run started in the same turn is not in it yet. A
+node that keeps no carousel of asset ids (a ComfyUI app, the image and video
+tools) is looked up by workflow and node instead (`newestFromNode` in
+`src/lib/assets/server`), and an Output, Output Gallery or Image Compare node
+through the nodes feeding it. Codex's
 models run tools from code-mode `exec` cells, where a tool's reply arrives as
 one string (images as `data:` URLs on their own lines) and the model sees a
 picture only when the cell passes it to `image()`: the harness's developer

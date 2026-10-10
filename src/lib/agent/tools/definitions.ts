@@ -311,7 +311,7 @@ export const AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
     title: "Review outputs",
     readOnly: true,
     description:
-      "Look at the images the nodes generated, as the user sees them, each captioned with its node, model and prompt. Use it before judging results (quality, consistency, matching the brief) or changing a workflow to fix them, and say what you saw. A video shows its first frame only; audio, 3D models and uploaded images cannot be viewed. Shows what the nodes held when the user sent this message. At most 12 images per call; one call shows them all, so don't repeat it for the same nodes.",
+      "Look at the images the nodes generated, as the user sees them, each captioned with its node, model and prompt. Use it before judging results (quality, consistency, matching the brief) or changing a workflow to fix them, and say what you saw. A video shows its first frame only; audio, 3D models and uploaded images cannot be viewed. An Output, Output Gallery or Image Compare node is looked at through the nodes feeding it. Shows what the nodes held when the user sent this message. At most 12 images per call; one call shows them all, so don't repeat it for the same nodes.",
     inputShape: viewOutputsShape,
   },
   {
