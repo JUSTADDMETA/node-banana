@@ -620,8 +620,9 @@ export function ComfyWorkflowImportModal({
       labelledBy="comfy-import-title"
       // Wider only where there is a second column to hold: every other step
       // is a single list, and stretching it would leave a hall of empty grey.
-      className={`max-h-[82vh] transition-[width] duration-200 ${
-        showPreview ? "w-[880px]" : "w-[600px]"
+      // Never past the window: the list gives way, the preview keeps its width.
+      className={`max-h-[82vh] max-w-[calc(100vw-2rem)] transition-[width] duration-200 ${
+        showPreview ? "w-[960px]" : "w-[600px]"
       }`}
     >
         <div className="px-5 pt-3.5 pb-0 shrink-0 animate-dialog-section">
@@ -795,7 +796,7 @@ export function ComfyWorkflowImportModal({
         {showPreview && inspection && (
           // 8px to the dialog's outer edge on the three sides it can reach.
           <div
-            className="w-[400px] shrink-0 py-2 pr-2 animate-dialog-section"
+            className="w-[480px] shrink-0 py-2 pr-2 animate-dialog-section"
             style={{ animationDelay: "120ms" }}
           >
             <ComfyNodePreview
