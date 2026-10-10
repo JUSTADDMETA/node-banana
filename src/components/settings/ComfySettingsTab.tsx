@@ -315,8 +315,8 @@ export function ComfySettingsTab({ settings, onChange, accountKey = null, onOpen
             <div>
               <div className="text-[13px] leading-[18px] text-neutral-100">Randomise seeds on every run</div>
               <p className="mt-0.5 text-xs leading-4 text-ink-3">
-                Off means repeat runs return the workflow&apos;s saved seed — and identical results.
-                A seed you set on a node is always kept either way.
+                For the seeds a node does not show. Off means repeat runs use the workflow&apos;s saved
+                seed — and give identical results. A seed shown on a node follows its own mode either way.
               </p>
             </div>
             <Switch

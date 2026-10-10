@@ -1,16 +1,21 @@
 "use client";
 
 import React, { useCallback, useMemo } from "react";
-import { RefreshCw } from "lucide-react";
+import { Dices, Lock, Minus, Plus, type LucideIcon } from "lucide-react";
 
 import { ComfyCurveEditor } from "./ComfyCurveEditor";
-import type { ComfyAppParam } from "@/lib/comfy/types";
+import { DEFAULT_SEED_MODE } from "@/lib/comfy/seeds";
+import type { ComfyAppParam, ComfySeedMode } from "@/lib/comfy/types";
+import { Dropdown, type DropdownOption } from "./ui/Dropdown";
 import { CheckboxField, FieldList, FieldRow, NumberField, SelectField, TextField, TextareaField } from "./ui/Field";
 
 interface ComfyAppParametersProps {
   params: ComfyAppParam[];
   values: Record<string, unknown>;
   onChange: (values: Record<string, unknown>) => void;
+  /** What each seed does after a run, by param id; absent is random. */
+  seedModes?: Readonly<Record<string, ComfySeedMode>>;
+  onSeedModeChange: (paramId: string, mode: ComfySeedMode) => void;
 }
 
 /**
@@ -35,7 +40,7 @@ function shortLabel(param: ComfyAppParam): string {
  * shape is only known at run time. Rendering mirrors {@link ModelParameters}
  * so a Comfy node's settings look like every other generation node's.
  */
-function ComfyAppParametersInner({ params, values, onChange }: ComfyAppParametersProps) {
+function ComfyAppParametersInner({ params, values, onChange, seedModes, onSeedModeChange }: ComfyAppParametersProps) {
   const handleChange = useCallback(
     (id: string, value: unknown) => {
       const next = { ...values };
@@ -70,6 +75,7 @@ function ComfyAppParametersInner({ params, values, onChange }: ComfyAppParameter
           param={param}
           value={values[param.id]}
           onChange={handleChange}
+          {...(param.isSeed ? { seedMode: seedModes?.[param.id] ?? DEFAULT_SEED_MODE, onSeedModeChange } : {})}
         />
       ))}
     </FieldList>
@@ -80,10 +86,12 @@ interface ComfyParameterInputProps {
   param: ComfyAppParam;
   value: unknown;
   onChange: (id: string, value: unknown) => void;
+  seedMode?: ComfySeedMode;
+  onSeedModeChange?: (paramId: string, mode: ComfySeedMode) => void;
 }
 
 /** One widget control, as the field its type calls for. */
-function ComfyParameterInputInner({ param, value, onChange }: ComfyParameterInputProps) {
+function ComfyParameterInputInner({ param, value, onChange, seedMode, onSeedModeChange }: ComfyParameterInputProps) {
   const label = shortLabel(param);
   const description = param.description;
 
@@ -133,16 +141,10 @@ function ComfyParameterInputInner({ param, value, onChange }: ComfyParameterInpu
   }
 
   const isNumber = param.type === "number" || param.type === "integer";
-  const randomise = param.isSeed ? (
-    <button
-      type="button"
-      title="Randomise this seed now"
-      onClick={() => onChange(param.id, Math.floor(Math.random() * 1_000_000_000))}
-      className="nodrag nopan shrink-0 w-[22px] h-[22px] flex items-center justify-center rounded-well squircle text-neutral-500 hover:text-neutral-200 hover:bg-white/5 transition-colors"
-    >
-      <RefreshCw size={12} strokeWidth={2} />
-    </button>
-  ) : undefined;
+  const seedControl =
+    param.isSeed && seedMode && onSeedModeChange ? (
+      <SeedModeMenu mode={seedMode} onChange={(mode) => onSeedModeChange(param.id, mode)} />
+    ) : undefined;
 
   if (isNumber) {
     return (
@@ -155,7 +157,7 @@ function ComfyParameterInputInner({ param, value, onChange }: ComfyParameterInpu
         integer={param.type === "integer"}
         placeholder={param.default !== undefined ? String(param.default) : undefined}
         onChange={(next) => onChange(param.id, next)}
-        trailing={randomise}
+        trailing={seedControl}
       />
     );
   }
@@ -167,7 +169,39 @@ function ComfyParameterInputInner({ param, value, onChange }: ComfyParameterInpu
       value={value === undefined || value === null ? "" : String(value)}
       placeholder={param.default !== undefined ? String(param.default) : undefined}
       onChange={(text) => onChange(param.id, text)}
-      trailing={randomise}
+      trailing={seedControl}
+    />
+  );
+}
+
+const SEED_MODES: Record<ComfySeedMode, { label: string; icon: LucideIcon; meta?: string }> = {
+  random: { label: "Random", icon: Dices },
+  fixed: { label: "Fixed", icon: Lock },
+  increment: { label: "Increment", icon: Plus, meta: "+1" },
+  decrement: { label: "Decrement", icon: Minus, meta: "−1" },
+};
+
+const SEED_MODE_OPTIONS: DropdownOption[] = (Object.keys(SEED_MODES) as ComfySeedMode[]).map((mode) => {
+  const { label, icon: Icon, meta } = SEED_MODES[mode];
+  return { value: mode, label, meta, group: "After each run", icon: <Icon size={11} strokeWidth={1.75} /> };
+});
+
+/**
+ * What a seed does after each run, as ComfyUI's "control after generate":
+ * the button beside the seed shows the mode, its menu changes it.
+ */
+function SeedModeMenu({ mode, onChange }: { mode: ComfySeedMode; onChange: (mode: ComfySeedMode) => void }) {
+  const { label, icon: Icon } = SEED_MODES[mode];
+  return (
+    <Dropdown
+      value={mode}
+      options={SEED_MODE_OPTIONS}
+      onChange={(value) => onChange(value as ComfySeedMode)}
+      className="shrink-0"
+      triggerClassName="nodrag nopan w-[22px] h-[22px] flex items-center justify-center rounded-well squircle text-neutral-500 hover:text-neutral-200 hover:bg-white/5 transition-colors"
+      trigger={<Icon size={12} strokeWidth={2} />}
+      align="end"
+      aria-label={`After each run: ${label}`}
     />
   );
 }

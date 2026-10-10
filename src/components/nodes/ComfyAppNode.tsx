@@ -21,11 +21,13 @@ import { outputsToNodeData } from "@/store/execution/comfyAppExecutor";
 import { appInputHandles, appToInputSchema } from "@/lib/comfy/nodeSchema";
 import { promptNodesFor } from "@/lib/comfy/promptNodes";
 import { mergeParamValues } from "@/lib/comfy/reconfigure";
+import { initialSeedValues } from "@/lib/comfy/seeds";
 import type {
   ComfyAppDefinition,
   ComfyInputType,
   ComfyOutputType,
   ComfyResolvedOutput,
+  ComfySeedMode,
   ComfyWorkflowInspection,
 } from "@/lib/comfy/types";
 import type { ComfyAppNodeData, ComfyRunHistoryItem } from "@/types";
@@ -174,12 +176,17 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
         savedNodeId: meta?.savedNodeId,
         inputSchema: appToInputSchema(attached),
         // A new contract invalidates the previous run entirely — old parameter
-        // ids point at nodes the new graph may not even have.
-        paramValues: Object.fromEntries(
-          attached.params
-            .filter((p) => p.default !== undefined && !p.isSeed)
-            .map((p) => [p.id, p.default])
-        ),
+        // ids point at nodes the new graph may not even have. Seeds get a
+        // value now, so the node shows the seed its first run uses.
+        paramValues: {
+          ...Object.fromEntries(
+            attached.params
+              .filter((p) => p.default !== undefined && !p.isSeed)
+              .map((p) => [p.id, p.default])
+          ),
+          ...initialSeedValues(attached.params),
+        },
+        seedModes: {},
         outputs: {},
         outputImage: null,
         outputVideo: null,
@@ -211,7 +218,12 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   const handleReconfigure = useCallback(
     (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection | undefined) => {
       pruneStaleEdges(attached);
-      const paramValues = mergeParamValues(attached.params, nodeData.paramValues ?? {});
+      // A seed newly exposed starts as on attach; kept ones keep theirs.
+      const previous = nodeData.paramValues ?? {};
+      const paramValues = {
+        ...mergeParamValues(attached.params, previous),
+        ...initialSeedValues(attached.params.filter((param) => !(param.id in previous)), nodeData.seedModes),
+      };
       // Results are keyed by output handle id, so a dropped output's value has
       // to go — and the typed mirrors re-derived from what is left, exactly as
       // a run would compute them.
@@ -232,12 +244,18 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
       });
       setModal(null);
     },
-    [id, updateNodeData, pruneStaleEdges, nodeData.paramValues, nodeData.outputs]
+    [id, updateNodeData, pruneStaleEdges, nodeData.paramValues, nodeData.seedModes, nodeData.outputs]
   );
 
   const handleParamsChange = useCallback(
     (values: Record<string, unknown>) => updateNodeData(id, { paramValues: values }),
     [id, updateNodeData]
+  );
+
+  const handleSeedModeChange = useCallback(
+    (paramId: string, mode: ComfySeedMode) =>
+      updateNodeData(id, { seedModes: { ...nodeData.seedModes, [paramId]: mode } }),
+    [id, updateNodeData, nodeData.seedModes]
   );
 
   // Identity-stable, because the dialog re-reads the workflow whenever this
@@ -406,6 +424,8 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
                   params={app.params}
                   values={nodeData.paramValues ?? {}}
                   onChange={handleParamsChange}
+                  seedModes={nodeData.seedModes}
+                  onSeedModeChange={handleSeedModeChange}
                 />
               ) : undefined}
             </ControlsCard>
