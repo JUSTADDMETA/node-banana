@@ -301,6 +301,13 @@ export const isPanningRef = { current: false };
 /** Shared ref so child components (NodeShell) can skip hover updates during node drags */
 export const isDraggingNodeRef = { current: false };
 
+/** A node drag is over: node content and edges take the pointer again, and culling resumes. */
+function releaseNodeDrag() {
+  isDraggingNodeRef.current = false;
+  document.documentElement.classList.remove("canvas-interacting");
+  setCanvasMoving(false);
+}
+
 
 /** The fallback-model capability a generation node type picks from. */
 function capabilityForNodeType(type: string): "image" | "video" | "3d" | "audio" | null {
@@ -378,6 +385,9 @@ export function WorkflowCanvas() {
       const dropped = changes.some((change) => change.type === "position" && change.dragging === false);
       draggedNodesRef.current = dropped ? null : applyNodeChanges(changes, draggedNodesRef.current);
       setDraggedNodes(draggedNodesRef.current);
+      // onNodeDragStop follows the drop at once, except for a drag React Flow
+      // aborts (its node deleted mid-drag, a second touch), which ends here
+      if (dropped) queueMicrotask(() => { if (isDraggingNodeRef.current) releaseNodeDrag(); });
     }
   }, [flowStore, onNodesChange]);
   const onEdgesChange = useWorkflowStore((state) => state.onEdgesChange);
@@ -2206,12 +2216,10 @@ export function WorkflowCanvas() {
     capturePress();
   }, [capturePress]);
   const handleNodeDragEnd = useCallback((event: MouseEvent | TouchEvent, node: Node) => {
-    isDraggingNodeRef.current = false;
     // A pan just before the drag may still hold the tracker active; resetting
     // it drops its classes now and lets the next pan put them back
     interactionClasses.dispose();
-    document.documentElement.classList.remove("canvas-interacting");
-    setCanvasMoving(false);
+    releaseNodeDrag();
     // A drag that ends without React Flow's drop change still leaves the
     // nodes where they were dragged, before the group check reads the store
     const dragged = draggedNodesRef.current;

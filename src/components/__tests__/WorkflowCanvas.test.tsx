@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { WorkflowCanvas } from "@/components/WorkflowCanvas";
+import { WorkflowCanvas, isDraggingNodeRef } from "@/components/WorkflowCanvas";
 import { ReactFlowProvider } from "@xyflow/react";
 
 // Mock the workflow store
@@ -529,6 +529,30 @@ describe("WorkflowCanvas", () => {
       act(() => props().onNodeDragStop({}, node));
       expect(mockOnNodesChange).toHaveBeenLastCalledWith([{ type: "position", id: "node-1", position: { x: 50, y: 0 }, dragging: false }]);
       mockOnNodesChange.mockReset();
+    });
+
+    it("hands the canvas back when React Flow aborts a node drag", async () => {
+      const node = { id: "node-1", type: "prompt", position: { x: 0, y: 0 }, data: {} };
+      mockUseWorkflowStore.mockImplementation((selector) => selector(createDefaultState({ nodes: [node] })));
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+      const props = () => mockReactFlowProps.current as Record<string, (...args: unknown[]) => void>;
+      const move = (x: number, dragging: boolean) =>
+        act(() => props().onNodesChange([{ type: "position", id: "node-1", position: { x, y: 0 }, dragging }]));
+
+      act(() => props().onNodeDragStart({}, node));
+      move(10, true);
+      move(20, true);
+      expect(document.documentElement).toHaveClass("canvas-interacting");
+      // The node is deleted mid-drag: React Flow drops the drag and never calls onNodeDragStop
+      move(20, false);
+      await act(async () => {});
+      expect(isDraggingNodeRef.current).toBe(false);
+      // Edges and node content take the pointer again
+      expect(document.documentElement).not.toHaveClass("canvas-interacting");
     });
 
     it("keeps pointer events off for the whole of a node drag that follows a pan", () => {
