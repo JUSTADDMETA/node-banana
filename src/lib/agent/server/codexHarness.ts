@@ -304,6 +304,17 @@ export function toolReply(text: string, success: boolean, images: readonly Agent
   };
 }
 
+/** The turn's input: the prompt, then each picture the user attached (as a data URL) after its caption. */
+export function codexUserInput(prompt: string, images: readonly AgentToolImage[] = []) {
+  return [
+    { type: "text", text: prompt, text_elements: [] },
+    ...images.flatMap((image) => [
+      { type: "text", text: image.caption, text_elements: [] },
+      { type: "image", url: `data:${image.mime};base64,${image.data}` },
+    ]),
+  ];
+}
+
 /** Whether a sparse `account/rateLimits/updated` snapshot says a limit may have been reached. */
 function limitMayBeReached(snapshot: unknown): boolean {
   if (!snapshot || typeof snapshot !== "object") return false;
@@ -885,7 +896,7 @@ export function createCodexHarness(overrides: Partial<CodexHarnessDeps> = {}): A
           "turn/start",
           {
             threadId: thread.id,
-            input: [{ type: "text", text: prompt, text_elements: [] }],
+            input: codexUserInput(prompt, params.images),
             ...(params.model ? { model: params.model } : {}),
             effort: params.effort ?? deps.effort,
             summary: "auto",

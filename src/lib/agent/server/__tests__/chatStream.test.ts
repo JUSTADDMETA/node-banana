@@ -388,6 +388,70 @@ describe("createAgentChatStream: what the harness is given", () => {
     expect(params.tools.definitions).toEqual(definitions);
   });
 
+  it("reads the results attached to the message and gives the harness their pictures after the prompt", async () => {
+    const { harness, turns } = fakeHarness(() => emit());
+    const buildTurnPrompt = vi.fn(({ userText, attached }: { userText: string; attached?: string }) => `${userText}\n${attached}`);
+    const read = vi.fn(async (assetId: string) =>
+      assetId === "asset-1" ? { kind: "image" as const, image: { mime: "image/webp", data: "AAAA" }, prompt: "a man by a lowrider" } : null,
+    );
+    const workflow: AgentWorkflowSnapshot = {
+      ...emptyWorkflow,
+      tabId: "tab-a",
+      nodes: [
+        {
+          id: "nanoBanana-1",
+          type: "nanoBanana",
+          position: { x: 0, y: 0 },
+          width: 300,
+          height: 300,
+          data: {},
+          outputs: [{ assetId: "asset-1", kind: "image", current: true }],
+        },
+      ],
+    };
+    const rougher = { assetId: "asset-1", kind: "image", nodeId: "nanoBanana-1", nodeTitle: "Rougher 1", tabId: "tab-a", sha256: "abc" };
+    const messages: AgentUIMessage[] = [
+      { id: "u0", role: "user", parts: [{ type: "text", text: "what is this?" }], metadata: { attachments: [{ ...rougher, assetId: "asset-0", nodeTitle: "Old" }] } },
+      { id: "a0", role: "assistant", parts: [{ type: "text", text: "A man." }] },
+      {
+        id: "u1",
+        role: "user",
+        parts: [{ type: "text", text: "make him rougher" }],
+        metadata: {
+          attachments: [
+            rougher,
+            { assetId: "asset-gone", kind: "image", nodeId: "nanoBanana-2", nodeTitle: "Rougher 2" },
+            // Not an asset id: left out, never read, never a reason to refuse the turn.
+            { assetId: "../../etc/passwd", kind: "image", nodeId: "x", nodeTitle: "X" },
+            { assetId: "asset-3", kind: "audio", nodeId: "x", nodeTitle: "X" },
+          ] as never,
+        },
+      },
+    ];
+
+    await run({ harness, body: requestBody({ workflow, messages }), buildTurnPrompt, outputReader: { read } });
+
+    expect(read.mock.calls.map(([id]) => id)).toEqual(["asset-1", "asset-gone"]);
+    expect(buildTurnPrompt).toHaveBeenCalledWith(expect.objectContaining({ userText: "make him rougher", attached: expect.any(String) }));
+    const params = turns[0];
+    expect(params.prompt).toContain(
+      'make him rougher\nThe user added 2 results from the chat to this message. The pictures follow the message, each after its caption:\n' +
+        '- Image 1: "Rougher 1" (nanoBanana-1), on the live canvas, the result it shows · prompt "a man by a lowrider"\n' +
+        "- \"Rougher 2\" (nanoBanana-2)'s image: no longer in the asset library, so it cannot be shown.",
+    );
+    expect(params.images).toEqual([{ mime: "image/webp", data: "AAAA", caption: 'Image 1: "Rougher 1" (nanoBanana-1)' }]);
+    // A replayed message's pictures are not sent again; it says what it carried.
+    expect(params.history[0]).toEqual({ role: "user", text: "what is this?\n(Attached from the chat: Old's image.)" });
+  });
+
+  it("sends no pictures and no attached block for a message without attachments", async () => {
+    const { harness, turns } = fakeHarness(() => emit());
+    const read = vi.fn();
+    await run({ harness, body: requestBody(), outputReader: { read } });
+    expect(read).not.toHaveBeenCalled();
+    expect(turns[0]).not.toHaveProperty("images");
+  });
+
   it("builds the tool runtime from the request's workflow snapshot", async () => {
     const { harness } = fakeHarness(() => emit());
     const createToolRuntime = vi.fn(() => fakeRuntime({}).runtime);

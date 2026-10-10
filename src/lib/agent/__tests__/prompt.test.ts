@@ -230,6 +230,12 @@ describe("buildTurnPrompt", () => {
     expect(buildTurnPrompt({ userText: "hi", snapshot: emptySnapshot() })).toContain("<canvas>\nThe canvas is empty.\n</canvas>");
   });
 
+  it("ends with what the user attached, after their words", () => {
+    const text = buildTurnPrompt({ userText: "make him rougher", snapshot: emptySnapshot(), attached: "The user added 1 result." });
+    expect(text.endsWith("<user>\nmake him rougher\n</user>\n\n<attached>\nThe user added 1 result.\n</attached>")).toBe(true);
+    expect(buildTurnPrompt({ userText: "hi", snapshot: emptySnapshot() })).not.toContain("<attached>");
+  });
+
   it("truncates large canvases and points at get_workflow", () => {
     const nodes = Array.from({ length: 90 }, (_, i) => storeNode(`prompt-${i}`, "prompt", { x: 0, y: i * 300 }, { prompt: `prompt number ${i}` }));
     const text = describeCanvas(snapshotOf({ nodes, edges: [] }));

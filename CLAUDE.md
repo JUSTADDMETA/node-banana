@@ -424,13 +424,27 @@ too), which the full-page chat alone draws as a minimap (`AgentWorkflowPreview`)
 with Open in canvas. What a reply made (that minimap, then the Run card) comes
 after its text, so the summary reads first.
 
+Attachments: a results preview's corner button, or Add to chat in its viewer,
+adds that output to the unsent message (`attachments` in the session, shared by
+both composers like the draft, at most `AGENT_MAX_ATTACHMENTS`). Only an image,
+or a video with its poster frame, that the library holds can be added. The
+message carries asset ids and names in its metadata, never bytes; the chat
+route reads each picture from the library as `view_outputs` does
+(`attachedResults` in `src/lib/agent/tools/outputs.ts`), lists them in an
+`<attached>` block after the user's words, and sends the pictures after the
+prompt (Claude image blocks, Codex `image` inputs).
+
 Reviewing results: `view_outputs` shows the model what the nodes generated.
 The snapshot names each node's results by asset library id (`outputs`: the
 one it shows, then up to three newer, never bytes); the tool reads them from
 the library (`libraryOutputs.ts`: images downsized to 1024px webp, a video's
 captured frame) and returns them as images after their captions, MCP image
 blocks for Claude and `inputImage` data URLs for Codex. Uploads, audio and 3D
-cannot be viewed, and a run started in the same turn is not in it yet. Codex's
+cannot be viewed, and a run started in the same turn is not in it yet. A
+node that keeps no carousel of asset ids (a ComfyUI app, the image and video
+tools) is looked up by workflow and node instead (`newestFromNode` in
+`src/lib/assets/server`), and an Output, Output Gallery or Image Compare node
+through the nodes feeding it. Codex's
 models run tools from code-mode `exec` cells, where a tool's reply arrives as
 one string (images as `data:` URLs on their own lines) and the model sees a
 picture only when the cell passes it to `image()`: the harness's developer

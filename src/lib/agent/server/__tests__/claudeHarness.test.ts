@@ -303,6 +303,21 @@ describe("Claude harness runTurn", () => {
     expect(made[0].sent[0].message.content).toBe("<canvas/>\n<user>add 2 and 3</user>");
   });
 
+  it("sends the pictures the user attached after the prompt, each after its caption", async () => {
+    const { query, made } = fakeQueries({ messages: recorded });
+    const images = [
+      { mime: "image/webp", data: "AAAA", caption: 'Image 1: "Rougher 1" (nanoBanana-1)' },
+      // The API takes jpeg, png, gif and webp only: anything else would refuse the whole turn.
+      { mime: "image/avif", data: "BBBB", caption: "Image 2: x" },
+    ];
+    await collect(harness({ query }).runTurn(params({ sessionId: "s-1", images })));
+    expect(made[0].sent[0].message.content).toEqual([
+      { type: "text", text: "<canvas/>\n<user>add 2 and 3</user>" },
+      { type: "text", text: 'Image 1: "Rougher 1" (nanoBanana-1)' },
+      { type: "image", source: { type: "base64", media_type: "image/webp", data: "AAAA" } },
+    ]);
+  });
+
   it("starts over with the history when the session is gone", async () => {
     const { query, made } = fakeQueries(
       { initError: new Error("Claude Code returned an error result: No conversation found with session ID: s-gone") },

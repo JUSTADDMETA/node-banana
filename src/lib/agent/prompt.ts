@@ -62,9 +62,10 @@ ${compactCatalog()}
 14. Each open workflow is a tab; the <canvas> block lists them when there are several, and your tools work in the live one. switch_workflow moves to another; new_workflow opens an empty one: use it, not replaceCanvas, when the user asks for a new workflow and the live one holds other work. save_workflow saves the live one: save a workflow you built from scratch once it is built, named for what it makes, unless the user said not to; save other work only when asked.`;
 }
 
-/** This turn's prompt: the user's words plus the current canvas (and selection) described compactly. */
-export function buildTurnPrompt(opts: { userText: string; snapshot: AgentWorkflowSnapshot; tabs?: AgentTabSummary[] }): string {
-  return `<canvas>\n${describeCanvas(opts.snapshot, opts.tabs)}\n</canvas>\n\n<user>\n${opts.userText}\n</user>`;
+/** This turn's prompt: the user's words plus the current canvas (and selection) described compactly, then what they attached. */
+export function buildTurnPrompt(opts: { userText: string; snapshot: AgentWorkflowSnapshot; tabs?: AgentTabSummary[]; attached?: string }): string {
+  const attached = opts.attached ? `\n\n<attached>\n${opts.attached}\n</attached>` : "";
+  return `<canvas>\n${describeCanvas(opts.snapshot, opts.tabs)}\n</canvas>\n\n<user>\n${opts.userText}\n</user>${attached}`;
 }
 
 /**

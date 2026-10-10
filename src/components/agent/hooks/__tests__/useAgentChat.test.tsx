@@ -24,7 +24,7 @@ vi.mock("@/utils/logger", () => ({
 }));
 
 import { useWorkflowStore, type WorkflowFile } from "@/store/workflowStore";
-import { useAgentChat } from "@/components/agent/hooks/useAgentChat";
+import { useAgentChat, type AgentQueuedMessage } from "@/components/agent/hooks/useAgentChat";
 import type { AgentGraphOp, AgentGraphOpBatch } from "@/lib/agent/types";
 
 /** Two workflows with the store's counter-style ids, so A's ids also exist in B. */
@@ -407,21 +407,22 @@ describe("useAgentChat: messages sent while a turn runs are queued", () => {
     turns.streams[0].end();
   });
 
-  it("takeQueued hands back the text and removeQueued drops a message", async () => {
+  it("takeQueued hands back the message with what it carries, and removeQueued drops one", async () => {
     const { result, streams } = await busyChat();
+    const attachments = [{ assetId: "asset-1", kind: "image" as const, nodeId: "nanoBanana-1", nodeTitle: "Rougher 1" }];
     act(() => {
-      result.current.send("second");
+      result.current.send("second", { attachments });
     });
     act(() => {
       result.current.send("third");
     });
     const [second, third] = result.current.queued;
 
-    let taken: string | undefined;
+    let taken: AgentQueuedMessage | undefined;
     act(() => {
       taken = result.current.takeQueued(second.id);
     });
-    expect(taken).toBe("second");
+    expect(taken).toMatchObject({ text: "second", metadata: { attachments } });
     act(() => result.current.removeQueued(third.id));
     expect(result.current.queued).toEqual([]);
 

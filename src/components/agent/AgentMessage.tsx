@@ -16,6 +16,7 @@ import {
 } from "@/components/ai-elements/tool";
 import { LocateFixedIcon } from "lucide-react";
 import { cn } from "@/components/agent/lib/utils";
+import { attachmentLabel } from "@/lib/agent/client/attachments";
 import {
   builtWorkflows,
   isRenderedPart,
@@ -30,7 +31,7 @@ import type { AgentUIMessage } from "@/lib/agent/types";
 import { AGENT_ICON } from "./AgentChrome";
 import { AgentNotice, type AgentNoticeSignIn } from "./AgentNotice";
 import { AgentRunCard } from "./AgentRunCard";
-import { CardIconButton } from "./AgentRunMedia";
+import { AttachmentThumb, CardIconButton } from "./AgentRunMedia";
 import { AgentToolRunResults } from "./AgentRunResults";
 import { useAgentTranscriptActions } from "./AgentSession";
 import { useAgentSurface } from "./AgentSurface";
@@ -130,7 +131,7 @@ const PAGE_USER_BUBBLE =
 const PAGE_ASSISTANT_TEXT = "text-[15px] leading-[26px]";
 
 /**
- * One chat message: user text in a bubble; for the agent, text, reasoning,
+ * One chat message: user text in a bubble, under the results it carried; for the agent, text, reasoning,
  * tool calls and notices in order, then what the reply made under its last
  * words: the workflows it built, and the Run card.
  */
@@ -141,8 +142,18 @@ export const AgentMessage = memo(function AgentMessage({ message, streaming, onS
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join("\n");
+    const attachments = message.metadata?.attachments ?? [];
     return (
       <Message from="user" className={page ? "max-w-[80%]" : "max-w-[85%]"}>
+        {attachments.length > 0 && (
+          <ul aria-label={`Attached (${attachments.length})`} className="ml-auto flex flex-wrap justify-end gap-1.5">
+            {attachments.map((attachment) => (
+              <li key={attachment.assetId} title={attachmentLabel(attachment)} data-attachment={attachment.assetId}>
+                <AttachmentThumb attachment={attachment} className={page ? "size-20 rounded-[12px]" : "size-14"} />
+              </li>
+            ))}
+          </ul>
+        )}
         <MessageContent className={cn("whitespace-pre-wrap break-words", page && PAGE_USER_BUBBLE)}>
           {text}
         </MessageContent>

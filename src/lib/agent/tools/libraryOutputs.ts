@@ -1,11 +1,12 @@
 /**
  * The asset library as view_outputs' reader: a result's record, and its
- * picture downsized for a model. Images come from their own file; a video
+ * picture downsized for a model, and the results a node saved when its
+ * snapshot names none. Images come from their own file; a video
  * from the frame the browser captured for its thumbnail. Server-only.
  */
 
 import { promises as fs } from "fs";
-import type { AgentOutputReader, ViewableOutput } from "./outputs";
+import type { AgentOutputReader, SavedOutput, ViewableOutput } from "./outputs";
 
 /** Long edge of an image shown to a model: past ~1,500px the models scale it down anyway, and tokens grow with area. */
 const MAX_EDGE = 1024;
@@ -35,6 +36,12 @@ export function libraryOutputReader(): AgentOutputReader {
             ? await thumbnailOf(library, asset.sha256)
             : null;
       return image ? { ...output, image } : output;
+    },
+    async newestFrom(workflowId, nodeId, runs) {
+      const library = await import("@/lib/assets/server");
+      const assets = await library.newestFromNode(workflowId, nodeId, runs);
+      const newestRun = assets[0]?.runId;
+      return assets.map((asset): SavedOutput => ({ assetId: asset.id, kind: asset.kind, newest: asset.runId === newestRun }));
     },
   };
 }

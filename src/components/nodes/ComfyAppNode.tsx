@@ -12,11 +12,12 @@ import {
   type ComfyUpload,
 } from "@/components/modals/ComfyWorkflowImportModal";
 import { ComfyWordmark } from "@/components/icons/ComfyWordmark";
-import { RefreshCw, Settings, type LucideIcon } from "lucide-react";
+import { Settings, type LucideIcon } from "lucide-react";
 import { useComfyPreview } from "@/hooks/useComfyPreview";
 import { useGenerationCarousel } from "@/hooks/useGenerationCarousel";
 import { useLoadGenerationById } from "@/hooks/useLoadGenerationById";
 import { useWorkflowStore } from "@/store/workflowStore";
+import { useComfyAppRequestStore } from "@/store/comfyAppRequestStore";
 import { outputsToNodeData } from "@/store/execution/comfyAppExecutor";
 import { appInputHandles, appToInputSchema } from "@/lib/comfy/nodeSchema";
 import { promptNodesFor } from "@/lib/comfy/promptNodes";
@@ -73,6 +74,17 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
     setModal("replace");
     updateNodeData(id, { _pendingWorkflow: null });
   }, [nodeData._pendingWorkflow, id, updateNodeData]);
+
+  // "Replace workflow…" in the node header's menu.
+  useEffect(
+    () =>
+      useComfyAppRequestStore.subscribe((state) => {
+        if (state.request?.nodeId !== id) return;
+        state.consumeRequest();
+        setModal("replace");
+      }),
+    [id],
+  );
 
   const edges = useWorkflowStore((state) => state.edges);
   const removeEdge = useWorkflowStore((state) => state.removeEdge);
@@ -408,7 +420,6 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
                       items={[runStatus ? runStatus.replace(/_/g, " ") : `${app.nodeCount} node${app.nodeCount === 1 ? "" : "s"}`]}
                     />
                     <HeaderButton onClick={() => setModal("edit")} title="Choose inputs, settings and outputs" icon={Settings} />
-                    <HeaderButton onClick={() => setModal("replace")} title="Replace this workflow" icon={RefreshCw} />
                   </span>
                 ),
               }}

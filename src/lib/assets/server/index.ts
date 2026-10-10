@@ -658,6 +658,30 @@ export async function getAsset(id: string): Promise<AssetView | null> {
   return library.toView(record);
 }
 
+/**
+ * What node `nodeId` of workflow `workflowId` saved in its newest `runs`
+ * runs, newest first: the results of a node that keeps no carousel of asset
+ * ids (a ComfyUI app, the image and video tools). Trashed ones count, since
+ * the node still shows its last result.
+ */
+export async function newestFromNode(workflowId: string, nodeId: string, runs: number): Promise<AssetView[]> {
+  if (!workflowId || !nodeId || runs < 1) return [];
+  const library = await readyLibrary();
+  const found: AssetRecord[] = [];
+  const seenRuns = new Set<string>();
+  for (const record of library.allRecords()) {
+    if (record.workflowId !== workflowId || record.producer?.nodeId !== nodeId || record.unreadable) continue;
+    // A run can save several results (a ComfyUI app's outputs); each run counts once.
+    const run = record.runId || record.id;
+    if (!seenRuns.has(run)) {
+      if (seenRuns.size >= runs) break;
+      seenRuns.add(run);
+    }
+    found.push(record);
+  }
+  return found.map((record) => library.toView(record));
+}
+
 /** Never throws for an unavailable library: every id is then `unknown`. */
 export async function assetExistence(ids: string[]): Promise<Record<string, AssetExistence>> {
   if (!Array.isArray(ids)) throw new LibraryError("ids must be a list", 400, "bad_request");

@@ -157,6 +157,18 @@ describe("FloatingNodeHeader", () => {
     expect(onToggleOptional).toHaveBeenCalledWith("n1", true);
   });
 
+  it("offers Replace workflow on a ComfyUI app node, and only there", () => {
+    const onReplaceWorkflow = vi.fn();
+    const { unmount } = renderHeader({ type: "comfyApp", onBrowse: undefined, canFallback: false, title: "Blueprint", onReplaceWorkflow });
+    fireEvent.click(within(openMenu()).getByRole("menuitem", { name: "Replace workflow…" }));
+    expect(onReplaceWorkflow).toHaveBeenCalledWith("n1");
+    expect(screen.queryByRole("menu")).toBeNull();
+    unmount();
+
+    renderHeader();
+    expect(within(openMenu()).queryByRole("menuitem", { name: "Replace workflow…" })).toBeNull();
+  });
+
   it("closes the menu on Escape and on an outside press", () => {
     renderHeader();
     openMenu();

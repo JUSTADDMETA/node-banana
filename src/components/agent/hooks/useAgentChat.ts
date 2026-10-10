@@ -37,7 +37,7 @@ export interface AgentStatusLine {
 export interface AgentQueuedMessage {
   id: string;
   text: string;
-  /** Sent with the message when its turn starts (a research turn's target). */
+  /** Sent with the message when its turn starts (a research turn's target, the results attached to it). */
   metadata?: AgentMessageMetadata;
 }
 
@@ -64,7 +64,8 @@ export interface UseAgentChatResult {
   stoppedMessageIds: ReadonlySet<string>;
   /**
    * Sends the message, or queues it while a turn runs. False only for an empty
-   * message. `metadata` rides on the user's message (a research turn's target).
+   * message. `metadata` rides on the user's message (a research turn's
+   * target, the results attached to it).
    */
   send: (text: string, metadata?: AgentMessageMetadata) => boolean;
   /** Messages waiting for the running turn to end, oldest first. Never persisted. */
@@ -75,8 +76,8 @@ export interface UseAgentChatResult {
    */
   queueHeld: boolean;
   removeQueued: (id: string) => void;
-  /** Removes a queued message and returns its text (to edit it in the composer). */
-  takeQueued: (id: string) => string | undefined;
+  /** Removes a queued message and returns it (to edit it in the composer). */
+  takeQueued: (id: string) => AgentQueuedMessage | undefined;
   /** Sends the first queued message now, and lets the rest follow it. */
   sendQueuedNow: () => void;
   stop: () => void;
@@ -518,7 +519,7 @@ export function useAgentChat({
     (id: string) => {
       const entry = queuedRef.current.find((candidate) => candidate.id === id);
       if (entry) removeQueued(id);
-      return entry?.text;
+      return entry;
     },
     [removeQueued],
   );
