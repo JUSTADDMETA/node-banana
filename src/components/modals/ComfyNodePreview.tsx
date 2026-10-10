@@ -1,33 +1,45 @@
 "use client";
 
-import { ChevronDown } from "lucide-react";
-import React, { useMemo, useState } from "react";
+import { ReactFlowProvider } from "@xyflow/react";
+import { RefreshCw, Settings, type LucideIcon } from "lucide-react";
+import React, { useId, useMemo, useState } from "react";
 
 import { ComfyWordmark } from "@/components/icons/ComfyWordmark";
 import { ComfyAppParameters } from "@/components/nodes/ComfyAppParameters";
+import { FloatingNodeHeader } from "@/components/nodes/FloatingNodeHeader";
+import {
+  CARD_PAD,
+  CONTROLS_GAP,
+  ControlsCard,
+  HeightGrip,
+  SocketMark,
+  SummaryValues,
+  socketMinHeight,
+  type SocketSpec,
+} from "@/components/nodes/ui";
 import type { ComfyAppInput, ComfyAppOutput, ComfyAppParam } from "@/lib/comfy/types";
-import { HANDLE_TYPE_COLORS } from "@/lib/edges/colors";
 
 /**
- * The node this dialog is about to build, drawn as it will appear.
+ * The node this dialog is about to build, drawn as the canvas draws it.
  *
  * The picks on the left are a list of bindings; what the user is actually
  * deciding is the shape of a node — how many handles it carries, what they are
  * called, which knobs sit under it. This says that in the only language that
  * answers it, and updates as they choose.
  *
- * Deliberately a replica rather than the node itself: the real one is a React
- * Flow node wired to the workflow store, and standing an instance of it up here
- * would mean faking a canvas. The settings are the exception — they are already
- * a plain controlled component, so the real one is used and the values are live.
+ * Assembled from the node's own parts rather than mounted as the node: the
+ * real one is a React Flow node wired to the workflow store, and its shell
+ * writes to that store on hover. So the header, the controls card, the
+ * settings and the sockets' glyph are the canvas's own components; the media
+ * card is the shell's markup on the same tokens, with nothing to run.
  */
 
-/** Matches `.react-flow__handle[data-handletype]` in globals.css. */
-const HANDLE_FILL: Record<string, string> = HANDLE_TYPE_COLORS;
-
-/** Evenly space n handles down an edge — the node's own rule. */
-const handleTop = (index: number, total: number): string =>
-  `${((index + 1) / (total + 1)) * 100}%`;
+/** ComfyAppNode's `minWidth`: the preview is a measurement, not an impression. */
+const NODE_WIDTH = 260;
+/** ComfyAppNode's `TEXTUAL_HEIGHT`: the slot a node with no output yet shows. */
+const MEDIA_HEIGHT = 120;
+/** Never a node on the canvas, so nothing there reacts to this one. */
+const PREVIEW_NODE_ID = "comfy-node-preview";
 
 interface ComfyNodePreviewProps {
   name: string;
@@ -46,164 +58,127 @@ export function ComfyNodePreview({
   params,
   outputs,
 }: ComfyNodePreviewProps) {
-  // Seeded from the defaults, exactly as the node seeds itself on attach —
-  // otherwise every dropdown reads "Default (…)", which is a state the real
-  // node is never in. Edits are kept but not saved: nothing typed in a preview
-  // is, and a control that cannot be moved reads as a broken one.
+  const panelId = useId();
+  const [expanded, setExpanded] = useState(true);
+  const [mediaHeight, setMediaHeight] = useState(MEDIA_HEIGHT);
+
+  // Seeded the way the node seeds itself on attach — defaults, but no seeds,
+  // which are re-randomised per run. Edits are kept but not saved: nothing
+  // typed in a preview is, and a control that cannot be moved reads as a
+  // broken one.
   const [edits, setEdits] = useState<Record<string, unknown>>({});
   const values = useMemo(() => {
     const seeded: Record<string, unknown> = {};
     for (const param of params) {
-      if (param.default !== undefined) seeded[param.id] = param.default;
+      if (param.default !== undefined && !param.isSeed) seeded[param.id] = param.default;
     }
     return { ...seeded, ...edits };
   }, [params, edits]);
 
+  const inputSockets = useMemo<SocketSpec[]>(
+    () =>
+      inputs.map((input) => ({
+        id: input.id,
+        type: input.type,
+        label: input.label,
+        title: input.description || input.label,
+      })),
+    [inputs]
+  );
+  const outputSockets = useMemo<SocketSpec[]>(
+    () => outputs.map((output) => ({ id: output.id, type: output.type, label: output.label, title: output.label })),
+    [outputs]
+  );
+  const rows = Math.max(inputSockets.length, outputSockets.length);
+  const hasParams = params.length > 0;
+
   return (
-    <div className="h-full rounded-well bg-well ring-1 ring-inset ring-black/40 overflow-auto flex justify-center p-6">
-      {/* The node sits at its real width, so the preview is a measurement and
-          not an impression.
-
-          Centred with `my-auto` rather than `items-center`: a centred flex
+    <div className="h-full rounded-well bg-well ring-1 ring-inset ring-black/40 overflow-y-auto overflow-x-hidden flex justify-center p-6">
+      {/* Centred with `my-auto` rather than `items-center`: a centred flex
           child in a scroll container has its overflowing top cut off and
-          unreachable, and a node with every widget exposed overflows easily. */}
-      <div className="w-[260px] shrink-0 my-auto">
-        {/* The canvas draws the title above the node, not inside it. */}
-        <div className="flex items-center gap-1.5 mb-1.5 px-0.5">
-          <ComfyWordmark className="h-3 w-auto shrink-0 text-neutral-400" />
-          <span className="text-[11px] text-neutral-400 truncate" title={name}>
-            {name || "Untitled"}
-          </span>
-        </div>
+          unreachable, and a node with every widget exposed overflows easily.
+          The top padding is the room the floating header takes. */}
+      <div className="relative isolate shrink-0 my-auto pt-[26px]" style={{ width: NODE_WIDTH }} data-comfy-node-preview>
+        <ReactFlowProvider>
+          <div className="relative flex flex-col items-center w-full">
+            {/* The canvas's own header, at rest. Run and the kebab stay
+                invisible but keep their width, which is what cuts a long name
+                short on the canvas; inert, so none of it can be reached. */}
+            <div inert>
+              <FloatingNodeHeader
+                id={PREVIEW_NODE_ID}
+                type="comfyApp"
+                position={{ x: 0, y: 0 }}
+                width={NODE_WIDTH}
+                selected={false}
+                title={name}
+                titleLogo={<ComfyWordmark className="h-3 w-auto shrink-0" />}
+                onRunNode={noop}
+              />
+            </div>
 
-        <div className="relative bg-card rounded-controls shadow-lg">
-          <Handles inputs={inputs} outputs={outputs} />
-
-          <div className="rounded-t-controls border border-b-0 border-card-border px-3 pb-4">
-            <div className="flex items-center gap-2 pt-2 pb-1.5">
-              <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-medium text-neutral-200 truncate">
-                  {source === "blueprint" ? "Blueprint" : "App workflow"}
-                </p>
-                <p className="text-[9px] text-neutral-500 truncate">
-                  {nodeCount} node{nodeCount === 1 ? "" : "s"}
-                </p>
+            <div
+              data-media-card
+              className="relative w-full shrink-0 rounded-card squircle bg-card border border-card-border overflow-visible"
+              style={{ padding: CARD_PAD, minHeight: socketMinHeight(rows) }}
+            >
+              <div
+                data-media-clip
+                className="relative w-full rounded-media squircle overflow-hidden bg-neutral-900/60"
+                style={{ contain: "layout style", height: mediaHeight }}
+              >
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-[10px] text-neutral-600">No output yet</span>
+                  <HeightGrip height={mediaHeight} onChange={setMediaHeight} />
+                </div>
               </div>
+              {/* Labelled at all times: here the names are what is being decided. */}
+              {inputSockets.map((spec, row) => (
+                <SocketMark key={spec.id} side="left" row={row} spec={spec} showLabel />
+              ))}
+              {outputSockets.map((spec, row) => (
+                <SocketMark key={spec.id} side="right" row={row} spec={spec} showLabel />
+              ))}
             </div>
-            <div className="h-[92px] rounded-md bg-neutral-900/60 flex items-center justify-center">
-              <span className="text-[10px] text-neutral-600">No output yet</span>
-            </div>
-          </div>
 
-          {/* Always open here. Collapsed, the one thing this view exists to
-              show would be a chevron. */}
-          <div className="bg-panel rounded-b-controls">
-            <div className="w-full flex items-center justify-center gap-1 py-1 text-neutral-500">
-              <span className="text-[10px]">Settings</span>
-              <ChevronDown size={12} strokeWidth={2} className="rotate-180" />
-            </div>
-            <div className="px-3 pb-3 rounded-b-controls">
-              {params.length > 0 ? (
-                <ComfyAppParameters params={params} values={values} onChange={setEdits} />
-              ) : (
-                <span className="text-[9px] text-neutral-500">
-                  This workflow exposes no settings
-                </span>
-              )}
-            </div>
+            {/* A new node has no runs to page through, so no history row. */}
+            <div data-gap-row className="w-full shrink-0" style={{ height: CONTROLS_GAP }} />
+
+            <ControlsCard
+              id={panelId}
+              sizing={null}
+              summary={{
+                icon: <ComfyWordmark className="h-3 w-auto" />,
+                title: <span title={name}>{source === "blueprint" ? "Blueprint" : "App workflow"}</span>,
+                values: (
+                  <span className="flex items-center gap-1.5">
+                    <SummaryValues items={[`${nodeCount} node${nodeCount === 1 ? "" : "s"}`]} />
+                    <HeaderGlyph icon={Settings} />
+                    <HeaderGlyph icon={RefreshCw} />
+                  </span>
+                ),
+              }}
+              // Open from the start: collapsed, the one thing this view
+              // exists to show would be a chevron.
+              expanded={expanded}
+              onToggle={hasParams ? () => setExpanded((open) => !open) : undefined}
+            >
+              {hasParams ? <ComfyAppParameters params={params} values={values} onChange={setEdits} /> : undefined}
+            </ControlsCard>
           </div>
-        </div>
+        </ReactFlowProvider>
       </div>
     </div>
   );
 }
 
-/** Connection points, on the edges they will really sit on. */
-function Handles({
-  inputs,
-  outputs,
-}: {
-  inputs: ComfyAppInput[];
-  outputs: ComfyAppOutput[];
-}) {
-  return (
-    <>
-      {inputs.map((input, index) => (
-        <Dot
-          key={input.id}
-          side="left"
-          top={handleTop(index, inputs.length)}
-          type={input.type}
-          label={input.label}
-        />
-      ))}
-      {outputs.map((output, index) => (
-        <Dot
-          key={output.id}
-          side="right"
-          top={handleTop(index, outputs.length)}
-          type={output.type}
-          label={output.label}
-        />
-      ))}
-    </>
-  );
-}
+function noop() {}
 
-function Dot({
-  side,
-  top,
-  type,
-  label,
-}: {
-  side: "left" | "right";
-  top: string;
-  type: string;
-  label: string;
-}) {
-  const dot = (
-    <span
-      className="block w-[14px] h-[14px] rounded-full border-2 border-white shrink-0"
-      style={{
-        background: HANDLE_FILL[type] ?? HANDLE_FILL.image,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
-      }}
-    />
-  );
-  // Outside the node, so a long name never squeezes the body.
-  const text = (
-    <span
-      className="text-[9px] text-neutral-400 whitespace-nowrap max-w-[96px] truncate"
-      title={label}
-    >
-      {label}
+/** The node's Settings and Replace buttons, drawn but not wired: here they would only reopen this dialog. */
+function HeaderGlyph({ icon: Icon }: { icon: LucideIcon }) {
+  return (
+    <span aria-hidden className="shrink-0 text-neutral-500">
+      <Icon size={14} strokeWidth={2} />
     </span>
-  );
-
-  return (
-    <div
-      className="absolute z-10 flex items-center gap-1.5"
-      style={{
-        top,
-        transform: "translateY(-50%)",
-        // Anchored by the edge the dot sits on, so the label grows away from
-        // the node rather than pushing the dot into it.
-        ...(side === "left"
-          ? { right: "calc(100% - 7px)" }
-          : { left: "calc(100% - 7px)" }),
-      }}
-    >
-      {side === "left" ? (
-        <>
-          {text}
-          {dot}
-        </>
-      ) : (
-        <>
-          {dot}
-          {text}
-        </>
-      )}
-    </div>
   );
 }
