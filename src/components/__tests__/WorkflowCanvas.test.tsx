@@ -531,6 +531,76 @@ describe("WorkflowCanvas", () => {
       mockOnNodesChange.mockReset();
     });
 
+    it("shows what changes in the store during a node drag, with the dragged node where the drag has it", () => {
+      const node = { id: "node-1", type: "prompt", position: { x: 0, y: 0 }, data: { prompt: "before" } };
+      let storeNodes: { id: string; type: string; position: { x: number; y: number }; data: Record<string, unknown> }[] = [node];
+      mockOnNodesChange.mockImplementation((changes: { id: string; position?: { x: number; y: number } }[]) => {
+        storeNodes = storeNodes.map((n) => {
+          const change = changes.find((c) => c.id === n.id && c.position);
+          return change ? { ...n, position: change.position! } : n;
+        });
+      });
+      mockUseWorkflowStore.mockImplementation((selector) => selector(createDefaultState({ nodes: storeNodes })));
+      // A new element each time, so a rerender reads the store again
+      const ui = () => (
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+      const { rerender } = render(ui());
+      const props = () => mockReactFlowProps.current as Record<string, (...args: unknown[]) => void> & { nodes: typeof storeNodes };
+      const move = (x: number, dragging: boolean) =>
+        act(() => props().onNodesChange([{ type: "position", id: "node-1", position: { x, y: 0 }, dragging }]));
+
+      move(10, true);
+      move(20, true);
+      // Mid-drag, a run writes the node's data and the agent adds a node
+      storeNodes = [
+        { ...storeNodes[0], data: { prompt: "after" } },
+        { id: "node-2", type: "prompt", position: { x: 200, y: 0 }, data: {} },
+      ];
+      rerender(ui());
+      expect(props().nodes.map((n) => n.id)).toEqual(["node-1", "node-2"]);
+      expect(props().nodes[0]).toMatchObject({ position: { x: 20, y: 0 }, data: { prompt: "after" } });
+
+      move(30, true);
+      expect(props().nodes[0].position).toEqual({ x: 30, y: 0 });
+      move(30, false);
+      expect(storeNodes[0]).toMatchObject({ position: { x: 30, y: 0 }, data: { prompt: "after" } });
+      mockOnNodesChange.mockReset();
+    });
+
+    it("lets go of a node drag whose canvas is replaced mid-drag", () => {
+      const node = { id: "node-1", type: "prompt", position: { x: 0, y: 0 }, data: {} };
+      let canvasGeneration = 1;
+      let storeNodes = [node];
+      mockUseWorkflowStore.mockImplementation((selector) => selector(createDefaultState({ nodes: storeNodes, canvasGeneration })));
+      // A new element each time, so a rerender reads the store again
+      const ui = () => (
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+      const { rerender } = render(ui());
+      const props = () => mockReactFlowProps.current as Record<string, (...args: unknown[]) => void> & { nodes: typeof storeNodes };
+      const move = (x: number, dragging: boolean) =>
+        act(() => props().onNodesChange([{ type: "position", id: "node-1", position: { x, y: 0 }, dragging }]));
+
+      move(10, true);
+      move(20, true);
+      expect(mockOnNodesChange).toHaveBeenCalledTimes(1);
+      // Another tab: its own node-1, where that workflow put it
+      canvasGeneration = 2;
+      storeNodes = [{ ...node, position: { x: 500, y: 500 } }];
+      rerender(ui());
+      expect(props().nodes[0].position).toEqual({ x: 500, y: 500 });
+      // The rest of the drag, and its drop, belonged to the old canvas
+      move(30, true);
+      move(30, false);
+      expect(mockOnNodesChange).toHaveBeenCalledTimes(1);
+      expect(props().nodes[0].position).toEqual({ x: 500, y: 500 });
+    });
+
     it("hands the canvas back when React Flow aborts a node drag", async () => {
       const node = { id: "node-1", type: "prompt", position: { x: 0, y: 0 }, data: {} };
       mockUseWorkflowStore.mockImplementation((selector) => selector(createDefaultState({ nodes: [node] })));
