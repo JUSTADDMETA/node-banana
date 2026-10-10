@@ -423,6 +423,8 @@ export function WorkflowCanvas() {
   // The agent window is portaled above everything, so it hides itself while another view covers the canvas
   const canvasShown = useAssetStore((state) => state.appView === "canvas");
   const [isMinimapVisible, setIsMinimapVisible] = useState(true);
+  // The navigator's Lock canvas: nodes cannot be moved, connected or selected
+  const [canvasLocked, setCanvasLocked] = useState(false);
   const agentStackBottom = getAgentStackBottom({
     margin: MINIMAP_GEOMETRY.margin,
     navigatorHeight: getNavigatorHeight(isMinimapVisible),
@@ -2638,9 +2640,9 @@ export function WorkflowCanvas() {
             ? "Space"
             : null
         }
-        nodesDraggable={!isModalOpen}
-        nodesConnectable={!isModalOpen}
-        elementsSelectable={!isModalOpen}
+        nodesDraggable={!isModalOpen && !canvasLocked}
+        nodesConnectable={!isModalOpen && !canvasLocked}
+        elementsSelectable={!isModalOpen && !canvasLocked}
         className="bg-neutral-900"
         proOptions={PRO_OPTIONS}
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
@@ -2654,7 +2656,12 @@ export function WorkflowCanvas() {
           size={1}
           className={tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}
         />
-        <CanvasMinimap disabled={tutorialActive && lockedFeatures} onMinimapVisibleChange={setIsMinimapVisible} />
+        <CanvasMinimap
+          disabled={tutorialActive && lockedFeatures}
+          onMinimapVisibleChange={setIsMinimapVisible}
+          locked={canvasLocked}
+          onLockedChange={setCanvasLocked}
+        />
         {/* The window takes the pill's place while it is open; its own header closes it. */}
         {!isAgentOpen && (
         <AgentButton

@@ -373,6 +373,26 @@ describe("WorkflowCanvas", () => {
       expect(document.querySelector(".react-flow__minimap")).toBeInTheDocument();
     });
 
+    it("hands the navigator's lock to React Flow as props, where 12.11 reads it", () => {
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+      const interaction = () => {
+        const { nodesDraggable, nodesConnectable, elementsSelectable } = mockReactFlowProps.current as Record<string, unknown>;
+        return { nodesDraggable, nodesConnectable, elementsSelectable };
+      };
+      expect(interaction()).toEqual({ nodesDraggable: true, nodesConnectable: true, elementsSelectable: true });
+
+      fireEvent.click(screen.getByRole("button", { name: "Lock canvas" }));
+      expect(interaction()).toEqual({ nodesDraggable: false, nodesConnectable: false, elementsSelectable: false });
+      expect(screen.getByRole("button", { name: "Unlock canvas" })).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.click(screen.getByRole("button", { name: "Unlock canvas" }));
+      expect(interaction()).toEqual({ nodesDraggable: true, nodesConnectable: true, elementsSelectable: true });
+    });
+
     it("keeps the minimap inside the navigator card at its explicit size", () => {
       render(
         <TestWrapper>
