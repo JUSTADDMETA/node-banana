@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { Socket, SocketColumn, assignSocketRows, socketRowCount } from "../Socket";
+import { Socket, SocketColumn, SocketMark, assignSocketRows, socketRowCount } from "../Socket";
 
 const mockConnections = vi.fn<(args: { handleType?: string; handleId?: string }) => unknown[]>(() => []);
 
@@ -124,5 +124,33 @@ describe("Socket outline", () => {
     const { container } = wrap(<Socket nodeId="n1" side="right" row={0} spec={{ id: "image", type: "image" }} outline="error" />);
     expect((container.querySelector("[data-socket-outline]") as SVGPathElement).getAttribute("stroke")).toBe("var(--color-error)");
     expect(container.querySelector("[data-socket-ring]")).toBeNull();
+  });
+});
+
+describe("SocketMark", () => {
+  it("draws the same glyph, box and colour as an unconnected canvas socket", () => {
+    // The import dialog's preview draws sockets with this; one glyph for both
+    // is what keeps the preview from drifting from the node again.
+    const spec = { id: "image-0", type: "image" as const, label: "Image" };
+    const canvas = wrap(<Socket nodeId="n1" side="right" row={1} spec={spec} />).container;
+    const preview = wrap(<SocketMark side="right" row={1} spec={spec} />).container;
+
+    const handle = canvas.querySelector('.socket[data-handletype="image"]') as HTMLElement;
+    const mark = preview.querySelector('[data-socket-mark="right"]') as HTMLElement;
+    expect(mark.querySelector("svg")!.outerHTML).toBe(handle.querySelector("svg")!.outerHTML);
+    for (const prop of ["top", "right", "width", "height", "transform", "color"] as const) {
+      expect(mark.style[prop]).toBe(handle.style[prop]);
+    }
+  });
+
+  it("labels the socket the way the canvas does, and draws nothing for a hidden one", () => {
+    const { container } = wrap(
+      <>
+        <SocketMark side="left" row={0} spec={{ id: "text-0", type: "text", label: "Prompt" }} showLabel />
+        <SocketMark side="left" row={1} spec={{ id: "image-0", type: "image", hidden: true }} />
+      </>
+    );
+    expect(screen.getByText("Prompt")).toHaveStyle({ opacity: "1" });
+    expect(container.querySelectorAll("[data-socket-mark]")).toHaveLength(1);
   });
 });
