@@ -7,6 +7,7 @@ import { selectMountedArea } from "./nodeCulling";
 import { ComfyWordmark } from "../icons/ComfyWordmark";
 import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import type { NodeType } from "@/types";
+import { requestComfyReplace } from "@/store/comfyAppRequestStore";
 
 interface HeaderActions {
   getNodeTitle: (node: Node) => string;
@@ -108,6 +109,7 @@ const NodeHeader = memo(function NodeHeader({
       comment={data?.comment}
       provider={data?.selectedModel?.provider}
       onBrowse={canBrowse ? onBrowse : undefined}
+      onReplaceWorkflow={type === "comfyApp" && data?.app ? requestComfyReplace : undefined}
       canFallback={canFallback}
       fallbackName={data?.fallbackModel?.displayName}
       onOpenFallback={onOpenFallback}
