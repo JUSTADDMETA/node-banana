@@ -19,6 +19,7 @@ import { useLoadGenerationById } from "@/hooks/useLoadGenerationById";
 import { useWorkflowStore } from "@/store/workflowStore";
 import { outputsToNodeData } from "@/store/execution/comfyAppExecutor";
 import { appInputHandles, appToInputSchema } from "@/lib/comfy/nodeSchema";
+import { promptNodesFor } from "@/lib/comfy/promptNodes";
 import { mergeParamValues } from "@/lib/comfy/reconfigure";
 import type {
   ComfyAppDefinition,
@@ -73,6 +74,31 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
 
   const edges = useWorkflowStore((state) => state.edges);
   const removeEdge = useWorkflowStore((state) => state.removeEdge);
+  const addNode = useWorkflowStore((state) => state.addNode);
+  const onConnect = useWorkflowStore((state) => state.onConnect);
+
+  /**
+   * Seed a Prompt node with the workflow's own text for each text input that
+   * carries one, wired to that handle: the author's prompts are often what
+   * makes the workflow run as intended, and an empty handle hides them.
+   */
+  const seedPromptNodes = useCallback(
+    (attached: ComfyAppDefinition) => {
+      const self = useWorkflowStore.getState().nodes.find((n) => n.id === id);
+      if (!self) return;
+      const connected = new Set(
+        useWorkflowStore
+          .getState()
+          .edges.filter((edge) => edge.target === id && edge.targetHandle)
+          .map((edge) => edge.targetHandle as string)
+      );
+      for (const seed of promptNodesFor(attached, self.position, connected)) {
+        const promptId = addNode("prompt", seed.position, { prompt: seed.text, customTitle: seed.label });
+        onConnect({ source: promptId, sourceHandle: "text", target: id, targetHandle: seed.handleId });
+      }
+    },
+    [id, addNode, onConnect]
+  );
 
   const app = nodeData.app;
 
@@ -168,10 +194,11 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
         runStatus: null,
         jobId: null,
       });
+      seedPromptNodes(attached);
       setModal(null);
       setDropped(null);
     },
-    [id, updateNodeData, pruneStaleEdges]
+    [id, updateNodeData, pruneStaleEdges, seedPromptNodes]
   );
 
   /**

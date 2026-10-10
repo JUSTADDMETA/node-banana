@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Prompts come with the workflow** — Attaching a ComfyUI workflow to a node now adds a Prompt node for each text input that the workflow was saved with text in, holding that text and wired to its handle. A workflow whose system prompt or example prompt matters runs as its author meant the first time.
 - **Sound in video players** — Every scrub row has a sound button after the time readout. Videos were always muted; now the button turns sound on for every player and remembers it, pins the video so it keeps playing, and opens a volume slider when the pointer rests on it. Hover previews stay silent.
 
 ### Fixed

@@ -93,6 +93,12 @@ describe("inspectWorkflow without App Mode", () => {
     ]);
   });
 
+  it("carries the prompt's saved text on the text input, so attaching can seed a Prompt node with it", () => {
+    const prompt = inspection.suggested.inputs.find((i) => i.type === "text");
+    expect(prompt?.default).toBe("a cat");
+    expect(inspection.suggested.inputs.find((i) => i.type === "image")).not.toHaveProperty("default");
+  });
+
   it("binds the Save node as the output", () => {
     expect(inspection.suggested.outputs).toEqual([
       // An untitled sink reads better as its plain type than as its class name.
