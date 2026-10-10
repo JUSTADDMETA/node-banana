@@ -68,6 +68,12 @@ export interface ComfyAppInput {
   required: boolean;
   description?: string;
   /**
+   * The text the workflow was saved with, for a text input promoted from a
+   * widget. The author's prompts are often what makes a workflow run as
+   * intended, so attaching it to a node seeds a Prompt node with each.
+   */
+  default?: string;
+  /**
    * Extra graph bindings this one handle also writes.
    *
    * The same story as {@link ComfyAppParam.alsoBind}: a Blueprint's `STRING`

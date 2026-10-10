@@ -161,6 +161,9 @@ export function inputFromCandidate(
     inputKey: candidate.inputKey,
     required: false,
     ...(candidate.description ? { description: candidate.description } : {}),
+    ...(type === "text" && typeof candidate.currentValue === "string" && candidate.currentValue.trim()
+      ? { default: candidate.currentValue }
+      : {}),
   };
 }
 

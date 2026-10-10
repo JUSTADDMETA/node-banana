@@ -313,7 +313,10 @@ different workflow clears it.
 
 Dropping either format onto the canvas creates a `comfyApp` node at the drop
 point and opens the confirm step on it; our own workflow saves still replace the
-canvas, told apart by shape in `src/lib/comfy/detect.ts`.
+canvas, told apart by shape in `src/lib/comfy/detect.ts`. Attaching a workflow
+(drop, import or a saved node) also adds a Prompt node for each text input the
+workflow was saved with text in, holding that text and wired to the handle
+(`src/lib/comfy/promptNodes.ts`; the text rides on `ComfyAppInput.default`).
 
 Both upload formats are accepted. An **editor save** (the normal ComfyUI Save)
 is the one that carries App Mode, but it is not executable — widget values are
