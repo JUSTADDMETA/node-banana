@@ -24,6 +24,8 @@ export interface DropdownOption {
   group?: string;
   /** Right-aligned mono detail: a size, a price, a provider hint. */
   meta?: ReactNode;
+  /** Leading glyph, at the row's type size. */
+  icon?: ReactNode;
 }
 
 export type DropdownSize = "node" | "dialog";
@@ -45,6 +47,10 @@ export interface DropdownProps {
   className?: string;
   /** Classes on the trigger button, replacing the default well. */
   triggerClassName?: string;
+  /** What the trigger shows, replacing the chosen label and chevron (an icon button). */
+  trigger?: ReactNode;
+  /** Which edge of the trigger the list lines up with; `end` for a trigger at a card's right edge. */
+  align?: "start" | "end";
   "aria-label"?: string;
   "data-tutorial"?: string;
 }
@@ -112,7 +118,7 @@ interface Placement {
  * coordinates, so it zooms and pans with the node and escapes the controls
  * card's overflow clip. Elsewhere it is fixed to the body in screen pixels.
  */
-function place(trigger: HTMLElement, minW: number, maxW: number): Placement {
+function place(trigger: HTMLElement, minW: number, maxW: number, align: "start" | "end"): Placement {
   const rect = trigger.getBoundingClientRect();
   const viewport = trigger.closest(".react-flow")?.querySelector<HTMLElement>(".react-flow__viewport") ?? null;
   const spaceBelow = window.innerHeight - rect.bottom;
@@ -126,7 +132,7 @@ function place(trigger: HTMLElement, minW: number, maxW: number): Placement {
       container: viewport,
       style: {
         position: "absolute",
-        left: (rect.left - vp.left) / zoom,
+        left: align === "end" ? (rect.right - vp.left) / zoom - width : (rect.left - vp.left) / zoom,
         top: (flipUp ? rect.top - vp.top : rect.bottom - vp.top) / zoom + (flipUp ? -GAP : GAP),
         width,
         transform: flipUp ? "translateY(-100%)" : undefined,
@@ -140,7 +146,7 @@ function place(trigger: HTMLElement, minW: number, maxW: number): Placement {
     container: document.body,
     style: {
       position: "fixed",
-      left: rect.left,
+      left: align === "end" ? rect.right - width : rect.left,
       top: flipUp ? rect.top - GAP : rect.bottom + GAP,
       width,
       transform: flipUp ? "translateY(-100%)" : undefined,
@@ -174,6 +180,8 @@ export function Dropdown({
   searchable,
   className,
   triggerClassName,
+  trigger,
+  align = "start",
   "aria-label": ariaLabel,
   "data-tutorial": dataTutorial,
 }: DropdownProps) {
@@ -210,13 +218,13 @@ export function Dropdown({
   }, []);
 
   const openList = useCallback(() => {
-    const trigger = triggerRef.current;
-    if (!trigger || disabled) return;
-    setPlacement(place(trigger, S.minW, S.maxW));
+    const button = triggerRef.current;
+    if (!button || disabled) return;
+    setPlacement(place(button, S.minW, S.maxW, align));
     const current = all.findIndex((o) => o.value === value);
     setActive(current >= 0 ? current : all.findIndex((o) => !o.disabled));
     setOpen(true);
-  }, [all, disabled, value, S.minW, S.maxW]);
+  }, [all, disabled, value, S.minW, S.maxW, align]);
 
   const pick = useCallback(
     (option: DropdownOption | undefined) => {
@@ -431,6 +439,11 @@ export function Dropdown({
                   o.disabled && "opacity-30 cursor-not-allowed"
                 )}
               >
+                {o.icon !== undefined && o.icon !== null && (
+                  <span aria-hidden className="flex shrink-0 justify-center" style={{ width: S.check }}>
+                    {o.icon}
+                  </span>
+                )}
                 <span className="min-w-0 flex-1 overflow-hidden text-ellipsis">{o.label}</span>
                 {o.meta !== undefined && o.meta !== null && (
                   <span className={cn("font-mono text-ink-3 whitespace-nowrap", S.meta)}>{o.meta}</span>
@@ -465,14 +478,18 @@ export function Dropdown({
         onKeyDown={onKeyDown}
         className={cn(triggerClassName ?? S.trigger, open && size === "node" && "ring-1 ring-neutral-600")}
       >
-        <span className={cn("min-w-0 flex-1 whitespace-nowrap overflow-hidden text-ellipsis", !selected && "text-neutral-500")}>
-          {selected ? selected.label : placeholder ?? ""}
-        </span>
-        <ChevronDown
-          size={S.chevron}
-          strokeWidth={size === "node" ? 2.5 : 1.75}
-          className={cn("shrink-0 transition-transform duration-150", open ? "rotate-180 text-neutral-300" : "text-neutral-500")}
-        />
+        {trigger ?? (
+          <>
+            <span className={cn("min-w-0 flex-1 whitespace-nowrap overflow-hidden text-ellipsis", !selected && "text-neutral-500")}>
+              {selected ? selected.label : placeholder ?? ""}
+            </span>
+            <ChevronDown
+              size={S.chevron}
+              strokeWidth={size === "node" ? 2.5 : 1.75}
+              className={cn("shrink-0 transition-transform duration-150", open ? "rotate-180 text-neutral-300" : "text-neutral-500")}
+            />
+          </>
+        )}
       </button>
       {list && createPortal(list, placement.container)}
     </div>
