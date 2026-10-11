@@ -5,6 +5,7 @@ import { useStore, type Node } from "@xyflow/react";
 import { ViewportPortal } from "@/components/flowPortals";
 import { FloatingNodeHeader } from "./FloatingNodeHeader";
 import { selectMountedArea } from "./nodeCulling";
+import { useLowDetail } from "./lowDetail";
 import { ComfyWordmark } from "../icons/ComfyWordmark";
 import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import type { NodeType } from "@/types";
@@ -42,6 +43,9 @@ const INPUT_TYPES = new Set(["imageInput", "audioInput", "prompt"]);
 export const FloatingNodeHeaders = memo(function FloatingNodeHeaders({ nodes, hints, ...actions }: FloatingNodeHeadersProps) {
   const area = useStore(selectMountedArea);
   const [minX, minY, maxX, maxY] = useMemo(() => area.split(" ").map(Number), [area]);
+  // Zoomed out, nodes draw at low detail and carry no headers (see lowDetail.ts)
+  const lowDetail = useLowDetail();
+  if (lowDetail) return null;
 
   return (
     <ViewportPortal>

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useRef, useState, useEffect, DragEvent, useMemo, type ComponentType } from "react";
+import { memo, useCallback, useRef, useState, useEffect, useLayoutEffect, useReducer, DragEvent, useMemo, type ComponentType } from "react";
 import {
   ReactFlow,
   Background,
@@ -18,6 +18,7 @@ import {
   useStore,
   useStoreApi,
   useUpdateNodeInternals,
+  type ReactFlowState,
   type XYPosition,
 } from "@xyflow/react";
 import { frameLoadedGraph } from "@/utils/frameGraph";
@@ -95,7 +96,9 @@ import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import { getNodeSize } from "@/utils/nodeDimensions";
 import { arrangeNodes } from "@/utils/arrangeNodes";
 import { FloatingNodeHeaders } from "./nodes/FloatingNodeHeaders";
-import { NodePlaceholder, setCanvasMoving, useNodeMounted } from "./nodes/nodeCulling";
+import { NodePlaceholder, setCanvasMoving, useNodeHasFocus, useNodeMounted } from "./nodes/nodeCulling";
+import { LOW_DETAIL_ZOOM, setZoomedOut, useLowDetail, useLowDetailEnabled } from "./nodes/lowDetail";
+import { NodeLowDetail } from "./nodes/NodeLowDetail";
 import { detectAndSplitGrid } from "@/utils/gridSplitter";
 import { logger } from "@/utils/logger";
 import { WelcomeModal } from "./quickstart";
@@ -174,18 +177,55 @@ const nodePropsEqual = (a: Record<string, unknown>, b: Record<string, unknown>):
 // Wrap every node component in a per-node error boundary so a single
 // throwing node (e.g. malformed data from a loaded workflow) renders a small
 // fallback card instead of unmounting the entire canvas/app.
+/**
+ * Whether React Flow has read the node's handles from a rendered component.
+ * While it has not and `waiting`, the node re-renders once a frame (for a
+ * second at most) so it can switch to low detail as soon as they are read.
+ */
+function useHandlesRead(id: string, waiting: boolean): boolean {
+  const flowStore = useStoreApi();
+  const read = !!flowStore.getState().nodeLookup.get(id)?.internals.handleBounds;
+  const [checks, recheck] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!waiting || read || checks > 60) return;
+    const frame = requestAnimationFrame(recheck);
+    return () => cancelAnimationFrame(frame);
+  }, [waiting, read, checks]);
+  return read;
+}
+
 // Memoised on the node's props, which React Flow keeps stable for a node
 // that did not change, so a drag frame renders nothing under the wrapper. A
 // node far off screen renders as a placeholder of its measured size instead
-// (see nodeCulling.ts for what keeps a node mounted).
+// (see nodeCulling.ts for what keeps a node mounted), and a node on a
+// zoomed-out canvas as a low-detail card (see lowDetail.ts).
 const withNodeErrorBoundary = (
   type: string,
   NodeComponent: ComponentType<Record<string, unknown>>
 ): ComponentType<Record<string, unknown>> => {
   const Wrapped = memo((props: Record<string, unknown>) => {
-    const mounted = useNodeMounted(props.id as string, type, !!props.selected, !!props.dragging);
+    const id = props.id as string;
+    const mounted = useNodeMounted(id, type, !!props.selected, !!props.dragging);
+    const lowDetail = useLowDetail();
+    const focused = useNodeHasFocus(id);
+    // A node first rendered zoomed out shows its full component until React
+    // Flow has read its handles from it, which the card's edges hang from
+    const handlesRead = useHandlesRead(id, lowDetail && mounted);
     if (!mounted) {
-      return <NodePlaceholder id={props.id as string} width={props.width as number} height={props.height as number} />;
+      return <NodePlaceholder id={id} width={props.width as number} height={props.height as number} />;
+    }
+    // A field being edited keeps its component, so the edit commits on blur
+    if (lowDetail && handlesRead && !focused) {
+      return (
+        <NodeLowDetail
+          id={id}
+          type={type}
+          width={props.width as number}
+          height={props.height as number}
+          selected={!!props.selected}
+          data={props.data as Record<string, unknown>}
+        />
+      );
     }
     return (
       <ErrorBoundary label={type}>
@@ -213,6 +253,7 @@ const edgeTypes: EdgeTypes = {
 };
 
 const OVERVIEW_EDGES: Edge[] = [];
+const selectZoomedOut = (state: ReactFlowState) => state.transform[2] < LOW_DETAIL_ZOOM;
 /** Pointer travel (px) under which a handle press counts as a click, not a drag. */
 const HANDLE_CLICK_SLOP = 4;
 /** Height is content-derived; a stored one must not reach React Flow's wrapper. */
@@ -444,6 +485,11 @@ export function WorkflowCanvas() {
   const openAnnotationModal = useAnnotationStore((state) => state.openModal);
   const { screenToFlowPosition, getViewport, setCenter, setViewport, getNodes } = useReactFlow();
   const isCanvasOverview = useStore(selectCanvasOverview);
+  // Low detail when zoomed out: nodes read it from lowDetail.ts, fed from
+  // this one subscription; React Flow then mounts only what is in view
+  const zoomedOut = useStore(selectZoomedOut);
+  useLayoutEffect(() => setZoomedOut(zoomedOut), [zoomedOut]);
+  const lowDetail = useLowDetailEnabled() && zoomedOut;
   const { show: showToast } = useToast();
   const [isDragOver, setIsDragOver] = useState(false);
   const [dropType, setDropType] = useState<"image" | "audio" | "workflow" | "node" | null>(null);
@@ -2629,6 +2675,7 @@ export function WorkflowCanvas() {
         onDoubleClick={handlePaneDoubleClick}
         onPaneContextMenu={handlePaneContextMenu}
         nodeTypes={nodeTypes}
+        onlyRenderVisibleElements={lowDetail}
         edgeTypes={edgeTypes}
         isValidConnection={isValidConnection}
         connectOnClick={false}
