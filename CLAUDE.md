@@ -591,6 +591,9 @@ All routes in `src/app/api/`:
 - `node-banana-nanoBanana-defaults` - Sticky generation settings
 - `node-banana-comfy-settings` - ComfyUI backend (cloud/local/remote), keys, job timeout
 - `node-banana-edge-appearance` - User default for connection line style and appearance (thickness, faded opacity, gradient, loading pulse)
+- `node-banana-low-detail` - Low detail when zoomed out (absent or `on` means on; Settings › Canvas)
+- `node-banana-low-detail-zoom` - The zoom low detail starts below (default 0.25)
+- `node-banana-perf-overlay` - The performance overlay is shown (`on`)
 - `node-banana-comfy-apps` - Saved Comfy nodes (workflow + contract + settings)
 - `node-banana-agent-settings` - Agent harness, and model and thinking-effort choice per harness
 - `node-banana-agent-conversations` - Agent chat history (messages, the agent's summary, workflow name, tab and id; newest 50, size-capped)
