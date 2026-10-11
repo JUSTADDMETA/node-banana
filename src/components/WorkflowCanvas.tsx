@@ -96,7 +96,7 @@ import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import { getNodeSize } from "@/utils/nodeDimensions";
 import { arrangeNodes } from "@/utils/arrangeNodes";
 import { FloatingNodeHeaders } from "./nodes/FloatingNodeHeaders";
-import { NodePlaceholder, setCanvasMoving, useNodeHasFocus, useNodeMounted } from "./nodes/nodeCulling";
+import { NodePlaceholder, setCanvasMoving, useAnyNodeHasFocus, useNodeHasFocus, useNodeMounted } from "./nodes/nodeCulling";
 import { setZoomedOut, useLowDetail, useLowDetailEnabled, useLowDetailZoom } from "./nodes/lowDetail";
 import { NodeLowDetail } from "./nodes/NodeLowDetail";
 import { PerfOverlay } from "./PerfOverlay";
@@ -491,6 +491,9 @@ export function WorkflowCanvas() {
   const zoomedOut = useStore(useCallback((state: ReactFlowState) => state.transform[2] < lowDetailZoom, [lowDetailZoom]));
   useLayoutEffect(() => setZoomedOut(zoomedOut), [zoomedOut]);
   const lowDetail = useLowDetailEnabled() && zoomedOut;
+  // ...except while a node holds the focused field: React Flow would unmount
+  // it once out of view, and the edit, which commits on blur, would be lost
+  const nodeHasFocus = useAnyNodeHasFocus(lowDetail);
   const { show: showToast } = useToast();
   const [isDragOver, setIsDragOver] = useState(false);
   const [dropType, setDropType] = useState<"image" | "audio" | "workflow" | "node" | null>(null);
@@ -2676,7 +2679,7 @@ export function WorkflowCanvas() {
         onDoubleClick={handlePaneDoubleClick}
         onPaneContextMenu={handlePaneContextMenu}
         nodeTypes={nodeTypes}
-        onlyRenderVisibleElements={lowDetail}
+        onlyRenderVisibleElements={lowDetail && !nodeHasFocus}
         edgeTypes={edgeTypes}
         isValidConnection={isValidConnection}
         connectOnClick={false}

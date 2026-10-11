@@ -285,6 +285,43 @@ describe("WorkflowCanvas", () => {
       expect(document.querySelector(".bg-canvas-bg")).toHaveClass("canvas-overview");
     });
 
+    it("mounts only what is in view when zoomed out, except while a node holds the focused field", () => {
+      mockViewport.zoom = 0.1;
+      render(
+        <TestWrapper>
+          <WorkflowCanvas />
+        </TestWrapper>
+      );
+      const onlyVisible = () => mockReactFlowProps.current!.onlyRenderVisibleElements;
+      expect(onlyVisible()).toBe(true);
+
+      // An edit commits on blur, which a node React Flow unmounted never sends
+      const host = document.createElement("div");
+      host.className = "react-flow__node";
+      host.setAttribute("data-id", "prompt-1");
+      host.tabIndex = 0;
+      const field = document.createElement("textarea");
+      host.appendChild(field);
+      document.body.appendChild(host);
+      try {
+        act(() => {
+          field.focus();
+          fireEvent.focusIn(field);
+        });
+        expect(onlyVisible()).toBe(false);
+
+        // Focus on the node itself, which a press on a node takes, holds no edit
+        act(() => {
+          host.focus();
+          fireEvent.focusOut(field, { relatedTarget: host });
+          fireEvent.focusIn(host);
+        });
+        expect(onlyVisible()).toBe(true);
+      } finally {
+        host.remove();
+      }
+    });
+
     it("removes edges from React Flow while in overview mode", () => {
       mockViewport.zoom = 0.1;
       mockUseWorkflowStore.mockImplementation((selector) =>

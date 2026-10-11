@@ -139,6 +139,15 @@ export function useNodeHasFocus(id: string): boolean {
   );
 }
 
+/** While `active`, true when an element inside any node has focus. */
+export function useAnyNodeHasFocus(active: boolean): boolean {
+  return useSyncExternalStore(
+    subscribeFocus,
+    () => active && focusedNodeId !== null,
+    () => false
+  );
+}
+
 // The exact border box of each node wrapper, in CSS pixels. React Flow
 // measures nodes in whole pixels, but its resize observer compares exact
 // sizes, so a placeholder built from the whole-pixel size would register as
