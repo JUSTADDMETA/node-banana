@@ -6,8 +6,8 @@ import { minMac, minWindows, versionLabel } from "../lib/release";
   <div class="footer__row reveal">
     <div class="downloads">
       <a class="btn btn--primary" href="/download/mac" data-download-mac>Download for Mac · Apple Silicon</a>
-      <span class="btn btn--secondary btn--soon" aria-disabled="true">Windows · coming soon</span>
-      <span class="eyebrow"><span class="version">{versionLabel}</span> · {minMac}</span>
+      <a class="btn btn--primary" href="/download/windows" data-download-windows>Download for Windows · x64</a>
+      <span class="eyebrow"><span class="version">{versionLabel}</span> · {minMac} · {minWindows}</span>
     </div>
     <nav class="footer__nav" aria-label="Footer">
       <a class="nav__link" href="https://github.com/shrimbly/node-banana/releases">All releases</a>

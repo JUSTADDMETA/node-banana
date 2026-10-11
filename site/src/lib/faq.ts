@@ -3,7 +3,7 @@
  * answer engine can quote whole. Rendered on the page (Faq.astro), as FAQPage
  * structured data, and in /llms.txt, so the three never disagree.
  */
-import { minMac } from "./release";
+import { minMac, minWindows } from "./release";
 
 export interface FaqEntry {
   question: string;
@@ -24,7 +24,7 @@ export const FAQ: FaqEntry[] = [
   {
     question: "What is Node Banana?",
     answer:
-      "Node Banana is a free, open source desktop app for Mac, with Windows coming soon, that lets you build AI media workflows on a node-based canvas. You connect image, video, audio, 3D and language-model nodes into a graph, and each node calls an AI provider with your own API key.",
+      "Node Banana is a free, open source desktop app for Mac and Windows that lets you build AI media workflows on a node-based canvas. You connect image, video, audio, 3D and language-model nodes into a graph, and each node calls an AI provider with your own API key.",
   },
   {
     question: "Is Node Banana free?",
@@ -44,7 +44,7 @@ export const FAQ: FaqEntry[] = [
   {
     question: "What does Node Banana run on?",
     answer:
-      `The desktop app runs on Apple Silicon Macs with ${minMac} or later and updates itself. A Windows build is coming soon; it was held back from 2.0 until it runs as well as the Mac app. On any other computer, including Intel Macs and Linux, Node Banana runs from source in a web browser with Node.js.`,
+      `The desktop app runs on Apple Silicon Macs with ${minMac} or later and on 64-bit Windows with ${minWindows} or later, and updates itself. On any other computer, including Intel Macs and Linux, Node Banana runs from source in a web browser with Node.js.`,
   },
   {
     question: "Does Node Banana work offline?",
@@ -69,7 +69,7 @@ export const FAQ: FaqEntry[] = [
   {
     question: "How do I install Node Banana?",
     answer:
-      "Download the Mac installer from nodebanana.app, open the disk image and drag Node Banana to Applications, then paste the API keys for the providers you use into Settings → Providers. The app is signed and notarised. Windows is coming soon.",
+      "Download the Mac or Windows installer from nodebanana.app, open it, then paste the API keys for the providers you use into Settings → Providers. The Mac app is signed and notarised. The Windows installer is not yet code-signed, so SmartScreen may ask you to confirm the first time.",
   },
   {
     question: "Who made Node Banana?",
