@@ -23,6 +23,7 @@ import { buildRouterBody, missingInputs, type RouterRequestInput } from "@/lib/p
 import { findMedia, findMediaAnywhere, resultError, type ComfyMediaValue, type FoundMedia, type Json } from "@/lib/providers/comfyRouter/template";
 import { routerBinding } from "@/lib/providers/comfyRouter/families";
 import { validateMediaUrl } from "@/utils/urlValidation";
+import { fetchWithRetry } from "@/lib/providers/retry";
 
 const MAX_MEDIA_SIZE = 500 * 1024 * 1024;
 const INLINE_LIMIT = 20 * 1024 * 1024;
@@ -201,12 +202,13 @@ export async function runComfySynchronously(
 ): Promise<GenerationOutput> {
   try {
     const { binding, body, provider } = await prepareRouterRequest(requestId, apiKey, input);
-    const response = await fetch(`${modelPath(binding.id)}${provider ? `?model_provider=${encodeURIComponent(provider)}` : ""}`, {
+    // The same Idempotency-Key on every attempt: a retry after a 503 cannot run it twice.
+    const response = await fetchWithRetry(`${modelPath(binding.id)}${provider ? `?model_provider=${encodeURIComponent(provider)}` : ""}`, {
       method: "POST",
       headers: headers(apiKey, { "Idempotency-Key": randomUUID() }),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(SYNC_TIMEOUT_MS),
-    });
+    }, { label: `Comfy Router run ${binding.id}` });
     if (!response.ok) throw await refusal(response, provider);
     return await outputOf(requestId, binding, response);
   } catch (error) {
@@ -223,12 +225,13 @@ export async function submitComfyTask(
   const { binding, body, provider } = await prepareRouterRequest(requestId, apiKey, input);
   if (binding.transport === "sync") throw new Error(`${binding.name} runs in one request, not through the queue`);
 
-  const response = await fetch(`${modelPath(binding.id)}/requests${provider ? `?model_provider=${encodeURIComponent(provider)}` : ""}`, {
+  // The same Idempotency-Key on every attempt: a retry after a 503 cannot queue it twice.
+  const response = await fetchWithRetry(`${modelPath(binding.id)}/requests${provider ? `?model_provider=${encodeURIComponent(provider)}` : ""}`, {
     method: "POST",
     headers: headers(apiKey, { "Idempotency-Key": randomUUID() }),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(SUBMIT_TIMEOUT_MS),
-  });
+  }, { label: `Comfy Router submit ${binding.id}` });
 
   if (!response.ok) throw await refusal(response, provider);
 

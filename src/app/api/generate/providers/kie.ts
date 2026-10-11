@@ -8,6 +8,7 @@
 import { GenerationInput, GenerationOutput } from "@/lib/providers/types";
 import { parseDataUrl } from "@/utils/dataUrl";
 import { validateMediaUrl } from "@/utils/urlValidation";
+import { fetchWithRetry } from "@/lib/providers/retry";
 
 const MAX_MEDIA_SIZE = 500 * 1024 * 1024; // 500MB
 const MAX_UPLOAD_SIZE = 20 * 1024 * 1024; // 20MB
@@ -523,7 +524,7 @@ export async function submitKieTask(
     console.log(`[API:${requestId}] Calling Veo API: ${veoUrl}`);
     console.log(`[API:${requestId}] Veo request body:`, JSON.stringify(veoBody, null, 2));
 
-    const createResponse = await fetch(veoUrl, {
+    const createResponse = await fetchWithRetry(veoUrl, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -590,7 +591,7 @@ export async function submitKieTask(
   }
   console.log(`[API:${requestId}] Request body:`, JSON.stringify(bodyForLogging, null, 2));
 
-  const createResponse = await fetch(createUrl, {
+  const createResponse = await fetchWithRetry(createUrl, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,

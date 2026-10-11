@@ -538,7 +538,8 @@ describe("/api/llm route", () => {
     it("should handle OpenAI API error without message", async () => {
       process.env.OPENAI_API_KEY = "test-openai-key";
 
-      mockFetch.mockResolvedValueOnce({
+      // A 500 is retried; one that persists is reported
+      mockFetch.mockResolvedValue({
         ok: false,
         status: 500,
         json: () => Promise.resolve({}),

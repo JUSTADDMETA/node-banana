@@ -6,6 +6,7 @@
  */
 
 import { GenerationInput, GenerationOutput } from "@/lib/providers/types";
+import { fetchWithRetry } from "@/lib/providers/retry";
 import { validateMediaUrl } from "@/utils/urlValidation";
 
 type WaveSpeedStatus = "created" | "pending" | "processing" | "completed" | "failed";
@@ -127,7 +128,7 @@ export async function generateWithWaveSpeed(
   const submitUrl = `${WAVESPEED_API_BASE}/${modelId}`;
   console.log(`[API:${requestId}] WaveSpeed submit URL: ${submitUrl}`);
 
-  const submitResponse = await fetch(submitUrl, {
+  const submitResponse = await fetchWithRetry(submitUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,

@@ -1,5 +1,6 @@
 /** Direct OpenAI Images API generation and reference-image editing. */
 import type { GenerationInput, GenerationOutput } from "@/lib/providers/types";
+import { fetchWithRetry } from "@/lib/providers/retry";
 import { estimateOpenAIImage25Cost, validateOpenAIImageParameters } from "@/lib/providers/openaiImages";
 import type { ImageGenerationMetadata } from "@/types/api";
 import { decodeBase64, parseDataUrl } from "@/utils/dataUrl";
@@ -127,7 +128,7 @@ export async function generateWithOpenAI(requestId: string, apiKey: string, inpu
   try {
     signal.throwIfAborted();
     console.log(`[API:${requestId}] OpenAI model=${input.model.id}, references=${images.length}`);
-    const response = await fetch(`${OPENAI_API_BASE}/${images.length ? "edits" : "generations"}`, { method: "POST", headers, body, signal });
+    const response = await fetchWithRetry(`${OPENAI_API_BASE}/${images.length ? "edits" : "generations"}`, { method: "POST", headers, body, signal }, { label: "OpenAI images" });
     if (!response.ok) return await upstreamError(response, input.model.name);
     const data: OpenAIImageResponse = await response.json();
     const base64 = data.data?.[0]?.b64_json;
