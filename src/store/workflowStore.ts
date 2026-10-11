@@ -639,6 +639,21 @@ function abortNodeRuns(state: WorkflowStore, reason: string): void {
 // the serial moves when a run starts, `failed` is set when it ends in error.
 const lastRun = { serial: 0, failed: false };
 
+/**
+ * Put back to idle the nodes a run started that are still "loading" once it
+ * has ended: cut off by another node's failure or by Stop, their executors
+ * rethrew the abort without settling them. Only the run's own nodes, so a
+ * node's separate run alongside is left alone.
+ */
+function settleInterruptedNodes(get: () => WorkflowStore, launched: ReadonlySet<string>): void {
+  for (const id of launched) {
+    const node = get().nodes.find((n) => n.id === id);
+    if (node && (node.data as { status?: unknown }).status === "loading") {
+      get().updateNodeData(id, { status: "idle" } as Partial<WorkflowNodeData>);
+    }
+  }
+}
+
 // Counts every run started (workflow, selection, single node), so the
 // writes of a stopped run can tell whether a newer run has begun since.
 let runStarts = 0;
@@ -2363,6 +2378,12 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     lastRun.failed = false;
     // Nodes that had nothing to work with, named for the end-of-run summary
     const unreadyNodes: string[] = [];
+    // Every node this run started. When the run ends early (a failure aborts
+    // the others, or Stop), the ones still "loading" were cut off mid-flight:
+    // an aborted executor rethrows without touching its node, so without this
+    // their spinners would stay on.
+    const launched = new Set<string>();
+    const settleInterrupted = () => settleInterruptedNodes(get, launched);
 
     // Start logging session
     await logger.startSession();
@@ -2604,7 +2625,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         setCurrentNodeIds: (ids) => {
           if (get()._abortController === abortController) set({ currentNodeIds: ids });
         },
-        runNode: (node, signal) => executeSingleNode(node, signal),
+        runNode: (node, signal) => { launched.add(node.id); return executeSingleNode(node, signal); },
         onNodeError: (node, err) => {
           logger.error('workflow.error', 'Node execution failed', {
             nodeId: node.id,
@@ -2746,6 +2767,8 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       if (!ownsRunState(get(), abortController)) return;
       // Reset skipped nodes' status back to idle
       resetSkippedNodes();
+      // Stop ends the run this way too, with its nodes cut off mid-flight
+      settleInterrupted();
 
       set({ isRunning: false, currentNodeIds: [], skippedNodeIds: new Set(), _abortController: null });
 
@@ -2767,6 +2790,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       }
       // Reset skipped nodes' status back to idle
       resetSkippedNodes();
+      settleInterrupted();
       set({ isRunning: false, currentNodeIds: [], skippedNodeIds: new Set(), _abortController: null });
 
       saveLogSession();
@@ -3248,6 +3272,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       }
     };
 
+    const launched = new Set<string>();
     try {
       // Filter edges to only those within the selected set for topological sort.
       // Exclude loop edges (matching full execution) so looped nodes aren't
@@ -3271,7 +3296,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         setCurrentNodeIds: (ids) => {
           if (get()._abortController === abortController) set({ currentNodeIds: ids });
         },
-        runNode: (node, signal) => executeNode(node, signal),
+        runNode: (node, signal) => { launched.add(node.id); return executeNode(node, signal); },
         onNodeError: (node, err) => {
           logger.error('node.error', 'Node execution failed in batch', {
             nodeId: node.id,
@@ -3317,6 +3342,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
       if (!ownsRunState(get(), abortController)) return;
       logger.info('node.execution', 'Selected nodes execution completed successfully');
+      settleInterruptedNodes(get, launched);
       set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
       saveLogSession();
@@ -3333,6 +3359,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           "error"
         );
       }
+      settleInterruptedNodes(get, launched);
       set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
       saveLogSession();

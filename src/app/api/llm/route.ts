@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fetchWithRetry, retryTransient } from "@/lib/providers/retry";
 import { GoogleGenAI } from "@google/genai";
 import { LLMGenerateRequest, LLMGenerateResponse } from "@/types";
 import { resolveLLMModel } from "@/lib/llm/catalog";
@@ -69,14 +70,14 @@ async function generateWithGoogle(
   }
 
   const startTime = Date.now();
-  const response = await ai.models.generateContent({
+  const response = await retryTransient(() => ai.models.generateContent({
     model: modelId,
     contents,
     config: {
       temperature,
       maxOutputTokens: maxTokens,
     },
-  });
+  }), { label: `Gemini ${modelId}` });
   const duration = Date.now() - startTime;
 
   // Use the convenient .text property that concatenates all text parts
@@ -137,7 +138,7 @@ async function generateWithOpenAI(
   }
 
   const startTime = Date.now();
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -228,7 +229,7 @@ async function generateWithAnthropic(
   content.push({ type: "text", text: prompt });
 
   const startTime = Date.now();
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const response = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

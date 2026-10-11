@@ -7,6 +7,7 @@
 
 import { GenerationInput, GenerationOutput } from "@/lib/providers/types";
 import { validateMediaUrl } from "@/utils/urlValidation";
+import { fetchWithRetry } from "@/lib/providers/retry";
 import { clearFalSchemaCache, fetchFalInputSchema } from "@/lib/providers/falSchema";
 import {
   INPUT_PATTERNS,
@@ -297,7 +298,7 @@ export async function generateWithFalQueue(
 
   // Submit to queue
   console.log(`[API:${requestId}] Submitting to fal.ai queue with inputs: ${Object.keys(requestBody).join(", ")}`);
-  const submitResponse = await fetch(`https://queue.fal.run/${modelId}`, {
+  const submitResponse = await fetchWithRetry(`https://queue.fal.run/${modelId}`, {
     method: "POST",
     headers,
     body: JSON.stringify(requestBody),

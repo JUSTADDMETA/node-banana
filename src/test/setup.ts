@@ -25,3 +25,6 @@ global.DOMMatrixReadOnly = DOMMatrixReadOnlyMock as unknown as typeof DOMMatrixR
 afterEach(() => {
   cleanup();
 });
+
+// Provider retries wait between attempts; a test should not.
+process.env.NODE_BANANA_RETRY_DELAY_MS = "0";
