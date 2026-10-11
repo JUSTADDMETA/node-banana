@@ -837,6 +837,63 @@ describe("comfyApp", () => {
     expect(ctx.addToGlobalHistory).toHaveBeenCalledOnce();
   });
 
+  it("runs with the seeds the node shows, then moves each on by its mode", async () => {
+    // ComfyUI's "control after generate": the node shows the seed its next
+    // run uses, and the mode says what that becomes once a run has taken it.
+    vi.useFakeTimers();
+    const seed = (id: string, extra: object = {}) => ({ id, label: "seed", nodeId: id.split(":")[0], inputKey: "seed", type: "integer", isSeed: true, ...extra });
+    const seeded = { ...app, params: [seed("25:seed"), seed("26:seed"), seed("27:seed", { maximum: 9 }), seed("28:seed")] };
+    const node = {
+      id: "comfy-1",
+      type: "comfyApp",
+      position: { x: 0, y: 0 },
+      data: {
+        app: seeded,
+        paramValues: { "25:seed": 41, "26:seed": 7, "27:seed": 9, "28:seed": 5 },
+        seedModes: { "25:seed": "increment", "26:seed": "fixed", "27:seed": "increment", "28:seed": "decrement" },
+        status: "idle",
+      },
+    } as unknown as WorkflowNode;
+    const { ctx, nodes } = makeCtx(node, { recordAsset: makeRecorder().recordAsset });
+    mockFetch.mockImplementation(async (url: string) =>
+      url === "/api/comfy/run"
+        ? okJson({ success: true, polling: true, jobId: "job-1", status: "queued" })
+        : okJson({ success: true, polling: false, status: "success", outputs: [{ handleId: "9", type: "image", value: "data:image/png;base64,big" }] })
+    );
+
+    const run = executeComfyApp(ctx);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await run;
+
+    const submitted = JSON.parse(mockFetch.mock.calls.find((c) => c[0] === "/api/comfy/run")![1].body);
+    expect(submitted.params).toEqual({ "25:seed": 41, "26:seed": 7, "27:seed": 9, "28:seed": 5 });
+    // Stepping past the maximum wraps to the minimum, as ComfyUI does.
+    expect((nodes.get("comfy-1")!.data as { paramValues: unknown }).paramValues).toEqual({ "25:seed": 42, "26:seed": 7, "27:seed": 0, "28:seed": 4 });
+  });
+
+  it("gives a seed with no value yet one to run with, and records the seed it ran with", async () => {
+    vi.useFakeTimers();
+    const { recordAsset } = makeRecorder();
+    const seeded = { ...app, params: [{ id: "25:seed", label: "seed", nodeId: "25", inputKey: "seed", type: "integer", isSeed: true }] };
+    const node = { id: "comfy-1", type: "comfyApp", position: { x: 0, y: 0 }, data: { app: seeded, paramValues: {}, status: "idle" } } as unknown as WorkflowNode;
+    const { ctx, nodes } = makeCtx(node, { recordAsset });
+    mockFetch.mockImplementation(async (url: string) =>
+      url === "/api/comfy/run"
+        ? okJson({ success: true, polling: true, jobId: "job-1", status: "queued" })
+        : okJson({ success: true, polling: false, status: "success", outputs: [{ handleId: "9", type: "image", value: "data:image/png;base64,big" }] })
+    );
+
+    const run = executeComfyApp(ctx);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await run;
+
+    const ran = JSON.parse(mockFetch.mock.calls.find((c) => c[0] === "/api/comfy/run")![1].body).params["25:seed"];
+    expect(Number.isInteger(ran)).toBe(true);
+    expect(recordAsset.mock.calls[0][0].parameters).toMatchObject({ "25:seed": ran });
+    // Random, the default: the node now shows the next one.
+    expect((nodes.get("comfy-1")!.data as { paramValues: Record<string, unknown> }).paramValues["25:seed"]).toEqual(expect.any(Number));
+  });
+
   function comfyRun(recordAsset: NodeExecutionContext["recordAsset"]) {
     const node = { id: "comfy-1", type: "comfyApp", position: { x: 0, y: 0 }, data: { app, paramValues: {}, status: "idle" } } as unknown as WorkflowNode;
     const { ctx } = makeCtx(node, { recordAsset, generationsPath: "/proj/generations" });

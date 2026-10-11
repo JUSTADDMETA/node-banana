@@ -5,26 +5,33 @@ import { NodeProps, Node, useUpdateNodeInternals } from "@xyflow/react";
 
 import { NodeShell } from "./NodeShell";
 import { ComfyAppParameters } from "./ComfyAppParameters";
-import { ControlsCard, HeightGrip, SummaryValues, type SocketSpec, type SocketType } from "./ui";
+import { CarouselControls, ControlsCard, HeightGrip, SummaryValues, type SocketSpec, type SocketType } from "./ui";
 import {
   ComfyWorkflowImportModal,
   type ComfyReconfigureTarget,
   type ComfyUpload,
 } from "@/components/modals/ComfyWorkflowImportModal";
 import { ComfyWordmark } from "@/components/icons/ComfyWordmark";
-import { RefreshCw, Settings, type LucideIcon } from "lucide-react";
+import { Settings, type LucideIcon } from "lucide-react";
 import { useComfyPreview } from "@/hooks/useComfyPreview";
+import { useGenerationCarousel } from "@/hooks/useGenerationCarousel";
+import { useLoadGenerationById } from "@/hooks/useLoadGenerationById";
 import { useWorkflowStore } from "@/store/workflowStore";
+import { useComfyAppRequestStore } from "@/store/comfyAppRequestStore";
 import { outputsToNodeData } from "@/store/execution/comfyAppExecutor";
 import { appInputHandles, appToInputSchema } from "@/lib/comfy/nodeSchema";
+import { promptNodesFor } from "@/lib/comfy/promptNodes";
 import { mergeParamValues } from "@/lib/comfy/reconfigure";
+import { initialSeedValues } from "@/lib/comfy/seeds";
 import type {
   ComfyAppDefinition,
   ComfyInputType,
   ComfyOutputType,
+  ComfyResolvedOutput,
+  ComfySeedMode,
   ComfyWorkflowInspection,
 } from "@/lib/comfy/types";
-import type { ComfyAppNodeData } from "@/types";
+import type { ComfyAppNodeData, ComfyRunHistoryItem } from "@/types";
 import { downloadMedia } from "@/utils/downloadMedia";
 
 type ComfyAppNodeType = Node<ComfyAppNodeData, "comfyApp">;
@@ -68,8 +75,44 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
     updateNodeData(id, { _pendingWorkflow: null });
   }, [nodeData._pendingWorkflow, id, updateNodeData]);
 
+  // "Replace workflow…" in the node header's menu.
+  useEffect(
+    () =>
+      useComfyAppRequestStore.subscribe((state) => {
+        if (state.request?.nodeId !== id) return;
+        state.consumeRequest();
+        setModal("replace");
+      }),
+    [id],
+  );
+
   const edges = useWorkflowStore((state) => state.edges);
   const removeEdge = useWorkflowStore((state) => state.removeEdge);
+  const addNode = useWorkflowStore((state) => state.addNode);
+  const onConnect = useWorkflowStore((state) => state.onConnect);
+
+  /**
+   * Seed a Prompt node with the workflow's own text for each text input that
+   * carries one, wired to that handle: the author's prompts are often what
+   * makes the workflow run as intended, and an empty handle hides them.
+   */
+  const seedPromptNodes = useCallback(
+    (attached: ComfyAppDefinition) => {
+      const self = useWorkflowStore.getState().nodes.find((n) => n.id === id);
+      if (!self) return;
+      const connected = new Set(
+        useWorkflowStore
+          .getState()
+          .edges.filter((edge) => edge.target === id && edge.targetHandle)
+          .map((edge) => edge.targetHandle as string)
+      );
+      for (const seed of promptNodesFor(attached, self.position, connected)) {
+        const promptId = addNode("prompt", seed.position, { prompt: seed.text, customTitle: seed.label });
+        onConnect({ source: promptId, sourceHandle: "text", target: id, targetHandle: seed.handleId });
+      }
+    },
+    [id, addNode, onConnect]
+  );
 
   const app = nodeData.app;
 
@@ -145,27 +188,36 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
         savedNodeId: meta?.savedNodeId,
         inputSchema: appToInputSchema(attached),
         // A new contract invalidates the previous run entirely — old parameter
-        // ids point at nodes the new graph may not even have.
-        paramValues: Object.fromEntries(
-          attached.params
-            .filter((p) => p.default !== undefined && !p.isSeed)
-            .map((p) => [p.id, p.default])
-        ),
+        // ids point at nodes the new graph may not even have. Seeds get a
+        // value now, so the node shows the seed its first run uses.
+        paramValues: {
+          ...Object.fromEntries(
+            attached.params
+              .filter((p) => p.default !== undefined && !p.isSeed)
+              .map((p) => [p.id, p.default])
+          ),
+          ...initialSeedValues(attached.params),
+        },
+        seedModes: {},
         outputs: {},
         outputImage: null,
         outputVideo: null,
         outputAudio: null,
         outputText: null,
         output3dUrl: null,
+        // Past runs were another workflow's: their outputs mean nothing here.
+        runHistory: [],
+        selectedRunHistoryIndex: 0,
         status: "idle",
         error: null,
         runStatus: null,
         jobId: null,
       });
+      seedPromptNodes(attached);
       setModal(null);
       setDropped(null);
     },
-    [id, updateNodeData, pruneStaleEdges]
+    [id, updateNodeData, pruneStaleEdges, seedPromptNodes]
   );
 
   /**
@@ -178,7 +230,12 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   const handleReconfigure = useCallback(
     (attached: ComfyAppDefinition, inspection: ComfyWorkflowInspection | undefined) => {
       pruneStaleEdges(attached);
-      const paramValues = mergeParamValues(attached.params, nodeData.paramValues ?? {});
+      // A seed newly exposed starts as on attach; kept ones keep theirs.
+      const previous = nodeData.paramValues ?? {};
+      const paramValues = {
+        ...mergeParamValues(attached.params, previous),
+        ...initialSeedValues(attached.params.filter((param) => !(param.id in previous)), nodeData.seedModes),
+      };
       // Results are keyed by output handle id, so a dropped output's value has
       // to go — and the typed mirrors re-derived from what is left, exactly as
       // a run would compute them.
@@ -199,12 +256,18 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
       });
       setModal(null);
     },
-    [id, updateNodeData, pruneStaleEdges, nodeData.paramValues, nodeData.outputs]
+    [id, updateNodeData, pruneStaleEdges, nodeData.paramValues, nodeData.seedModes, nodeData.outputs]
   );
 
   const handleParamsChange = useCallback(
     (values: Record<string, unknown>) => updateNodeData(id, { paramValues: values }),
     [id, updateNodeData]
+  );
+
+  const handleSeedModeChange = useCallback(
+    (paramId: string, mode: ComfySeedMode) =>
+      updateNodeData(id, { seedModes: { ...nodeData.seedModes, [paramId]: mode } }),
+    [id, updateNodeData, nodeData.seedModes]
   );
 
   // Identity-stable, because the dialog re-reads the workflow whenever this
@@ -227,6 +290,61 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
   // The latent as it forms. Only the v2 engines emit these, so it stays null
   // on a stock ComfyUI and the node keeps its spinner.
   const livePreview = useComfyPreview(nodeData.jobId, isRunning);
+
+  // The carousel of past runs. A run has every output the app declared, so
+  // going back to one reloads each media output by its handle (from the
+  // library, else the project's folder) and keeps its text as it was.
+  const loadImageById = useLoadGenerationById("image", "Image");
+  const loadVideoById = useLoadGenerationById("video", "Video");
+  const loadAudioById = useLoadGenerationById("audio", "Audio");
+  const loadRun = useCallback(
+    async (item: ComfyRunHistoryItem): Promise<ComfyResolvedOutput[] | null> => {
+      const loaders = { image: loadImageById, video: loadVideoById, audio: loadAudioById } as const;
+      const resolved: ComfyResolvedOutput[] = [];
+      let anyMedia = false;
+      for (const [handleId, output] of Object.entries(item.outputs)) {
+        if (output.type === "text") {
+          if (output.text) resolved.push({ handleId, type: "text", value: output.text });
+          continue;
+        }
+        if (output.type === "3d") continue;
+        const value = await loaders[output.type]({ id: output.id ?? "", assetId: output.assetId });
+        if (!value) continue;
+        resolved.push({ handleId, type: output.type, value });
+        anyMedia = true;
+      }
+      return anyMedia ? resolved : null;
+    },
+    [loadImageById, loadVideoById, loadAudioById]
+  );
+  const {
+    isLoading: isLoadingRun,
+    handlePrevious: handlePreviousRun,
+    handleNext: handleNextRun,
+  } = useGenerationCarousel<ComfyRunHistoryItem, ComfyResolvedOutput[]>({
+    nodeId: id,
+    history: nodeData.runHistory,
+    currentIndex: nodeData.selectedRunHistoryIndex,
+    loadFn: loadRun,
+    buildUpdate: (resolved, newIndex) => ({
+      ...(app ? outputsToNodeData(app.outputs, resolved) : {}),
+      selectedRunHistoryIndex: newIndex,
+      status: "idle",
+      error: null,
+    }),
+  });
+  const runCount = (nodeData.runHistory ?? []).length;
+  const historyNav =
+    app && runCount > 1 ? (
+      <CarouselControls
+        index={nodeData.selectedRunHistoryIndex ?? 0}
+        count={runCount}
+        onPrev={handlePreviousRun}
+        onNext={handleNextRun}
+        loading={isLoadingRun || isRunning}
+        noun="run"
+      />
+    ) : undefined;
 
   // Sockets: one per connectable input the workflow exposes, one per bound output.
   const inputSockets = useMemo<SocketSpec[]>(
@@ -288,6 +406,7 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
         outputs={outputSockets}
         minWidth={260}
         mediaClassName={app ? "bg-neutral-900/60" : undefined}
+        gap={historyNav}
         controls={
           app ? (
             <ControlsCard
@@ -301,7 +420,6 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
                       items={[runStatus ? runStatus.replace(/_/g, " ") : `${app.nodeCount} node${app.nodeCount === 1 ? "" : "s"}`]}
                     />
                     <HeaderButton onClick={() => setModal("edit")} title="Choose inputs, settings and outputs" icon={Settings} />
-                    <HeaderButton onClick={() => setModal("replace")} title="Replace this workflow" icon={RefreshCw} />
                   </span>
                 ),
               }}
@@ -317,6 +435,8 @@ export function ComfyAppNode({ id, data, selected }: NodeProps<ComfyAppNodeType>
                   params={app.params}
                   values={nodeData.paramValues ?? {}}
                   onChange={handleParamsChange}
+                  seedModes={nodeData.seedModes}
+                  onSeedModeChange={handleSeedModeChange}
                 />
               ) : undefined}
             </ControlsCard>
@@ -560,7 +680,6 @@ function Preview({
         className="w-full h-full object-contain"
         controls
         loop
-        muted
         playsInline
       />
     );

@@ -6,8 +6,6 @@ import {
   MiniMap,
   Panel,
   useReactFlow,
-  useStore,
-  useStoreApi,
   useViewport,
   type Node,
 } from "@xyflow/react";
@@ -42,7 +40,12 @@ export function getNavigatorHeight(minimapVisible: boolean): number {
 }
 
 export function getMiniMapNodeColor(node: Node): string {
-  switch (node.type) {
+  return miniMapTypeColor(node.type);
+}
+
+/** A node type's colour in the minimap, and in the agent chat's map of a workflow it built. */
+export function miniMapTypeColor(type: string | undefined): string {
+  switch (type) {
     case "imageInput": return "#3b82f6";
     case "audioInput": return "#a78bfa";
     case "videoInput": return "#c084fc";
@@ -110,27 +113,23 @@ interface CanvasMinimapProps {
   disabled?: boolean;
   /** Told when the minimap is shown or hidden, so chrome above the card can follow its height. */
   onMinimapVisibleChange?: (visible: boolean) => void;
+  /** Whether the canvas is locked: no node can be moved, connected or selected. */
+  locked?: boolean;
+  /**
+   * Asked to lock or unlock. The canvas holds the lock and hands it to
+   * <ReactFlow> as props: from 12.11 React Flow reads whether nodes drag
+   * from the prop alone, so a lock written to its store left them draggable.
+   */
+  onLockedChange?: (locked: boolean) => void;
 }
 
 /**
  * The navigator: minimap on top, one row of canvas controls beneath. Hiding
  * the minimap leaves the row on its own, so zoom, fit and lock never move.
  */
-export function CanvasMinimap({ disabled = false, onMinimapVisibleChange }: CanvasMinimapProps) {
+export function CanvasMinimap({ disabled = false, onMinimapVisibleChange, locked = false, onLockedChange }: CanvasMinimapProps) {
   const [isMinimapVisible, setIsMinimapVisible] = useState(true);
   const { zoomIn, zoomOut, fitView, setCenter, getZoom } = useReactFlow();
-  const store = useStoreApi();
-  const isInteractive = useStore(
-    (s) => Boolean(s.nodesDraggable || s.nodesConnectable || s.elementsSelectable),
-  );
-
-  const toggleInteractive = () => {
-    store.setState({
-      nodesDraggable: !isInteractive,
-      nodesConnectable: !isInteractive,
-      elementsSelectable: !isInteractive,
-    });
-  };
 
   return (
     <Panel
@@ -179,13 +178,13 @@ export function CanvasMinimap({ disabled = false, onMinimapVisibleChange }: Canv
           <Fullscreen size={18} strokeWidth={1.75} />
         </ControlButton>
         <ControlButton
-          label={isInteractive ? "Lock canvas" : "Unlock canvas"}
-          pressed={!isInteractive}
-          on={!isInteractive}
+          label={locked ? "Unlock canvas" : "Lock canvas"}
+          pressed={locked}
+          on={locked}
           disabled={disabled}
-          onClick={toggleInteractive}
+          onClick={() => onLockedChange?.(!locked)}
         >
-          {isInteractive ? <LockOpen size={18} strokeWidth={1.75} /> : <Lock size={18} strokeWidth={1.75} />}
+          {locked ? <Lock size={18} strokeWidth={1.75} /> : <LockOpen size={18} strokeWidth={1.75} />}
         </ControlButton>
         <div className={CHROME_DIVIDER} />
         <ControlButton

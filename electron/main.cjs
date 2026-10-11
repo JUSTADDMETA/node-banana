@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, utilityProcess, safeStorage, screen } = require('electron');
+const { app, BrowserWindow, contentTracing, dialog, ipcMain, Menu, session, shell, utilityProcess, safeStorage, screen } = require('electron');
 const { randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -10,16 +10,17 @@ const { createCredentialStore } = require('./lib/credentials.cjs');
 const { provisionRuntime } = require('./lib/runtime.cjs');
 const { createDiagnostics, createRedactor } = require('./lib/diagnostics.cjs');
 const { createBackend } = require('./lib/backend.cjs');
-const { atomicWrite } = require('./lib/files.cjs');
+const { atomicWrite, atomicWriteAsync } = require('./lib/files.cjs');
 const { visibleBounds } = require('./lib/window-state.cjs');
 const { pickHostEnvironment } = require('./lib/env.cjs');
 const { libraryEnv } = require('./lib/library.cjs');
 const { createServerMessageHandler } = require('./lib/bridge-main.cjs');
 const { UNLOAD_PROMPT } = require('./lib/unload-prompt.cjs');
 const { createUpdates, createUnsupportedUpdates, createPreviewUpdater, readReleasesUrl } = require('./lib/updates.cjs');
+const { createSessionTrace } = require('./lib/perf-trace.cjs');
 let root = path.resolve(__dirname, '..');
 let runtime, backend, window, credentialStore, recoveryStore, diagnostics, updates;
-let quitting = false, rendererCrashed = false, starting;
+let quitting = false, rendererCrashed = false, starting, sessionTrace;
 const dev = !app.isPackaged && process.argv.includes('--dev');
 const port = Number(process.env.NODE_BANANA_ELECTRON_PORT || 47831);
 const origin = `http://127.0.0.1:${port}`;
@@ -134,13 +135,26 @@ async function createWindow() {
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs') },
   });
   const current = window;
+  sessionTrace?.attach(current.webContents);
   let saveTimer;
+  const boundsRecord = () => JSON.stringify({ version: 1, bounds: current.getNormalBounds(), maximized: current.isMaximized() });
+  // While the window is being moved or resized the record is written off the
+  // main thread and without fsync: losing it costs a window position, and a
+  // synchronous write at every pause stalled the window on Windows. The one
+  // on close is synchronous so it lands before the process quits.
+  const saveBoundsSoon = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      if (current.isDestroyed() || current.isFullScreen()) return;
+      atomicWriteAsync(stateFile, boundsRecord(), { durable: false }).catch(log);
+    }, 300);
+  };
   const saveBounds = () => {
     clearTimeout(saveTimer);
     if (current.isDestroyed() || current.isFullScreen()) return;
-    try { atomicWrite(stateFile, JSON.stringify({ version: 1, bounds: current.getNormalBounds(), maximized: current.isMaximized() })); } catch (error) { log(error); }
+    try { atomicWrite(stateFile, boundsRecord()); } catch (error) { log(error); }
   };
-  for (const event of ['resize', 'move', 'maximize', 'unmaximize']) current.on(event, () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveBounds, 300); });
+  for (const event of ['resize', 'move', 'maximize', 'unmaximize']) current.on(event, saveBoundsSoon);
   current.on('close', saveBounds);
   if (saved?.maximized) current.maximize();
   // The renderer's maximise button swaps to a restore glyph from this state.
@@ -190,9 +204,9 @@ function registerBridge() {
   for (const [category, operations, getStore] of [
     ['recovery', ['read', 'write', 'assetChunk', 'readAsset', 'hydrate', 'discard'], () => recoveryStore],
     ['credentials', ['read', 'write', 'delete', 'reset'], () => credentialStore],
-  ]) for (const operation of operations) ipcMain.handle(`desktop:${category}:${operation}`, (event, value) => {
+  ]) for (const operation of operations) ipcMain.handle(`desktop:${category}:${operation}`, async (event, value) => {
     if (!validCaller(event)) throw new Error('Unauthorized desktop request');
-    try { return { ok: true, value: getStore()[operation](value) }; }
+    try { return { ok: true, value: await getStore()[operation](value) }; }
     catch (error) {
       log(error);
       return category === 'credentials'
@@ -253,13 +267,17 @@ else {
   registerBridge();
   app.on('second-instance', () => { if (window?.isMinimized()) window.restore(); window?.show(); window?.focus(); });
   app.on('before-quit', () => { quitting = true; });
-  app.on('will-quit', () => backend?.kill());
+  app.on('will-quit', event => { backend?.kill(); sessionTrace?.willQuit(event, () => app.quit()); });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
   app.on('activate', () => { if (!window && backend?.online()) createWindow().catch(fail); });
   process.on('uncaughtException', error => { void fail(error); });
   process.on('unhandledRejection', log);
   app.whenReady().then(async () => {
     diagnostics = createDiagnostics(app.getPath('logs'), redactor);
+    if (process.env.NODE_BANANA_PERF_TRACE) {
+      sessionTrace = createSessionTrace({ dir: path.resolve(process.env.NODE_BANANA_PERF_TRACE), contentTracing, log });
+      sessionTrace.start();
+    }
     credentialStore = createCredentialStore(app.getPath('userData'), safeStorage, values => {
       redactor.add(values); backend?.post({ type: 'secrets', values });
     });

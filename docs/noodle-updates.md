@@ -33,9 +33,9 @@ Decision (2026-10-03): the loading pulse is a comet. While a node is loading
 bright head (the type colour, 40% towards white) over a softer, wider tail,
 travelling source to target. Both are dashes on `pathLength` 100, so every
 noodle takes one 1.8s beat whatever its length and a node's inputs arrive
-together. Noodles out of a running node stay still. The comet pauses while the
-canvas pans or a node drags; under reduced motion the noodle holds a static
-highlight instead. It replaced a dashed overlay with two glow strokes that only
+together. Noodles out of a running node stay still. The comet keeps travelling
+while the canvas pans or a node drags (it paused for a while, as a repaint
+saving); under reduced motion the noodle holds a static highlight instead. It replaced a dashed overlay with two glow strokes that only
 ran into Nano Banana nodes and, with the gradient on, was painted with the
 faded gradient. The options considered are on the "Running noodle animation"
 design canvas.

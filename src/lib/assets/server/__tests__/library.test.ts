@@ -18,6 +18,7 @@ import {
   getLibraryStatus,
   listAssets,
   mediaHas,
+  newestFromNode,
   openAssetFile,
   openMedia,
   patchAsset,
@@ -189,6 +190,27 @@ describe("queries", () => {
       ["wf_test_1", 2],
     ]);
     expect(facets.projects).toEqual([{ path: null, name: "Not in a project", count: 3 }]);
+  });
+});
+
+describe("newestFromNode", () => {
+  it("lists what one node of one workflow saved, newest run first, a run's results together, trashed ones too", async () => {
+    const app = { nodeId: "comfyApp-1", nodeType: "comfyApp" };
+    const first = runId();
+    const second = runId();
+    const old = await record({ createdAt: T0, producer: app, runId: first });
+    const image = await record({ createdAt: T0 + HOUR, producer: { ...app, outputHandle: "1" }, runId: second });
+    const video = await record({ createdAt: T0 + HOUR, producer: { ...app, outputHandle: "2" }, runId: second });
+    // Another node, and the same node id in another workflow.
+    await record({ createdAt: T0 + 2 * HOUR, runId: runId() });
+    await record({ createdAt: T0 + 2 * HOUR, producer: app, workflowId: "wf_other", runId: runId() });
+    await bulkAssets({ selection: { mode: "ids", ids: [image.asset.id] }, op: { action: "trash" } });
+
+    const latest = (await newestFromNode("wf_test_1", "comfyApp-1", 1)).map((asset) => asset.id);
+    expect(latest.sort()).toEqual([image.asset.id, video.asset.id].sort());
+    expect((await newestFromNode("wf_test_1", "comfyApp-1", 2)).map((asset) => asset.id).at(-1)).toBe(old.asset.id);
+    expect(await newestFromNode("wf_test_1", "nanoBanana-9", 4)).toEqual([]);
+    expect(await newestFromNode("", "comfyApp-1", 4)).toEqual([]);
   });
 });
 

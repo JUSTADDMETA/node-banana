@@ -22,11 +22,9 @@ if (rootPackage.name !== "node-banana" || !rootPackage.version) {
   );
 }
 
-/** "2.0.0" */
+/** "2.1.0" */
 export const version: string = rootPackage.version;
-/** "v2.0.0", as shown beside the download buttons. */
+/** "v2.1.0", as shown beside the download buttons. */
 export const versionLabel = `v${version}`;
 export const minMac = "macOS 13";
 export const minWindows = "Windows 10";
-/** The Windows build was withdrawn after 2.0.0 shipped (slow and buggy); it returns in a later release. */
-export const windowsAvailable = false;

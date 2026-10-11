@@ -3,8 +3,7 @@
  *
  * applyGraphOps (the pure op applier) belongs to the graph module and is
  * replaced here by a small faithful fake, so these tests pin the store's own
- * contract: one undo step per batch, group handling and skipped-op
- * reporting.
+ * contract: one undo step per batch, group handling and skipped-op reporting.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

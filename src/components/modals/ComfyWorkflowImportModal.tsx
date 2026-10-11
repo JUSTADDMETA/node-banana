@@ -6,10 +6,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { ComfyMark } from "@/components/icons/ComfyMark";
 import { ComfyNodePreview } from "./ComfyNodePreview";
-import {
-  ComfySettingsTab,
-  useComfySettingsDraft,
-} from "@/components/settings/ComfySettingsTab";
 import { useSavedComfyNodes } from "@/hooks/useSavedComfyNodes";
 import { buildComfyApp } from "@/lib/comfy/buildApp";
 import { loaderInputType } from "@/lib/comfy/graph";
@@ -23,11 +19,12 @@ import {
 import { inputFromCandidate, inputFromLoader, paramFromCandidate } from "@/lib/comfy/inspect";
 import { bindingKey, withAppLabels } from "@/lib/comfy/reconfigure";
 import {
+  COMFY_SETTINGS_CHANGED_EVENT,
   buildComfyHeaders,
   comfyConfigError,
   getComfySettings,
-  saveComfySettings,
 } from "@/lib/comfy/settings";
+import { useSettingsDialogStore } from "@/store/settingsDialogStore";
 import type {
   ComfyAppDefinition,
   ComfyAppInput,
@@ -178,18 +175,10 @@ export function ComfyWorkflowImportModal({
   /** The outcome of the last save, shown where the button is. */
   const [saveResult, setSaveResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  // The two panels that take over the body: how to prepare a workflow, and
-  // where it runs. Settings live here because this dialog is where a missing
-  // key first shows up, and reporting a problem it cannot fix is a dead end.
-  const [view, setView] = useState<"main" | "help" | "settings">("main");
-  const showSettings = view === "settings";
+  // The panel that takes over the body: how to prepare a workflow.
+  const [view, setView] = useState<"main" | "help">("main");
   const showHelp = view === "help";
   const isMain = view === "main";
-  const setShowSettings = (open: boolean | ((prev: boolean) => boolean)) =>
-    setView((prev) =>
-      (typeof open === "function" ? open(prev === "settings") : open) ? "settings" : "main"
-    );
-  const [settingsDraft, setSettingsDraft] = useComfySettingsDraft(showSettings);
   const [settingsSaved, setSettingsSaved] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -201,19 +190,24 @@ export function ComfyWorkflowImportModal({
   const configError = settings ? comfyConfigError(settings) : null;
 
   /**
-   * Keep the new connection and go back to what the dialog was doing.
+   * Where workflows run is Settings' ComfyUI page, opened over this dialog —
+   * which is where a missing key first shows up, and reporting a problem it
+   * cannot fix would be a dead end. When it saves, pick the new connection up.
    *
    * The Blueprint list is dropped rather than kept: it is the *old* engine's
-   * catalog, and the point of coming here was usually that the old one was
+   * catalog, and the point of going there was usually that the old one was
    * wrong or unreachable.
    */
-  const saveSettings = useCallback(() => {
-    saveComfySettings(settingsDraft);
-    setSettingsSaved((n) => n + 1);
-    setShowSettings(false);
-    setBlueprints(null);
-    setBlueprintError(null);
-  }, [settingsDraft]);
+  useEffect(() => {
+    if (!isOpen) return;
+    const onSettingsChanged = () => {
+      setSettingsSaved((n) => n + 1);
+      setBlueprints(null);
+      setBlueprintError(null);
+    };
+    window.addEventListener(COMFY_SETTINGS_CHANGED_EVENT, onSettingsChanged);
+    return () => window.removeEventListener(COMFY_SETTINGS_CHANGED_EVENT, onSettingsChanged);
+  }, [isOpen]);
 
   const reset = useCallback(() => {
     setInspection(null);
@@ -584,8 +578,6 @@ export function ComfyWorkflowImportModal({
 
   const subtitle = showHelp
     ? null
-    : showSettings
-    ? "Where your workflows run, and what they run as."
     : inspection || reconfigure
       ? "These become the node's handles and settings."
       : existingName
@@ -609,7 +601,7 @@ export function ComfyWorkflowImportModal({
     savedNodeId && savedNodes.some((entry) => entry.id === savedNodeId)
   );
   // The preview is of the node being built, so it belongs to that step alone —
-  // not to the file picker, the connection settings or the help text.
+  // not to the file picker or the help text.
   const showPreview = Boolean(isMain && inspection);
 
   const dialog = (
@@ -620,8 +612,9 @@ export function ComfyWorkflowImportModal({
       labelledBy="comfy-import-title"
       // Wider only where there is a second column to hold: every other step
       // is a single list, and stretching it would leave a hall of empty grey.
-      className={`max-h-[82vh] transition-[width] duration-200 ${
-        showPreview ? "w-[880px]" : "w-[600px]"
+      // Never past the window: the list gives way, the preview keeps its width.
+      className={`max-h-[82vh] max-w-[calc(100vw-2rem)] transition-[width] duration-200 ${
+        showPreview ? "w-[960px]" : "w-[600px]"
       }`}
     >
         <div className="px-5 pt-3.5 pb-0 shrink-0 animate-dialog-section">
@@ -630,8 +623,6 @@ export function ComfyWorkflowImportModal({
             <h2 id="comfy-import-title" className="text-base font-semibold leading-6 text-neutral-100 truncate">
               {showHelp
                 ? "Preparing a workflow"
-                : showSettings
-                ? "ComfyUI connection"
                 : reconfigure
                   ? "Inputs, settings and outputs"
                   : inspection
@@ -663,15 +654,10 @@ export function ComfyWorkflowImportModal({
               </button>
               <button
                 type="button"
-                onClick={() => setShowSettings((open) => !open)}
+                onClick={() => useSettingsDialogStore.getState().openSettings("comfy")}
                 title="ComfyUI connection — engine, API key"
                 aria-label="ComfyUI connection settings"
-                aria-pressed={showSettings}
-                className={`w-7 h-7 flex items-center justify-center rounded-md transition-[background-color,color,scale] duration-150 active:scale-[0.96] ${
-                  showSettings
-                    ? "bg-neutral-700 text-neutral-100"
-                    : "text-neutral-500 hover:text-neutral-200 hover:bg-neutral-700/50"
-                }`}
+                className="w-7 h-7 flex items-center justify-center rounded-md transition-[background-color,color,scale] duration-150 active:scale-[0.96] text-neutral-500 hover:text-neutral-200 hover:bg-neutral-700/50"
               >
                 <Settings size={16} strokeWidth={1.8} />
               </button>
@@ -709,10 +695,6 @@ export function ComfyWorkflowImportModal({
           style={{ animationDelay: "80ms" }}
         >
           <div className="py-4">
-          {showSettings && (
-            <ComfySettingsTab settings={settingsDraft} onChange={setSettingsDraft} />
-          )}
-
           {showHelp && <HelpPanel />}
 
           {isMain && configError && !inspection && (
@@ -795,7 +777,7 @@ export function ComfyWorkflowImportModal({
         {showPreview && inspection && (
           // 8px to the dialog's outer edge on the three sides it can reach.
           <div
-            className="w-[400px] shrink-0 py-2 pr-2 animate-dialog-section"
+            className="w-[480px] shrink-0 py-2 pr-2 animate-dialog-section"
             style={{ animationDelay: "120ms" }}
           >
             <ComfyNodePreview
@@ -834,11 +816,7 @@ export function ComfyWorkflowImportModal({
           {isMain && inspection && blockingReason && (
             <span className="text-[11px] text-neutral-500 truncate">{blockingReason}</span>
           )}
-          {showHelp ? null : showSettings ? (
-            <button type="button" onClick={saveSettings} className={PRIMARY_BUTTON}>
-              Save connection
-            </button>
-          ) : inspection ? (
+          {showHelp ? null : inspection ? (
             <div className="flex items-center gap-2 shrink-0">
               {/* Saving is otherwise invisible — the dialog stays exactly as it
                   was, so without this there is no way to tell it worked. */}

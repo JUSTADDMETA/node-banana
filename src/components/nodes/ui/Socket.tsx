@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
-import { Handle, Position, useNodeConnections } from "@xyflow/react";
+import React, { useCallback } from "react";
+import { Handle, Position, useStore, type ReactFlowState } from "@xyflow/react";
 import type { HandleType } from "@/types";
 import { cn } from "./cn";
 import { SOCKET_H, SOCKET_HOLE_R, SOCKET_RING_W, SOCKET_W, socketCenter } from "./tokens";
@@ -60,6 +60,73 @@ const OUTLINE: Record<Exclude<SocketOutline, "none">, { color: string; ring: num
   error: { color: "var(--color-error)", ring: 0, ringOpacity: 0 },
 };
 
+/** The 18×28 box a socket fills against the media card's border, mirrored on the right. */
+export function socketBoxStyle(side: "left" | "right", row: number): React.CSSProperties {
+  return {
+    top: socketCenter(row) - SOCKET_H / 2,
+    [side]: -(SOCKET_W - 3),
+    width: SOCKET_W,
+    height: SOCKET_H,
+    transform: side === "right" ? "scaleX(-1)" : "none",
+  };
+}
+
+/** The swell, its ring and the hole, in `currentColor`: the socket's type colour. */
+export function SocketGlyph({ connected = false, outline = "none" }: { connected?: boolean; outline?: SocketOutline }) {
+  const edge = outline === "none" ? null : OUTLINE[outline];
+  return (
+    <svg width={SOCKET_W} height={SOCKET_H} viewBox={`0 0 ${SOCKET_W} ${SOCKET_H}`} overflow="visible" aria-hidden>
+      {/* The card's ring, continued around the swell: a wide stroke behind
+          the fill, so only its outer half shows. It is painted opaque, in
+          the colour the card's translucent ring resolves to over the
+          canvas, so where the two meet nothing blends twice. */}
+      {edge && edge.ring > 0 && (
+        <path
+          data-socket-ring
+          d={SOCKET_ARCS}
+          fill="none"
+          stroke={`color-mix(in srgb, ${edge.color} ${Math.round(edge.ringOpacity * 100)}%, var(--color-canvas-bg))`}
+          strokeWidth={1 + edge.ring * 2}
+        />
+      )}
+      <path d={SOCKET_FILL} className="fill-card" />
+      <path
+        data-socket-outline
+        d={SOCKET_SWELL}
+        fill="none"
+        className={edge ? undefined : "stroke-card-border"}
+        stroke={edge ? edge.color : undefined}
+        strokeWidth={1}
+      />
+      <circle
+        data-socket-hole
+        cx={HOLE_CX}
+        cy={HOLE_CY}
+        r={SOCKET_HOLE_R}
+        fill={connected ? "currentColor" : "var(--color-canvas-bg)"}
+        stroke="currentColor"
+        strokeWidth={SOCKET_RING_W}
+        strokeOpacity={connected ? 1 : 0.6}
+      />
+    </svg>
+  );
+}
+
+function SocketLabel({ side, row, spec, visible }: { side: "left" | "right"; row: number; spec: SocketSpec; visible: boolean }) {
+  if (!spec.label) return null;
+  return (
+    <HandleLabel
+      label={spec.label}
+      side={side === "left" ? "target" : "source"}
+      color={socketColor(spec.type)}
+      top={socketCenter(row) - 18}
+      offset="22px"
+      visible={visible}
+      opacity={spec.placeholder ? 0.5 : undefined}
+    />
+  );
+}
+
 interface SocketProps {
   /** Owning node. Passed explicitly so sockets work outside a React Flow node context (tests, previews). */
   nodeId: string;
@@ -76,11 +143,13 @@ interface SocketProps {
  */
 export function Socket({ nodeId, side, row, spec, showLabel = false, outline = "none" }: SocketProps) {
   const handleType = side === "left" ? "target" : "source";
-  const connections = useNodeConnections({ id: nodeId, handleType, handleId: spec.id });
-  const connected = connections.length > 0;
+  // Whether any edge ends here, as React Flow's own connection lookup keys it.
+  // One map lookup per store update: useNodeConnections also builds the key,
+  // compares connection maps and copies them into an array every time.
+  const connectionKey = spec.id ? `${nodeId}-${handleType}-${spec.id}` : `${nodeId}-${handleType}`;
+  const connected = useStore(useCallback((s: ReactFlowState) => (s.connectionLookup.get(connectionKey)?.size ?? 0) > 0, [connectionKey]));
   const color = socketColor(spec.type);
   const position = side === "left" ? Position.Left : Position.Right;
-  const edge = outline === "none" ? null : OUTLINE[outline];
 
   if (spec.hidden) {
     return (
@@ -109,61 +178,51 @@ export function Socket({ nodeId, side, row, spec, showLabel = false, outline = "
         isConnectable={spec.isConnectable ?? true}
         className={cn("socket", spec.placeholder && "socket-placeholder")}
         style={{
-          top: socketCenter(row) - SOCKET_H / 2,
-          [side]: -(SOCKET_W - 3),
-          width: SOCKET_W,
-          height: SOCKET_H,
-          transform: side === "right" ? "scaleX(-1)" : "none",
+          ...socketBoxStyle(side, row),
           color,
           ...(spec.placeholder ? { opacity: 0.3 } : {}),
         }}
       >
-        <svg width={SOCKET_W} height={SOCKET_H} viewBox={`0 0 ${SOCKET_W} ${SOCKET_H}`} overflow="visible" aria-hidden>
-          {/* The card's ring, continued around the swell: a wide stroke behind
-              the fill, so only its outer half shows. It is painted opaque, in
-              the colour the card's translucent ring resolves to over the
-              canvas, so where the two meet nothing blends twice. */}
-          {edge && edge.ring > 0 && (
-            <path
-              data-socket-ring
-              d={SOCKET_ARCS}
-              fill="none"
-              stroke={`color-mix(in srgb, ${edge.color} ${Math.round(edge.ringOpacity * 100)}%, var(--color-canvas-bg))`}
-              strokeWidth={1 + edge.ring * 2}
-            />
-          )}
-          <path d={SOCKET_FILL} className="fill-card" />
-          <path
-            data-socket-outline
-            d={SOCKET_SWELL}
-            fill="none"
-            className={edge ? undefined : "stroke-card-border"}
-            stroke={edge ? edge.color : undefined}
-            strokeWidth={1}
-          />
-          <circle
-            data-socket-hole
-            cx={HOLE_CX}
-            cy={HOLE_CY}
-            r={SOCKET_HOLE_R}
-            fill={connected ? "currentColor" : "var(--color-canvas-bg)"}
-            stroke="currentColor"
-            strokeWidth={SOCKET_RING_W}
-            strokeOpacity={connected ? 1 : 0.6}
-          />
-        </svg>
+        <SocketGlyph connected={connected} outline={outline} />
       </Handle>
-      {spec.label && (
-        <HandleLabel
-          label={spec.label}
-          side={handleType}
-          color={color}
-          top={socketCenter(row) - 18}
-          offset="22px"
-          visible={showLabel}
-          opacity={spec.placeholder ? 0.5 : undefined}
-        />
-      )}
+      <SocketLabel side={side} row={row} spec={spec} visible={showLabel} />
+    </>
+  );
+}
+
+/**
+ * A socket drawn where there is nothing to connect to — the node preview in
+ * the Comfy import dialog. The same box, glyph and label as a canvas socket,
+ * without the Handle.
+ */
+export function SocketMark({
+  side,
+  row,
+  spec,
+  showLabel = false,
+}: {
+  side: "left" | "right";
+  row: number;
+  spec: SocketSpec;
+  showLabel?: boolean;
+}) {
+  if (spec.hidden) return null;
+  return (
+    <>
+      <span
+        data-socket-mark={side}
+        data-handletype={spec.type}
+        title={spec.title}
+        className="absolute [&>svg]:block"
+        style={{
+          ...socketBoxStyle(side, row),
+          color: socketColor(spec.type),
+          ...(spec.placeholder ? { opacity: 0.3 } : {}),
+        }}
+      >
+        <SocketGlyph />
+      </span>
+      <SocketLabel side={side} row={row} spec={spec} visible={showLabel} />
     </>
   );
 }

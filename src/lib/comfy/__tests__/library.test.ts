@@ -170,11 +170,18 @@ describe("seedFromSavedComfyNode", () => {
     expect(seed.inputSchema).toEqual([
       { name: "image", type: "image", required: true, label: "Photo" },
     ]);
-    expect(seed.paramValues).toEqual({ "3:steps": 40 });
+    expect(seed.paramValues).toEqual({ "3:steps": 40, "3:seed": expect.any(Number) });
   });
 
-  it("leaves the seed unset so repeat runs still vary", () => {
+  it("chooses each copy its own seed, so copies of a saved node still vary", () => {
+    // The node shows the seed its first run uses; the saved entry's own seed
+    // is never what a copy starts from.
     const entry = saveComfyNode({ name: "Upscale", app: app() });
-    expect(seedFromSavedComfyNode(entry).paramValues).not.toHaveProperty("3:seed");
+    vi.spyOn(Math, "random").mockReturnValueOnce(0.1).mockReturnValueOnce(0.2);
+    const first = seedFromSavedComfyNode(entry).paramValues?.["3:seed"];
+    const second = seedFromSavedComfyNode(entry).paramValues?.["3:seed"];
+    expect(Number.isInteger(first)).toBe(true);
+    expect(first).not.toBe(second);
+    vi.restoreAllMocks();
   });
 });

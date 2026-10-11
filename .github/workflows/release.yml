@@ -176,7 +176,10 @@ jobs:
   windows:
     name: Windows (x64, unsigned)
     needs: [check, draft]
-    if: ${{ always() && needs.check.result == 'success' && (needs.draft.result == 'success' || needs.draft.result == 'skipped') }}
+    # Windows is "coming soon": the build is left out of a release until the
+    # repository variable RELEASE_WINDOWS is set to "true" (Settings →
+    # Secrets and variables → Actions → Variables).
+    if: ${{ always() && needs.check.result == 'success' && (needs.draft.result == 'success' || needs.draft.result == 'skipped') && vars.RELEASE_WINDOWS == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 90
     steps:

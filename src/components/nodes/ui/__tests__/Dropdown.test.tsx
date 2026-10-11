@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, within } from "@testing-library/react";
 import { Dropdown } from "../Dropdown";
 import { pickOption, optionValues } from "@/test/dropdown";
 
@@ -158,5 +158,33 @@ describe("Dropdown", () => {
     const list = screen.getByRole("listbox");
     expect(list.style.transform).toBe("translateY(-100%)");
     expect(list.style.top).toBe(`${window.innerHeight - 64}px`);
+  });
+  it("takes a trigger of its own and lines the list up with the trigger's right edge", () => {
+    // An icon button at the right of a settings row: the list hangs from its
+    // right edge rather than running off the card.
+    render(
+      <Dropdown
+        value="fixed"
+        options={[
+          { value: "random", label: "Random", icon: <svg data-testid="icon-random" /> },
+          { value: "fixed", label: "Fixed", icon: <svg data-testid="icon-fixed" /> },
+        ]}
+        onChange={vi.fn()}
+        trigger={<svg data-testid="mode-glyph" />}
+        triggerClassName="w-[22px] h-[22px]"
+        align="end"
+        aria-label="After each run: Fixed"
+      />
+    );
+    const trigger = screen.getByRole("combobox", { name: "After each run: Fixed" });
+    expect(within(trigger).getByTestId("mode-glyph")).toBeInTheDocument();
+    expect(within(trigger).queryByText("Fixed")).toBeNull();
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({ left: 238, top: 20, width: 22, height: 22, right: 260, bottom: 42, x: 238, y: 20, toJSON: () => ({}) });
+    fireEvent.click(trigger);
+    const list = screen.getByRole("listbox");
+    // At the node density's minimum width, ending where the trigger ends.
+    expect(list.style.width).toBe("160px");
+    expect(list.style.left).toBe("100px");
+    expect(within(list).getByTestId("icon-random")).toBeInTheDocument();
   });
 });

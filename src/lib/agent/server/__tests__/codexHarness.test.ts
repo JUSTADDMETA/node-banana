@@ -207,6 +207,10 @@ describe("Codex harness runTurn", () => {
     // The user's global AGENTS.md is always sent; the developer message tells the model to ignore it.
     expect(CODEX_DEVELOPER_INSTRUCTIONS).toMatch(/AGENTS\.md/);
     expect(CODEX_DEVELOPER_INSTRUCTIONS).toMatch(/never add places, themes or styles/);
+    // Code mode hands a tool's reply to the cell as a string: images reach the model only through image().
+    expect(CODEX_DEVELOPER_INSTRUCTIONS).toContain(
+      'const result = await tools.node_banana__view_outputs({}); for (const line of String(result).split("\\n")) { if (line.startsWith("data:image/")) image(line); else if (line.trim()) text(line); }',
+    );
   });
 
   it("remembers the instruction files Codex adds anyway (the global AGENTS.md)", async () => {
@@ -236,6 +240,18 @@ describe("Codex harness runTurn", () => {
     const turns = child().requests("turn/start");
     expect(turns).toHaveLength(2);
     expect(turnText(turns[1])).toBe("<canvas/>\n<user>add 2 and 3</user>");
+  });
+
+  it("sends the pictures the user attached after the prompt, each after its caption", async () => {
+    const { harness, child } = setup();
+    const images = [{ mime: "image/webp", data: "AAAA", caption: 'Image 1: "Rougher 1" (nanoBanana-1)' }];
+    await collect(harness.runTurn(params({ images })));
+    const [turn] = child().requests("turn/start");
+    const input = (turn.params as { input: unknown[] }).input;
+    expect(input.slice(1)).toEqual([
+      { type: "text", text: 'Image 1: "Rougher 1" (nanoBanana-1)', text_elements: [] },
+      { type: "image", url: "data:image/webp;base64,AAAA" },
+    ]);
   });
 
   it("starts a new thread for a session id this app-server doesn't know", async () => {

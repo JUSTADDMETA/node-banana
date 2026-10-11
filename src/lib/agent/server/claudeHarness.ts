@@ -45,6 +45,7 @@ import type {
   AgentHarnessStatus,
   AgentSignInOptions,
   AgentSignInStart,
+  AgentToolResult,
   AgentToolRuntime,
   HarnessEvent,
   HarnessTurnParams,
@@ -188,6 +189,36 @@ function sharedSignIn(): ClaudeSignIn {
 
 /* ── tools ─────────────────────────────────────────────────────── */
 
+/** A tool result as MCP content: its text, then each image after its caption. */
+export function claudeToolContent(result: AgentToolResult) {
+  return [
+    { type: "text" as const, text: result.text },
+    ...(result.images ?? []).flatMap((image) => [
+      { type: "text" as const, text: image.caption },
+      { type: "image" as const, data: image.data, mimeType: image.mime },
+    ]),
+  ];
+}
+
+type ClaudeImageType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+const CLAUDE_IMAGE_TYPES: ReadonlySet<string> = new Set<ClaudeImageType>(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
+/**
+ * The turn's message: the prompt, then each picture the user attached after
+ * its caption (a type the API can't take is left out; the library sends webp).
+ */
+export function claudeUserContent(prompt: string, images: HarnessTurnParams["images"]): SDKUserMessage["message"]["content"] {
+  const shown = (images ?? []).filter((image) => CLAUDE_IMAGE_TYPES.has(image.mime));
+  if (shown.length === 0) return prompt;
+  return [
+    { type: "text", text: prompt },
+    ...shown.flatMap((image) => [
+      { type: "text" as const, text: image.caption },
+      { type: "image" as const, source: { type: "base64" as const, media_type: image.mime as ClaudeImageType, data: image.data } },
+    ]),
+  ];
+}
+
 /** Our tool runtime as in-process MCP tools for the SDK. */
 export function buildClaudeTools(runtime: AgentToolRuntime) {
   return runtime.definitions.map((definition) =>
@@ -197,7 +228,7 @@ export function buildClaudeTools(runtime: AgentToolRuntime) {
       definition.inputShape,
       async (args) => {
         const result = await executeTool(runtime, definition.name, args);
-        return { content: [{ type: "text" as const, text: result.text }], isError: !result.ok };
+        return { content: claudeToolContent(result), isError: !result.ok };
       },
       {
         annotations: {
@@ -719,7 +750,7 @@ export function createClaudeHarness(overrides: Partial<ClaudeHarnessDeps> = {}):
     const turnOver = deferred<void>();
     async function* input(): AsyncGenerator<SDKUserMessage> {
       if (!(await gate.promise)) return;
-      yield { type: "user", message: { role: "user", content: prompt }, parent_tool_use_id: null };
+      yield { type: "user", message: { role: "user", content: claudeUserContent(prompt, params.images) }, parent_tool_use_id: null };
       await turnOver.promise;
     }
 

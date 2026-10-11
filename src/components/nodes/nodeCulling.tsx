@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useStore, useStoreApi, useUpdateNodeInternals, type ReactFlowState } from "@xyflow/react";
 
 /**
@@ -14,6 +14,11 @@ import { useStore, useStoreApi, useUpdateNodeInternals, type ReactFlowState } fr
  * edit in a field commits on blur, and blur cannot come from a node that
  * never unmounts), and always for the types whose mount is expensive or
  * holds state the store does not have.
+ *
+ * While the canvas moves, a node that leaves the area keeps its component
+ * too: a pan back and forth would otherwise unmount and remount the same
+ * nodes on every pass, each remount a full render and a handle read. They
+ * are culled once the canvas has been still for CULL_SETTLE_MS.
  */
 
 /** Node types that are never culled. */
@@ -36,6 +41,43 @@ const ALWAYS_MOUNTED = new Set([
  */
 export const CULL_STEP = 500;
 
+/** How long the canvas stays still before nodes held through a move are culled. */
+export const CULL_SETTLE_MS = 400;
+
+// Whether the canvas is moving (a pan or a node drag), with the settle delay
+// applied on the way out. WorkflowCanvas reports it with the interaction classes.
+let canvasMoving = false;
+let settleTimer: ReturnType<typeof setTimeout> | null = null;
+const movingListeners = new Set<() => void>();
+
+function publishMoving(moving: boolean) {
+  if (moving === canvasMoving) return;
+  canvasMoving = moving;
+  for (const listener of movingListeners) listener();
+}
+
+export function setCanvasMoving(moving: boolean) {
+  if (settleTimer !== null) { clearTimeout(settleTimer); settleTimer = null; }
+  if (moving) publishMoving(true);
+  else settleTimer = setTimeout(() => { settleTimer = null; publishMoving(false); }, CULL_SETTLE_MS);
+}
+
+/** True while nodes that leave the mounted area should keep their component. */
+function useHoldMounted(): boolean {
+  const [held, setHeld] = useState(canvasMoving);
+  useEffect(() => {
+    const update = () => {
+      // Releasing culls many nodes at once: a transition, so it never blocks a frame
+      if (canvasMoving) setHeld(true);
+      else startTransition(() => setHeld(false));
+    };
+    movingListeners.add(update);
+    update();
+    return () => { movingListeners.delete(update); };
+  }, []);
+  return held;
+}
+
 /** The mounted area in flow coordinates: [minX, minY, maxX, maxY]. */
 export function mountedArea(transform: readonly number[], width: number, height: number): [number, number, number, number] {
   const [x, y, zoom] = transform;
@@ -55,8 +97,12 @@ export const selectMountedArea = (s: ReactFlowState): string => mountedArea(s.tr
 let focusedNodeId: string | null = null;
 const focusListeners = new Set<() => void>();
 
+// The node wrapper itself is left out: React Flow makes it focusable, so every
+// press on a node focuses it, and it holds no edit. Counting it would swap a
+// low-detail card for the full node under the pointer, losing the click.
 function nodeIdOf(target: EventTarget | null): string | null {
-  return target instanceof Element ? target.closest(".react-flow__node")?.getAttribute("data-id") ?? null : null;
+  if (!(target instanceof Element) || target.classList.contains("react-flow__node")) return null;
+  return target.closest(".react-flow__node")?.getAttribute("data-id") ?? null;
 }
 
 function setFocusedNode(id: string | null) {
@@ -84,11 +130,20 @@ function subscribeFocus(listener: () => void) {
   };
 }
 
-/** True while the node contains the focused element. */
+/** True while an element inside the node (not the node itself) has focus. */
 export function useNodeHasFocus(id: string): boolean {
   return useSyncExternalStore(
     subscribeFocus,
     () => focusedNodeId === id,
+    () => false
+  );
+}
+
+/** While `active`, true when an element inside any node has focus. */
+export function useAnyNodeHasFocus(active: boolean): boolean {
+  return useSyncExternalStore(
+    subscribeFocus,
+    () => active && focusedNodeId !== null,
     () => false
   );
 }
@@ -149,7 +204,15 @@ export function useNodeMounted(id: string, type: string, selected: boolean, drag
   // them off screen while they wait. Unmounting is immediate.
   const inAreaDeferred = useDeferredValue(inArea);
   const focused = useNodeHasFocus(id);
-  const mounted = (inArea && inAreaDeferred) || focused || selected || dragging || ALWAYS_MOUNTED.has(type);
+  const wanted = (inArea && inAreaDeferred) || focused || selected || dragging || ALWAYS_MOUNTED.has(type);
+  // Whether the component has been rendered at any point during this move,
+  // remembered from earlier renders (state set during render, as React
+  // recommends for values derived from previous renders).
+  const hold = useHoldMounted();
+  const [held, setHeld] = useState(false);
+  if (hold && wanted && !held) setHeld(true);
+  if (!hold && held) setHeld(false);
+  const mounted = wanted || (hold && held);
   // React Flow re-reads handles only when a node changes size. A component
   // that returns at exactly its placeholder's size would keep the placeholder's
   // handle set, so ask for a read on every return from the placeholder.

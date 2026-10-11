@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { retryTransient } from "@/lib/providers/retry";
 import { GoogleGenAI } from "@google/genai";
 import { GenerateResponse, ModelType } from "@/types";
 import { GenerationOutput } from "@/lib/providers/types";
@@ -105,7 +106,8 @@ export async function generateWithGemini(
   // Make request to Gemini
   const geminiStartTime = Date.now();
 
-  const response = await ai.models.generateContent({
+  // Gemini answers 503 "overloaded" now and then; the same request goes through a moment later.
+  const response = await retryTransient(() => ai.models.generateContent({
     model: MODEL_MAP[model],
     contents: [
       {
@@ -114,7 +116,7 @@ export async function generateWithGemini(
       },
     ],
     config,
-  });
+  }), { label: `Gemini ${model}` });
 
   const geminiDuration = Date.now() - geminiStartTime;
   console.log(`[API:${requestId}] Gemini API completed in ${geminiDuration}ms`);

@@ -1,11 +1,12 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 
 import { ComfyAppNode } from "@/components/nodes/ComfyAppNode";
 import type { ComfyAppDefinition } from "@/lib/comfy/types";
 import type { ComfyAppNodeData } from "@/types";
+import { pickOption } from "@/test/dropdown";
 
 const mockUpdateNodeData = vi.fn();
 const mockUseWorkflowStore = vi.fn();
@@ -148,5 +149,39 @@ describe("ComfyAppNode handles", () => {
     rerender(tree(nodeData({ app: attached, outputs: { "9": "data:image/png;base64,AAA" } })));
 
     expect(mockUpdateNodeInternals).not.toHaveBeenCalled();
+  });
+});
+
+describe("ComfyAppNode seeds", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseWorkflowStore.mockImplementation((selector: (state: unknown) => unknown) =>
+      selector({
+        updateNodeData: mockUpdateNodeData,
+        edges: [],
+        removeEdge: vi.fn(),
+        currentNodeIds: [],
+        setHoveredNodeId: vi.fn(),
+      })
+    );
+  });
+
+  it("shows the seed the next run uses, and keeps the mode picked beside it", () => {
+    const seeded = app({
+      params: [{ id: "25:seed", label: "seed", nodeId: "25", inputKey: "seed", type: "integer", isSeed: true }],
+    });
+    render(
+      tree(
+        nodeData({
+          app: seeded,
+          paramValues: { "25:seed": 41 },
+          seedModes: { "25:seed": "increment" },
+          parametersExpanded: true,
+        })
+      )
+    );
+    expect(screen.getByDisplayValue("41")).toBeInTheDocument();
+    pickOption(screen.getByRole("combobox", { name: "After each run: Increment" }), "fixed");
+    expect(mockUpdateNodeData).toHaveBeenCalledWith("comfyApp-1", { seedModes: { "25:seed": "fixed" } });
   });
 });

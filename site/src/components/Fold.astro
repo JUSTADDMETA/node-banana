@@ -25,8 +25,8 @@ import appWindow from "../partials/app-window.html?raw";
             <span data-stars>1.6k</span><span class="sr-only"> stars on GitHub</span>
           </a>
 
-          <!-- /download/mac redirects to the latest release's installer (site/vercel.json).
-               Windows is listed as coming soon until its build ships again. -->
+          <!-- /download/mac and /download/windows redirect to the latest release's installer
+               (site/vercel.json). The main button copies whichever platform the visitor is on. -->
           <div class="download" data-download>
             <a class="btn btn--primary download__main" href="/download/mac" data-download-main><span>Download for <span data-platform-label>Mac</span></span></a>
             <details class="download__more" data-download-more>
@@ -35,7 +35,7 @@ import appWindow from "../partials/app-window.html?raw";
               </summary>
               <ul class="menu">
                 <li><a class="menu__item" href="/download/mac" data-platform="mac" data-label="Mac"><span class="menu__name">Mac</span><span class="menu__meta">Apple Silicon · <span class="version">{versionLabel}</span></span></a></li>
-                <li><span class="menu__item menu__item--soon" aria-disabled="true"><span class="menu__name">Windows</span><span class="menu__meta">Coming soon</span></span></li>
+                <li><a class="menu__item" href="/download/windows" data-platform="windows" data-label="Windows"><span class="menu__name">Windows</span><span class="menu__meta">x64 · <span class="version">{versionLabel}</span></span></a></li>
               </ul>
             </details>
           </div>

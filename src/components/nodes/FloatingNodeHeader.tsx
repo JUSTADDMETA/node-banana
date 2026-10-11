@@ -22,6 +22,7 @@ import {
   MessageSquare,
   Pencil,
   Play,
+  Replace,
   ToggleLeft,
   ToggleRight,
 } from "lucide-react";
@@ -57,6 +58,8 @@ interface FloatingNodeHeaderProps {
   onRunNode?: (nodeId: string) => void;
   /** Opens the model browser. Present, the title becomes the model picker. */
   onBrowse?: (nodeId: string) => void;
+  /** A ComfyUI app node: choose a different workflow for it. */
+  onReplaceWorkflow?: (nodeId: string) => void;
   /** The node can take a fallback model; `fallbackName` is the one set, if any. */
   canFallback?: boolean;
   fallbackName?: string;
@@ -93,6 +96,7 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
   onExpandNode,
   onRunNode,
   onBrowse,
+  onReplaceWorkflow,
   canFallback = false,
   fallbackName,
   onOpenFallback,
@@ -616,6 +620,11 @@ export const FloatingNodeHeader = memo(function FloatingNodeHeader({
                   {onBrowse && (
                     <MenuRow icon={<Box size={11} strokeWidth={1.75} />} onClick={() => runMenuAction(() => onBrowse(id))}>
                       Browse models…
+                    </MenuRow>
+                  )}
+                  {onReplaceWorkflow && (
+                    <MenuRow icon={<Replace size={11} strokeWidth={1.75} />} onClick={() => runMenuAction(() => onReplaceWorkflow(id))}>
+                      Replace workflow…
                     </MenuRow>
                   )}
                   {canRun && onRunNode && (

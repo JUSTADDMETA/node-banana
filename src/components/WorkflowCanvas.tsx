@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useRef, useState, useEffect, DragEvent, useMemo, type ComponentType } from "react";
+import { memo, useCallback, useRef, useState, useEffect, useLayoutEffect, useReducer, DragEvent, useMemo, type ComponentType } from "react";
 import {
   ReactFlow,
   Background,
@@ -18,6 +18,8 @@ import {
   useStore,
   useStoreApi,
   useUpdateNodeInternals,
+  type ReactFlowState,
+  type XYPosition,
 } from "@xyflow/react";
 import { frameLoadedGraph } from "@/utils/frameGraph";
 import "@xyflow/react/dist/style.css";
@@ -78,8 +80,7 @@ import {
   getAgentStackBottom,
   getHistoryRightInset,
 } from "@/lib/agent/client/layout";
-import { loadAgentSettings } from "@/lib/agent/client/settings";
-import type { AgentPresence } from "./agent/AgentPanel";
+import { useAgentPresence } from "./agent/AgentSession";
 import { useViewportWidth } from "./agent/hooks/useViewportWidth";
 import { GroupBackgroundsPortal, GroupControlsOverlay } from "./GroupsOverlay";
 import { requestSave } from "@/store/saveRequestStore";
@@ -87,6 +88,7 @@ import { insideAgentWindow, isSaveShortcut } from "@/utils/saveShortcut";
 import type { WorkflowNode } from "@/types";
 import { NodeType, NanoBananaNodeData, HandleType, PromptNodeData, LLMGenerateNodeData, PromptConstructorNodeData, AvailableVariable, WorkflowNodeData } from "@/types";
 import { isComfyWorkflow, isNodeBananaWorkflow } from "@/lib/comfy/detect";
+import { confirmStopAgent } from "@/lib/agent/client/stopGuard";
 import { NODE_TITLES, getNodeHandles } from "@/lib/nodes/handles";
 import { getSavedComfyNode, seedFromSavedComfyNode } from "@/lib/comfy/library";
 import { appInputHandles } from "@/lib/comfy/nodeSchema";
@@ -94,7 +96,10 @@ import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import { getNodeSize } from "@/utils/nodeDimensions";
 import { arrangeNodes } from "@/utils/arrangeNodes";
 import { FloatingNodeHeaders } from "./nodes/FloatingNodeHeaders";
-import { NodePlaceholder, useNodeMounted } from "./nodes/nodeCulling";
+import { NodePlaceholder, setCanvasMoving, useAnyNodeHasFocus, useNodeHasFocus, useNodeMounted } from "./nodes/nodeCulling";
+import { setZoomedOut, useLowDetail, useLowDetailEnabled, useLowDetailZoom } from "./nodes/lowDetail";
+import { NodeLowDetail } from "./nodes/NodeLowDetail";
+import { PerfOverlay } from "./PerfOverlay";
 import { detectAndSplitGrid } from "@/utils/gridSplitter";
 import { logger } from "@/utils/logger";
 import { WelcomeModal } from "./quickstart";
@@ -173,18 +178,55 @@ const nodePropsEqual = (a: Record<string, unknown>, b: Record<string, unknown>):
 // Wrap every node component in a per-node error boundary so a single
 // throwing node (e.g. malformed data from a loaded workflow) renders a small
 // fallback card instead of unmounting the entire canvas/app.
+/**
+ * Whether React Flow has read the node's handles from a rendered component.
+ * While it has not and `waiting`, the node re-renders once a frame (for a
+ * second at most) so it can switch to low detail as soon as they are read.
+ */
+function useHandlesRead(id: string, waiting: boolean): boolean {
+  const flowStore = useStoreApi();
+  const read = !!flowStore.getState().nodeLookup.get(id)?.internals.handleBounds;
+  const [checks, recheck] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!waiting || read || checks > 60) return;
+    const frame = requestAnimationFrame(recheck);
+    return () => cancelAnimationFrame(frame);
+  }, [waiting, read, checks]);
+  return read;
+}
+
 // Memoised on the node's props, which React Flow keeps stable for a node
 // that did not change, so a drag frame renders nothing under the wrapper. A
 // node far off screen renders as a placeholder of its measured size instead
-// (see nodeCulling.ts for what keeps a node mounted).
+// (see nodeCulling.ts for what keeps a node mounted), and a node on a
+// zoomed-out canvas as a low-detail card (see lowDetail.ts).
 const withNodeErrorBoundary = (
   type: string,
   NodeComponent: ComponentType<Record<string, unknown>>
 ): ComponentType<Record<string, unknown>> => {
   const Wrapped = memo((props: Record<string, unknown>) => {
-    const mounted = useNodeMounted(props.id as string, type, !!props.selected, !!props.dragging);
+    const id = props.id as string;
+    const mounted = useNodeMounted(id, type, !!props.selected, !!props.dragging);
+    const lowDetail = useLowDetail();
+    const focused = useNodeHasFocus(id);
+    // A node first rendered zoomed out shows its full component until React
+    // Flow has read its handles from it, which the card's edges hang from
+    const handlesRead = useHandlesRead(id, lowDetail && mounted);
     if (!mounted) {
-      return <NodePlaceholder id={props.id as string} width={props.width as number} height={props.height as number} />;
+      return <NodePlaceholder id={id} width={props.width as number} height={props.height as number} />;
+    }
+    // A field being edited keeps its component, so the edit commits on blur
+    if (lowDetail && handlesRead && !focused) {
+      return (
+        <NodeLowDetail
+          id={id}
+          type={type}
+          width={props.width as number}
+          height={props.height as number}
+          selected={!!props.selected}
+          data={props.data as Record<string, unknown>}
+        />
+      );
     }
     return (
       <ErrorBoundary label={type}>
@@ -300,6 +342,23 @@ export const isPanningRef = { current: false };
 /** Shared ref so child components (NodeShell) can skip hover updates during node drags */
 export const isDraggingNodeRef = { current: false };
 
+/**
+ * A node drag in progress, from its first move: where React Flow has moved
+ * the dragged nodes since, which the store does not have yet, and the canvas
+ * (store canvasGeneration) the drag began on.
+ */
+interface NodeDrag {
+  generation: number;
+  positions: ReadonlyMap<string, XYPosition>;
+}
+
+/** A node drag is over: node content and edges take the pointer again, and culling resumes. */
+function releaseNodeDrag() {
+  isDraggingNodeRef.current = false;
+  document.documentElement.classList.remove("canvas-interacting");
+  setCanvasMoving(false);
+}
+
 
 /** The fallback-model capability a generation node type picks from. */
 function capabilityForNodeType(type: string): "image" | "video" | "3d" | "audio" | null {
@@ -333,6 +392,14 @@ export function WorkflowCanvas() {
       skippedNodeIds: state.skippedNodeIds,
     })));
   const onNodesChange = useWorkflowStore((state) => state.onNodesChange);
+  const canvasGeneration = useWorkflowStore((state) => state.canvasGeneration);
+  // The node drag in progress (handleNodesChange); null otherwise
+  const [nodeDrag, setNodeDragState] = useState<NodeDrag | null>(null);
+  const nodeDragRef = useRef<NodeDrag | null>(null);
+  const setNodeDrag = useCallback((drag: NodeDrag | null) => {
+    nodeDragRef.current = drag;
+    setNodeDragState(drag);
+  }, []);
   const flowStore = useStoreApi();
   // The marquee: React Flow runs on its overlap rule; every selection it
   // proposes is checked against the node's media card (marqueeSelection), and
@@ -354,8 +421,46 @@ export function WorkflowCanvas() {
         return { node: boxOf(element.getBoundingClientRect()), mediaCard: card ? boxOf(card.getBoundingClientRect()) : null };
       });
     }
-    onNodesChange(changes);
-  }, [flowStore, onNodesChange]);
+    // A node drag's moves stay here after the first: only React Flow, the node
+    // headers and the selection bar follow a node as it moves, and putting each
+    // move in the store re-ran every subscriber's selector, thousands on a
+    // large canvas, every frame. The first move goes to the store, where it
+    // records the undo point; the drop puts the final positions there; any
+    // other change reaches the store as it happens. The canvas draws the
+    // store's nodes with the drag's positions over them (allNodes), so what
+    // else changes mid-drag (a run's output, the agent's edits, an undo)
+    // shows at once.
+    const drag = nodeDragRef.current;
+    const moving = changes.length > 0 && changes.every((change) => change.type === "position" && change.dragging === true);
+    const dropped = changes.some((change) => change.type === "position" && change.dragging === false);
+    if (!drag) {
+      onNodesChange(changes);
+      if (moving) setNodeDrag({ generation: useWorkflowStore.getState().canvasGeneration, positions: new Map() });
+      return;
+    }
+    if (drag.generation !== useWorkflowStore.getState().canvasGeneration) {
+      // The canvas was replaced mid-drag (a load, a tab switch): the drag's
+      // positions belong to the old one, and their ids may name nodes here
+      const rest = changes.filter((change) => change.type !== "position");
+      if (rest.length > 0) onNodesChange(rest);
+    } else {
+      let positions: Map<string, XYPosition> | null = null;
+      for (const change of changes) {
+        if (change.type === "position" && change.dragging && change.position) {
+          positions ??= new Map(drag.positions);
+          positions.set(change.id, change.position);
+        }
+      }
+      if (!moving) onNodesChange(changes);
+      if (positions && !dropped) setNodeDrag({ generation: drag.generation, positions });
+    }
+    if (dropped) {
+      setNodeDrag(null);
+      // onNodeDragStop follows the drop at once, except for a drag React Flow
+      // aborts (its node deleted mid-drag, a second touch), which ends here
+      queueMicrotask(() => { if (isDraggingNodeRef.current) releaseNodeDrag(); });
+    }
+  }, [flowStore, onNodesChange, setNodeDrag]);
   const onEdgesChange = useWorkflowStore((state) => state.onEdgesChange);
   const reconnectEdge = useWorkflowStore((state) => state.reconnectEdge);
   const onConnect = useWorkflowStore((state) => state.onConnect);
@@ -380,6 +485,15 @@ export function WorkflowCanvas() {
   const openAnnotationModal = useAnnotationStore((state) => state.openModal);
   const { screenToFlowPosition, getViewport, setCenter, setViewport, getNodes } = useReactFlow();
   const isCanvasOverview = useStore(selectCanvasOverview);
+  // Low detail when zoomed out: nodes read it from lowDetail.ts, fed from
+  // this one subscription; React Flow then mounts only what is in view
+  const lowDetailZoom = useLowDetailZoom();
+  const zoomedOut = useStore(useCallback((state: ReactFlowState) => state.transform[2] < lowDetailZoom, [lowDetailZoom]));
+  useLayoutEffect(() => setZoomedOut(zoomedOut), [zoomedOut]);
+  const lowDetail = useLowDetailEnabled() && zoomedOut;
+  // ...except while a node holds the focused field: React Flow would unmount
+  // it once out of view, and the edit, which commits on blur, would be lost
+  const nodeHasFocus = useAnyNodeHasFocus(lowDetail);
   const { show: showToast } = useToast();
   const [isDragOver, setIsDragOver] = useState(false);
   const [dropType, setDropType] = useState<"image" | "audio" | "workflow" | "node" | null>(null);
@@ -390,20 +504,17 @@ export function WorkflowCanvas() {
   >(null);
   const [isSplitting, setIsSplitting] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  // Agent window: mounted on first open, then kept (hidden) so a running turn survives closing it
+  // Agent window: mounted on first open, then kept (hidden) so it reopens where it was.
+  // The conversation, and whether a turn runs, belong to the page's agent session.
   const [isAgentOpen, setIsAgentOpen] = useState(false);
   const [isAgentMounted, setIsAgentMounted] = useState(false);
-  const [isAgentBusy, setIsAgentBusy] = useState(false);
-  // What the agent button shows: the stored choice until the window reports its own.
-  const [agentPresence, setAgentPresence] = useState<AgentPresence | null>(null);
-  useEffect(() => {
-    const stored = loadAgentSettings();
-    setAgentPresence((current) => current ?? { harness: stored.harness, harnessChosen: stored.harnessChosen === true || stored.opened === true, attention: false });
-  }, []);
+  const { busy: isAgentBusy, presence: agentPresence } = useAgentPresence();
   const [agentButtonWidth, setAgentButtonWidth] = useState(AGENT_BUTTON_ESTIMATED_WIDTH);
-  // The agent window is portaled above everything, so the Assets view cannot cover it
-  const assetsShown = useAssetStore((state) => state.appView === "assets");
+  // The agent window is portaled above everything, so it hides itself while another view covers the canvas
+  const canvasShown = useAssetStore((state) => state.appView === "canvas");
   const [isMinimapVisible, setIsMinimapVisible] = useState(true);
+  // The navigator's Lock canvas: nodes cannot be moved, connected or selected
+  const [canvasLocked, setCanvasLocked] = useState(false);
   const agentStackBottom = getAgentStackBottom({
     margin: MINIMAP_GEOMETRY.margin,
     navigatorHeight: getNavigatorHeight(isMinimapVisible),
@@ -417,7 +528,10 @@ export function WorkflowCanvas() {
   // window open. A canvas that already has nodes keeps them in its own tab.
   const startWithAgent = useCallback(() => {
     const store = useWorkflowStore.getState();
-    if (store.nodes.length > 0) store.newTab();
+    if (store.nodes.length > 0) {
+      if (!confirmStopAgent("Opening a new tab")) return;
+      store.newTab();
+    }
     setShowQuickstart(false);
     setIsAgentMounted(true);
     setIsAgentOpen(true);
@@ -554,8 +668,11 @@ export function WorkflowCanvas() {
   }, [contentNodes, edges]);
 
   const allNodes = useMemo(() => {
+    // A drag in progress lays its positions over the store's nodes, unless the canvas was replaced since
+    const dragged = nodeDrag && nodeDrag.generation === canvasGeneration ? nodeDrag.positions : null;
     return nodes.map((storedNode) => {
-      const node = stripNodeHeight(storedNode);
+      const position = dragged?.get(storedNode.id);
+      const node = stripNodeHeight(position ? { ...storedNode, position } : storedNode);
       // Never dim Switch or ConditionalSwitch nodes themselves
       if (node.type === "switch" || node.type === "conditionalSwitch") return node;
 
@@ -577,7 +694,7 @@ export function WorkflowCanvas() {
       if ((node.className || "") === newClass) return node;
       return { ...node, className: newClass };
     });
-  }, [nodes, dimmedNodeIds, skippedNodeIds]);
+  }, [nodeDrag, canvasGeneration, nodes, dimmedNodeIds, skippedNodeIds]);
 
   // Switching workflows can leave React Flow holding handle positions measured
   // on the previous workflow's nodes (same ids, different layout), so edges
@@ -695,7 +812,7 @@ export function WorkflowCanvas() {
 
   // Check if a node was dropped into a group and add it to that group
   const handleNodeDragStop = useCallback(
-    (_event: React.MouseEvent, node: Node) => {
+    (_event: MouseEvent | TouchEvent, node: Node) => {
       const { groups, nodes } = useWorkflowStore.getState();
       // Skip if it's a group node
       if (node.id.startsWith("group-")) return;
@@ -1805,7 +1922,7 @@ export function WorkflowCanvas() {
       requestSave("shortcut");
       return;
     }
-    // The canvas is hidden behind the Assets view: none of its keys apply
+    // The canvas is hidden behind another view (Assets, the chat): none of its keys apply
     if (useAssetStore.getState().appView !== "canvas") return;
     // Ignore if user is typing in an input field (including the edge label
     // field, which lives in React Flow's label layer)
@@ -1838,12 +1955,14 @@ export function WorkflowCanvas() {
       return;
     }
 
-    // A (bare) shows the Assets view; Shift+letters add nodes. Not while a
-    // dialog, the annotation editor or the tutorial is up over the canvas, nor
-    // while a menu or dropdown is open: it would stay mounted (and keep its
-    // document key listener, e.g. Enter adding a node) under the Assets view.
+    // A (bare) shows the Assets view and C the chat; Shift+letters add nodes.
+    // Not while a dialog, the annotation editor or the tutorial is up over the
+    // canvas, nor while a menu or dropdown is open: it would stay mounted (and
+    // keep its document key listener, e.g. Enter adding a node) under the view.
+    const lowerKey = event.key.toLowerCase();
+    const view = lowerKey === "a" ? "assets" : lowerKey === "c" ? "chat" : null;
     if (
-      event.key.toLowerCase() === "a" &&
+      view &&
       !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.repeat &&
       !useWorkflowStore.getState().isModalOpen &&
       !useAnnotationStore.getState().isModalOpen &&
@@ -1854,7 +1973,7 @@ export function WorkflowCanvas() {
       !(event.target instanceof Element && event.target.closest('[role="dialog"]'))
     ) {
       event.preventDefault();
-      useAssetStore.getState().setAppView("assets");
+      useAssetStore.getState().setAppView(view);
       return;
     }
 
@@ -2125,17 +2244,50 @@ export function WorkflowCanvas() {
           // during the drag must not take it away
           if (active || !isDraggingNodeRef.current) {
             document.documentElement.classList.toggle("canvas-interacting", active);
+            setCanvasMoving(active);
           }
         },
       }),
     []
   );
   useEffect(() => () => interactionClasses.dispose(), [interactionClasses]);
+  // While a button is down for a pan or a node drag, the element the press
+  // landed on captures the pointer: Chromium then delivers each move to it
+  // without hit-testing the canvas, which on a large one costs milliseconds a
+  // move. React Flow follows the gesture through window listeners, which
+  // still see every event; the capture ends with the press.
+  const pressRef = useRef<{ pointerId: number; target: Element } | null>(null);
+  useEffect(() => {
+    const wrapper = reactFlowWrapper.current;
+    if (!wrapper) return;
+    const onDown = (event: PointerEvent) => {
+      pressRef.current = event.target instanceof Element ? { pointerId: event.pointerId, target: event.target } : null;
+    };
+    const onUp = () => { pressRef.current = null; };
+    wrapper.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+    return () => {
+      wrapper.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+    };
+  }, []);
+  const capturePress = useCallback(() => {
+    const press = pressRef.current;
+    if (!press || !press.target.isConnected) return;
+    try {
+      if (!press.target.hasPointerCapture(press.pointerId)) press.target.setPointerCapture(press.pointerId);
+    } catch {
+      // The pointer is no longer active (released between events)
+    }
+  }, []);
   const handleMoveStart = useCallback(() => {
     isPanningRef.current = true;
     setHoveredNodeId(null);
     interactionClasses.signal();
-  }, [interactionClasses, setHoveredNodeId]);
+    capturePress();
+  }, [interactionClasses, setHoveredNodeId, capturePress]);
   const handleMove = useCallback(() => interactionClasses.signal(), [interactionClasses]);
   const handleMoveEnd = useCallback(() => {
     isPanningRef.current = false;
@@ -2143,15 +2295,31 @@ export function WorkflowCanvas() {
   const handleNodeDragBegin = useCallback(() => {
     isDraggingNodeRef.current = true;
     document.documentElement.classList.add("canvas-interacting");
-  }, []);
-  const handleNodeDragEnd = useCallback((event: React.MouseEvent, node: Node) => {
-    isDraggingNodeRef.current = false;
+    setCanvasMoving(true);
+    capturePress();
+  }, [capturePress]);
+  const handleNodeDragEnd = useCallback((event: MouseEvent | TouchEvent, node: Node) => {
     // A pan just before the drag may still hold the tracker active; resetting
     // it drops its classes now and lets the next pan put them back
     interactionClasses.dispose();
-    document.documentElement.classList.remove("canvas-interacting");
+    releaseNodeDrag();
+    // A drag that ends without React Flow's drop change still leaves the
+    // nodes where they were dragged, before the group check reads the store
+    const drag = nodeDragRef.current;
+    if (drag) {
+      setNodeDrag(null);
+      const { nodes: current, canvasGeneration: generation } = useWorkflowStore.getState();
+      const stored = new Map(current.map((n) => [n.id, n]));
+      const moved = generation !== drag.generation ? [] : [...drag.positions].flatMap(([id, position]): NodeChange<WorkflowNode>[] => {
+        const before = stored.get(id);
+        return before && (before.position.x !== position.x || before.position.y !== position.y)
+          ? [{ type: "position", id, position, dragging: false }]
+          : [];
+      });
+      if (moved.length) onNodesChange(moved);
+    }
     handleNodeDragStop(event, node);
-  }, [handleNodeDragStop, interactionClasses]);
+  }, [handleNodeDragStop, interactionClasses, onNodesChange, setNodeDrag]);
 
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => onEdgesChange(selectingNodes.current
     ? changes.filter((change) => change.type !== "select" || !change.selected)
@@ -2322,6 +2490,7 @@ export function WorkflowCanvas() {
             return;
           }
           if (isNodeBananaWorkflow(parsed)) {
+            if (!confirmStopAgent("Opening another workflow")) return;
             // Reported the same way the parse failure above is: without this the
             // rejection is unhandled and the canvas simply does not change.
             try {
@@ -2456,11 +2625,13 @@ export function WorkflowCanvas() {
         <WelcomeModal
           initialView={quickstartView}
           onWorkflowGenerated={async (workflow, directoryPath) => {
+            if (!confirmStopAgent("Opening another workflow")) return;
             await useWorkflowStore.getState().openWorkflowInNewTab(workflow, directoryPath);
             setShowQuickstart(false);
           }}
           onClose={() => setShowQuickstart(false)}
           onNewProject={() => {
+            if (!confirmStopAgent("Starting a new project")) return;
             clearWorkflow();
             setShowQuickstart(false);
             setShowNewProjectSetup(true);
@@ -2508,6 +2679,7 @@ export function WorkflowCanvas() {
         onDoubleClick={handlePaneDoubleClick}
         onPaneContextMenu={handlePaneContextMenu}
         nodeTypes={nodeTypes}
+        onlyRenderVisibleElements={lowDetail && !nodeHasFocus}
         edgeTypes={edgeTypes}
         isValidConnection={isValidConnection}
         connectOnClick={false}
@@ -2539,6 +2711,10 @@ export function WorkflowCanvas() {
             : !isMacOS
         }
         selectNodesOnDrag={false}
+        // React Flow 12.11 pans when a marquee nears the edge; the marquee
+        // selections measure their nodes and edges once, on screen, and would
+        // pick by where things were before the pan
+        autoPanOnSelection={false}
         nodeDragThreshold={5}
         nodeClickDistance={5}
         zoomOnScroll={tutorialActive ? false : false}
@@ -2556,15 +2732,16 @@ export function WorkflowCanvas() {
             ? "Space"
             : null
         }
-        nodesDraggable={!isModalOpen}
-        nodesConnectable={!isModalOpen}
-        elementsSelectable={!isModalOpen}
+        nodesDraggable={!isModalOpen && !canvasLocked}
+        nodesConnectable={!isModalOpen && !canvasLocked}
+        elementsSelectable={!isModalOpen && !canvasLocked}
         className="bg-neutral-900"
         proOptions={PRO_OPTIONS}
         defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
       >
         <SharedEdgeGradients />
         <GroupBackgroundsPortal />
+        <PerfOverlay />
         <GroupControlsOverlay />
         <Background
           color="#404040"
@@ -2572,14 +2749,19 @@ export function WorkflowCanvas() {
           size={1}
           className={tutorialActive && lockedFeatures ? "opacity-30 pointer-events-none" : ""}
         />
-        <CanvasMinimap disabled={tutorialActive && lockedFeatures} onMinimapVisibleChange={setIsMinimapVisible} />
+        <CanvasMinimap
+          disabled={tutorialActive && lockedFeatures}
+          onMinimapVisibleChange={setIsMinimapVisible}
+          locked={canvasLocked}
+          onLockedChange={setCanvasLocked}
+        />
         {/* The window takes the pill's place while it is open; its own header closes it. */}
         {!isAgentOpen && (
         <AgentButton
           open={false}
-          harness={agentPresence?.harnessChosen ? agentPresence.harness : null}
+          harness={agentPresence.harnessChosen ? agentPresence.harness : null}
           busy={isAgentBusy}
-          attention={agentPresence?.attention ?? false}
+          attention={agentPresence.attention}
           disabled={tutorialActive && lockedFeatures}
           dimmed={tutorialActive && lockedFeatures}
           onClick={toggleAgent}
@@ -2633,7 +2815,7 @@ export function WorkflowCanvas() {
       {/* Edge toolbar */}
 
       {/* Global image history */}
-      <GlobalImageHistory rightInset={historyRightInset} anchorRight={isAgentOpen ? historyRightInset : AGENT_BUTTON_MARGIN} />
+      <GlobalImageHistory rightInset={historyRightInset} anchorRight={isAgentOpen && canvasShown ? historyRightInset : AGENT_BUTTON_MARGIN} />
 
       {/* Chat toggle button - hidden for now */}
 
@@ -2648,15 +2830,13 @@ export function WorkflowCanvas() {
         selectedNodeIds={selectedNodeIds}
       />
 
-      {/* Agent window - hangs under the agent button, down to the navigator; hidden (not closed) while Assets shows */}
+      {/* Agent window - hangs under the agent button, down to the navigator; hidden (not closed) while Assets or the chat view shows */}
       {isAgentMounted && (
         <AgentPanel
-          open={isAgentOpen && !assetsShown}
+          open={isAgentOpen && canvasShown}
           onClose={closeAgent}
           buttonRight={AGENT_BUTTON_MARGIN}
           buttonBottom={agentStackBottom}
-          onBusyChange={setIsAgentBusy}
-          onPresenceChange={setAgentPresence}
         />
       )}
 

@@ -10,13 +10,17 @@
  * what makes long generations fail on idle timeouts.
  */
 
-import type { ComfyAppNodeData } from "@/types";
+import type { ComfyAppNodeData, ComfyRunHistoryItem, ComfyRunHistoryOutput, RunBatchTag } from "@/types";
 import type { ComfyAppInput, ComfyResolvedOutput } from "@/lib/comfy/types";
-import type { RecordedAssetHandle } from "@/lib/assets/types";
+import type { RecordAssetResult, RecordedAssetHandle } from "@/lib/assets/types";
 import { buildComfyHeaders, comfyConfigError, getComfySettings } from "@/lib/comfy/settings";
+import { seedsForRun } from "@/lib/comfy/seeds";
 import type { NodeExecutionContext } from "./types";
 import { MissingInputError } from "./missingInput";
-import { assetParameters, assetProducer, recordOutput, withFolderFallback } from "./assetRecording";
+import { assetParameters, assetProducer, recordOutput, recordingResult, withFolderFallback } from "./assetRecording";
+
+/** The carousel keeps this many runs, like the image and video nodes. */
+const RUN_HISTORY_LIMIT = 50;
 
 /** Polling cadence — starts responsive, then backs off for long renders. */
 const INITIAL_INTERVAL = 1500;
@@ -245,6 +249,9 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
   let jobId: string | null = null;
   // The server derives randomised seeds from this, so it reproduces the run
   const seedKey = `${node.id}-${Date.now()}`;
+  // The seeds the node shows are the ones this run uses; `after` is what
+  // each becomes once the run is queued, by its mode.
+  const { run: params, after: nextSeeds } = seedsForRun(app.params, nodeData.paramValues ?? {}, nodeData.seedModes);
 
   try {
     const submitRes = await fetch("/api/comfy/run", {
@@ -253,7 +260,7 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
       body: JSON.stringify({
         app,
         inputs,
-        params: nodeData.paramValues ?? {},
+        params,
         randomizeSeeds: settings.randomizeSeeds,
         seedKey,
       }),
@@ -265,7 +272,14 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
     }
     const accepted = (await submitRes.json()) as ComfyRunAccepted;
     jobId = accepted.jobId;
-    updateNodeData(node.id, { jobId, runStatus: accepted.status });
+    // As ComfyUI does, the seeds move on once the run is queued, whatever it
+    // returns — so the next run in a batch takes the next seed.
+    const shown = (getFreshNode(node.id)?.data as ComfyAppNodeData | undefined)?.paramValues ?? nodeData.paramValues ?? {};
+    updateNodeData(node.id, {
+      jobId,
+      runStatus: accepted.status,
+      ...(Object.keys(nextSeeds).length > 0 ? { paramValues: { ...shown, ...nextSeeds } } : {}),
+    });
 
     let interval = INITIAL_INTERVAL;
     let consecutiveErrors = 0;
@@ -343,11 +357,14 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
 
       // Every media output is a generation like any other, so each goes to the
       // asset library under its own handle.
-      const prompt = describeRun(app.name, inputs, nodeData.paramValues ?? {});
+      const prompt = describeRun(app.name, inputs, params);
       const parameters = assetParameters({
-        ...(nodeData.paramValues ?? {}),
+        ...params,
         ...(settings.randomizeSeeds ? { seedKey } : {}),
       });
+      const timestamp = Date.now();
+      const imageId = `${timestamp}`;
+      const recordings = new Map<string, RecordedAssetHandle>();
       let imageRecording: RecordedAssetHandle | null = null;
       for (const output of outputs) {
         if (output.type === "text" || !output.value) continue;
@@ -360,7 +377,36 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
           parameters,
           producer: assetProducer(ctx, { outputHandle: output.handleId }),
         });
-        if (recorded && !imageRecording && output.value === resolved.outputImage) imageRecording = recorded;
+        if (!recorded) continue;
+        recordings.set(output.handleId, recorded);
+        if (!imageRecording && output.value === resolved.outputImage) imageRecording = recorded;
+      }
+
+      // The run joins the node's carousel, like an image or video generation:
+      // every output by its handle, reloaded from the library or the project's
+      // generations folder. Only a run saved to one of them gets an entry.
+      const entry = comfyRunHistoryEntry({
+        outputs,
+        timestamp,
+        prompt,
+        model: app.name,
+        batch: ctx.batch,
+        assetIds: Object.fromEntries([...recordings].map(([handleId, handle]) => [handleId, handle.assetId])),
+        folderImageId: generationsPath && resolved.outputImage ? imageId : undefined,
+        primaryImage: resolved.outputImage,
+      });
+      if (entry) {
+        const current = (ctx.getFreshNode(node.id)?.data as ComfyAppNodeData | undefined)?.runHistory ?? nodeData.runHistory ?? [];
+        updateNodeData(node.id, {
+          runHistory: [entry, ...current].slice(0, RUN_HISTORY_LIMIT),
+          selectedRunHistoryIndex: 0,
+        });
+        for (const [handleId, handle] of recordings) {
+          if (handle === imageRecording && generationsPath) continue; // followed with its folder save below
+          void recordingResult(handle).then((result) => {
+            recordedIntoHistory(ctx, entry.id, handleId, result);
+          });
+        }
       }
 
       // A Comfy app's image also belongs in the global history, and — without
@@ -368,8 +414,6 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
       // project's generations folder, so it can be browsed and reloaded
       // alongside everything else.
       if (resolved.outputImage) {
-        const timestamp = Date.now();
-        const imageId = `${timestamp}`;
         const image = resolved.outputImage;
         addToGlobalHistory({
           image,
@@ -394,7 +438,15 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
               .catch((err) => {
                 console.error("Failed to save ComfyUI generation:", err);
               });
-          trackSaveGeneration(imageId, imageRecording ? withFolderFallback(imageRecording, saveToFolder) : saveToFolder());
+          const imageHandle = outputs.find((output) => output.value === image)?.handleId;
+          trackSaveGeneration(
+            imageId,
+            imageRecording
+              ? withFolderFallback(imageRecording, saveToFolder, (result) => {
+                  if (entry && imageHandle) recordedIntoHistory(ctx, entry.id, imageHandle, result);
+                })
+              : saveToFolder()
+          );
         }
       }
       return;
@@ -418,6 +470,93 @@ export async function executeComfyApp(ctx: NodeExecutionContext): Promise<void> 
     });
     throw new Error(message);
   }
+}
+
+/**
+ * The carousel entry for a run, or null when nothing in it can be reloaded:
+ * a media output needs the library's id or a file in the project's folder
+ * (which only the first image gets), text is kept as it is, and a 3D model,
+ * which the node holds by URL, has nothing to reload.
+ */
+export function comfyRunHistoryEntry(run: {
+  outputs: ComfyResolvedOutput[];
+  timestamp: number;
+  prompt: string;
+  model: string;
+  batch?: RunBatchTag;
+  /** Asset ids by output handle, for the outputs the library is recording. */
+  assetIds: Record<string, string | undefined>;
+  /** The file name the first image gets in the project's generations folder. */
+  folderImageId?: string;
+  primaryImage?: string | null;
+}): ComfyRunHistoryItem | null {
+  const entries: Record<string, ComfyRunHistoryOutput> = {};
+  let reloadable = false;
+  for (const output of run.outputs) {
+    if (!output.value || output.type === "3d") continue;
+    if (output.type === "text") {
+      entries[output.handleId] = { type: "text", text: output.value };
+      continue;
+    }
+    const assetId = run.assetIds[output.handleId];
+    const id = run.folderImageId && output.type === "image" && output.value === run.primaryImage ? run.folderImageId : undefined;
+    if (!assetId && !id) continue;
+    entries[output.handleId] = { type: output.type, ...(assetId ? { assetId } : {}), ...(id ? { id } : {}) };
+    reloadable = true;
+  }
+  if (!reloadable) return null;
+  return {
+    id: `${run.timestamp}`,
+    timestamp: run.timestamp,
+    prompt: run.prompt,
+    model: run.model,
+    ...(run.batch ? { batch: run.batch } : {}),
+    outputs: entries,
+  };
+}
+
+/**
+ * A recording settled: the entry's output takes the file name the library
+ * gave it in the project's folder, or, when the recording failed, loses the
+ * asset id it can no longer load by. An output left with nothing to load by
+ * goes, and an entry left with no media goes with it; the selection stays
+ * on its run, or names none (-1) when that run was the one dropped.
+ */
+export function recordedIntoHistory(
+  ctx: NodeExecutionContext,
+  entryId: string,
+  handleId: string,
+  result: RecordAssetResult | null
+): void {
+  const data = ctx.getFreshNode(ctx.node.id)?.data as ComfyAppNodeData | undefined;
+  const history = data?.runHistory;
+  if (!history) return;
+  const index = history.findIndex((entry) => entry.id === entryId);
+  if (index === -1) return;
+  const entry = history[index];
+  const output = entry.outputs[handleId];
+  if (!output) return;
+  const next: ComfyRunHistoryOutput = { ...output };
+  if (result) {
+    if (result.legacyId) next.id = result.legacyId;
+  } else {
+    delete next.assetId;
+  }
+  const outputs = { ...entry.outputs };
+  if (next.assetId || next.id || next.type === "text") outputs[handleId] = next;
+  else delete outputs[handleId];
+  const hasMedia = Object.values(outputs).some((item) => item.type !== "text");
+  const selected = data?.selectedRunHistoryIndex ?? 0;
+  if (hasMedia) {
+    const updated = [...history];
+    updated[index] = { ...entry, outputs };
+    ctx.updateNodeData(ctx.node.id, { runHistory: updated });
+    return;
+  }
+  ctx.updateNodeData(ctx.node.id, {
+    runHistory: history.filter((_, i) => i !== index),
+    selectedRunHistoryIndex: selected > index ? selected - 1 : selected === index ? -1 : selected,
+  });
 }
 
 /**

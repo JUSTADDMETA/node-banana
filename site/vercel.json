@@ -13,7 +13,7 @@
     },
     {
       "source": "/download/windows",
-      "destination": "https://github.com/shrimbly/node-banana/releases",
+      "destination": "https://github.com/shrimbly/node-banana/releases/latest/download/Node-Banana-windows-x64.exe",
       "statusCode": 302
     },
     {

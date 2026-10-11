@@ -13,8 +13,11 @@
  * - maps the harness's events to text, reasoning, session and notice parts;
  * - wraps the tool runtime so every tool call becomes a `dynamic-tool` part
  *   (the same code path for both harnesses; harnesses never write tool UI),
- *   and every tool that changed the draft sends its ops to the browser as a
- *   transient `data-graph-ops` chunk tied to that part's `toolCallId`.
+ *   and every tool that changed the draft (or takes a tab or save step) sends
+ *   its ops to the browser as a transient `data-graph-ops` chunk tied to that
+ *   part's `toolCallId`;
+ * - ends a turn that built or changed something runnable, without running
+ *   it, with a persisted `data-run-offer` part: the chat's Run button.
  *
  * Every dependency the turn needs beyond the harness (tool runtime, prompt
  * builders) can be injected, so the bridge is tested with fakes.
@@ -28,6 +31,8 @@ import { buildAgentSystemPrompt, buildTurnPrompt } from "../prompt";
 import type { ProviderKeys } from "@/lib/providers/keys";
 import { TOOL_NAMES } from "../tools/definitions";
 import { createAgentToolRuntime, type AgentToolRuntimeOptions } from "../tools/runtime";
+import { libraryOutputReader } from "../tools/libraryOutputs";
+import { attachedResults, type AgentOutputReader } from "../tools/outputs";
 import { filePromptNotesStore, type PromptNotesStore } from "../prompting/notesStore";
 import {
   buildResearchSystemPrompt,
@@ -37,6 +42,7 @@ import {
   SAVE_PROMPT_NOTES,
 } from "../prompting/research";
 import type {
+  AgentAttachment,
   AgentChatRequestBody,
   AgentErrorCode,
   AgentGraphOpBatch,
@@ -46,6 +52,8 @@ import type {
   AgentMessageMetadata,
   AgentModelOption,
   AgentResearchTarget,
+  AgentRunOffer,
+  AgentTabSummary,
   AgentToolDefinition,
   AgentToolResult,
   AgentToolRuntime,
@@ -55,7 +63,7 @@ import type {
   HarnessEvent,
   HarnessTurnParams,
 } from "../types";
-import { AGENT_OPENING_STATUS, WEB_TOOL_PENDING } from "../types";
+import { AGENT_MAX_ATTACHMENTS, AGENT_OPENING_STATUS, WEB_TOOL_PENDING } from "../types";
 
 export type AgentUIMessageChunk = InferUIMessageChunk<AgentUIMessage>;
 
@@ -107,7 +115,10 @@ const snapshotEdgeSchema = z.looseObject({
   data: z.record(z.string(), z.unknown()).optional(),
 });
 
+const tabIdSchema = z.string().min(1).max(200);
+
 const workflowSchema = z.looseObject({
+  tabId: tabIdSchema.optional().catch(undefined),
   nodes: z.array(snapshotNodeSchema),
   edges: z.array(snapshotEdgeSchema),
   groups: z.array(z.looseObject({ id: z.string(), name: z.string(), color: z.string().optional() })).default([]),
@@ -116,9 +127,53 @@ const workflowSchema = z.looseObject({
     .object({ x: z.number(), y: z.number(), width: z.number(), height: z.number(), zoom: z.number() })
     .optional(),
   workflowName: z.string().optional(),
+  workflowId: z.string().max(200).optional().catch(undefined),
+  running: z.literal(true).optional().catch(undefined),
   // The user's saved defaults for new nodes; malformed entries are dropped, never a reason to refuse the turn.
   nodeDefaults: z.record(z.string(), z.record(z.string(), z.unknown())).optional().catch(undefined),
 });
+
+/** A yes/no the panel may send as true, false or not at all: kept only when true. */
+const flag = z
+  .boolean()
+  .optional()
+  .transform((value) => (value ? (true as const) : undefined));
+
+const tabSummarySchema = z
+  .object({
+    id: tabIdSchema,
+    name: optionalText.refine((value) => value === undefined || value.length <= 500, "too long"),
+    active: flag,
+    nodeCount: z.number().int().nonnegative(),
+    saved: flag,
+    unsaved: flag,
+  })
+  .transform(({ id, name, active, nodeCount, saved, unsaved }): AgentTabSummary => ({
+    id,
+    ...(name ? { name } : {}),
+    ...(active ? { active } : {}),
+    nodeCount,
+    ...(saved ? { saved } : {}),
+    ...(unsaved ? { unsaved } : {}),
+  }));
+
+/** Without a usable tab list the turn still runs, on the live canvas only (the tab tools refuse). */
+const tabsSchema = z.array(tabSummarySchema).max(200).optional().catch(undefined);
+
+/** A parked tab whose snapshot does not parse is left out (switching to it is refused), never a reason to refuse the turn. */
+const parkedWorkflowsSchema = z
+  .record(z.string(), z.unknown())
+  .optional()
+  .catch(undefined)
+  .transform((entries) => {
+    if (!entries) return undefined;
+    const kept: Record<string, z.infer<typeof workflowSchema>> = {};
+    for (const [id, snapshot] of Object.entries(entries)) {
+      const parsed = workflowSchema.safeParse(snapshot);
+      if (tabIdSchema.safeParse(id).success && parsed.success) kept[id] = parsed.data;
+    }
+    return kept;
+  });
 
 const messageSchema = z.looseObject({
   id: z.string(),
@@ -148,6 +203,8 @@ const chatRequestSchema = z.object({
   effort: optionalText.refine((value) => value === undefined || value.length <= 40, "too long"),
   sessionId: sessionIdSchema,
   workflow: workflowSchema,
+  tabs: tabsSchema,
+  parkedWorkflows: parkedWorkflowsSchema,
 });
 
 export type ParseAgentChatRequestResult =
@@ -164,7 +221,7 @@ export function parseAgentChatRequest(raw: unknown): ParseAgentChatRequestResult
   if (!parsed.success) {
     return { ok: false, message: `Invalid agent request: ${describeIssues(parsed.error)}` };
   }
-  const { id, messages, harness, model, effort, sessionId, workflow } = parsed.data;
+  const { id, messages, harness, model, effort, sessionId, workflow, tabs, parkedWorkflows } = parsed.data;
   const body: AgentChatRequestBody = {
     id,
     // Checked for what this module reads (role, text parts); the rest of each
@@ -175,6 +232,8 @@ export function parseAgentChatRequest(raw: unknown): ParseAgentChatRequestResult
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
     ...(sessionId ? { sessionId } : {}),
+    ...(tabs ? { tabs } : {}),
+    ...(parkedWorkflows ? { parkedWorkflows: parkedWorkflows as unknown as Record<string, AgentWorkflowSnapshot> } : {}),
   };
   if (!readConversation(body.messages)) {
     return { ok: false, message: `Invalid agent request: ${LAST_MESSAGE_PROBLEM}` };
@@ -209,6 +268,8 @@ export interface AgentConversation {
   userText: string;
   /** Set when the last message asks to look up prompting tips for a model. */
   research?: AgentResearchTarget;
+  /** The results the user added to this turn's message, in order. */
+  attachments?: AgentAttachment[];
 }
 
 const LAST_MESSAGE_PROBLEM = "the last message must be the user's, with text in it.";
@@ -228,10 +289,48 @@ export function readConversation(messages: readonly AgentUIMessage[]): AgentConv
   for (const message of messages.slice(0, -1)) {
     if (message.role !== "user" && message.role !== "assistant") continue;
     const text = messageText(message);
-    if (text) history.push({ role: message.role, text });
+    // A replayed message's pictures are not sent again: it says what it carried.
+    const attached = message.role === "user" ? readAttachments(message.metadata?.attachments) : [];
+    const note = attached.length > 0 ? `\n(Attached from the chat: ${attached.map((item) => `${item.nodeTitle}'s ${item.kind}`).join(", ")}.)` : "";
+    if (text) history.push({ role: message.role, text: text + note });
   }
   const research = researchTargetSchema.safeParse(last.metadata?.research);
-  return { history, userText, ...(research.success ? { research: research.data } : {}) };
+  const attachments = readAttachments(last.metadata?.attachments);
+  return {
+    history,
+    userText,
+    ...(research.success ? { research: research.data } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
+}
+
+const attachmentSchema = z
+  .object({
+    assetId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    kind: z.enum(["image", "video"]),
+    nodeId: z.string().min(1).max(200),
+    nodeTitle: z.string().max(500),
+    tabId: tabIdSchema.optional().catch(undefined),
+  })
+  .transform(({ assetId, kind, nodeId, nodeTitle, tabId }): AgentAttachment => ({
+    assetId,
+    kind,
+    nodeId,
+    nodeTitle,
+    ...(tabId ? { tabId } : {}),
+  }));
+
+/**
+ * A message's attached results, as far as they can be read: an entry that
+ * doesn't parse is left out, never a reason to refuse the turn. The asset id
+ * is all the server uses to find the picture; the rest only names it.
+ */
+function readAttachments(value: unknown): AgentAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const parsed = attachmentSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  }).slice(0, AGENT_MAX_ATTACHMENTS);
 }
 
 function messageText(message: AgentUIMessage): string {
@@ -537,7 +636,7 @@ class TurnWriter {
   }
 
   toolFinished(toolCallId: string, result: AgentToolResult): void {
-    if (result.ops.length > 0) {
+    if (result.ops.length > 0 || result.workspace) {
       const batch: AgentGraphOpBatch = {
         batchId: `ops_${generateId()}`,
         toolCallId,
@@ -545,13 +644,22 @@ class TurnWriter {
         summary: result.summary,
         ...(result.focusNodeIds ? { focusNodeIds: result.focusNodeIds } : {}),
         ...(result.replacedCanvas ? { replacedCanvas: true } : {}),
+        ...(result.workspace ? { workspace: result.workspace } : {}),
+        ...(result.tabId ? { tabId: result.tabId } : {}),
       };
       // Transient: the ops are applied once, when they arrive. Persisting them
       // would re-apply nothing but would bloat every later request's history.
       this.writer.write({ type: "data-graph-ops", data: batch, transient: true });
     }
     if (result.ok) {
-      const output: AgentToolUIOutput = { ok: true, summary: result.summary };
+      const nodeIds = resultNodeIds(result);
+      const output: AgentToolUIOutput = {
+        ok: true,
+        summary: result.summary,
+        ...(result.tabId ? { tabId: result.tabId } : {}),
+        ...(nodeIds.length > 0 ? { nodeIds } : {}),
+        ...(result.graph ? { graph: result.graph } : {}),
+      };
       this.writer.write({ type: "tool-output-available", toolCallId, output, dynamic: true, providerExecuted: true });
     } else {
       this.writer.write({
@@ -562,6 +670,13 @@ class TurnWriter {
         providerExecuted: true,
       });
     }
+  }
+
+  /** Persisted with a fixed id: the Run button under the reply, for what the turn built or changed. */
+  runOffer(offer: AgentRunOffer): void {
+    this.closeParts();
+    this.clearStatus();
+    this.writer.write({ type: "data-run-offer", id: "run-offer", data: offer });
   }
 
   /** Ends the message. The last status line of a turn is always "". */
@@ -596,6 +711,36 @@ class TurnWriter {
   }
 }
 
+/** Most node ids a tool card carries for its "Show on canvas". */
+const TOOL_OUTPUT_NODE_IDS_MAX = 50;
+
+/** The nodes a tool card shows on the canvas: the result's focus, else what its ops created or changed. */
+function resultNodeIds(result: AgentToolResult): string[] {
+  if (result.focusNodeIds) return result.focusNodeIds.slice(0, TOOL_OUTPUT_NODE_IDS_MAX);
+  const ids = new Set<string>();
+  const removed = new Set<string>();
+  for (const op of result.ops) {
+    switch (op.op) {
+      case "addNode":
+      case "updateNode":
+      case "moveNode":
+      case "setNodeGroup":
+        ids.add(op.id);
+        break;
+      case "addEdge":
+        ids.add(op.source).add(op.target);
+        break;
+      case "addGroup":
+        for (const id of op.nodeIds) ids.add(id);
+        break;
+      case "removeNode":
+        removed.add(op.id);
+        break;
+    }
+  }
+  return [...ids].filter((id) => !removed.has(id)).slice(0, TOOL_OUTPUT_NODE_IDS_MAX);
+}
+
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
@@ -622,6 +767,10 @@ function pendingToolStatus(definitions: readonly AgentToolDefinition[], toolName
   if (!definition) return "Working…";
   if (definition.name === TOOL_NAMES.nameConversation) return "Working…";
   if (definition.name === SAVE_PROMPT_NOTES) return "Saving the tips…";
+  if (definition.name === TOOL_NAMES.runWorkflow) return "Setting up the run…";
+  if (definition.name === TOOL_NAMES.switchWorkflow) return "Switching workflows…";
+  if (definition.name === TOOL_NAMES.newWorkflow) return "Opening a new workflow…";
+  if (definition.name === TOOL_NAMES.saveWorkflow) return "Saving the workflow…";
   return definition.readOnly ? "Reading the canvas…" : "Planning edits…";
 }
 
@@ -761,7 +910,9 @@ export interface AgentChatStreamOptions {
   /** Defaults to the real system prompt. */
   buildSystemPrompt?: (opts: { harness: AgentHarnessId }) => string;
   /** Defaults to the real turn prompt (canvas context + the user's words). */
-  buildTurnPrompt?: (opts: { userText: string; snapshot: AgentWorkflowSnapshot }) => string;
+  buildTurnPrompt?: (opts: { userText: string; snapshot: AgentWorkflowSnapshot; tabs?: AgentTabSummary[]; attached?: string }) => string;
+  /** Reads the pictures of results the user attached; the asset library by default. */
+  outputReader?: AgentOutputReader;
   /** Prompting notes per model; ~/.node-banana/prompt-notes by default. */
   promptNotes?: PromptNotesStore;
   /** How long to wait for a stopped turn on the same chat to wind down. */
@@ -862,6 +1013,8 @@ async function runClaimedTurn(
   const effort = pickTurnEffort(body.effort, modelOption);
 
   let params: HarnessTurnParams;
+  // The canvas tools' runtime (not a research turn's): asked for the Run button once the turn ends.
+  let runtime: AgentToolRuntime | undefined;
   try {
     const promptNotes = options.promptNotes ?? filePromptNotesStore();
     const modelChoice = {
@@ -884,11 +1037,20 @@ async function runClaimedTurn(
         ...modelChoice,
       };
     } else {
-      const runtime = (options.createToolRuntime ?? createAgentToolRuntime)(body.workflow, {
+      runtime = (options.createToolRuntime ?? createAgentToolRuntime)(body.workflow, {
         providerKeys: options.providerKeys ?? {},
         signal,
         promptNotes,
+        ...(body.tabs ? { tabs: body.tabs } : {}),
+        ...(body.parkedWorkflows ? { parkedWorkflows: body.parkedWorkflows } : {}),
       });
+      const attached = conversation.attachments
+        ? await attachedResults(conversation.attachments, options.outputReader ?? libraryOutputReader(), {
+            workflow: body.workflow,
+            ...(body.parkedWorkflows ? { parkedWorkflows: body.parkedWorkflows } : {}),
+            ...(body.tabs ? { tabs: body.tabs } : {}),
+          })
+        : null;
       params = {
         history: conversation.history,
         prompt:
@@ -896,7 +1058,10 @@ async function runClaimedTurn(
           (options.buildTurnPrompt ?? buildTurnPrompt)({
             userText: conversation.userText,
             snapshot: body.workflow,
+            ...(body.tabs ? { tabs: body.tabs } : {}),
+            ...(attached ? { attached: attached.text } : {}),
           }),
+        ...(attached && attached.images.length > 0 ? { images: attached.images } : {}),
         systemPrompt: (options.buildSystemPrompt ?? buildAgentSystemPrompt)({ harness: harness.id }),
         tools: wrapToolRuntime(runtime, turn, { chatId: body.id }),
         signal,
@@ -916,7 +1081,9 @@ async function runClaimedTurn(
     resumed: Boolean(params.sessionId),
     research: Boolean(conversation.research),
     historyLength: conversation.history.length,
+    attachmentCount: conversation.attachments?.length,
     nodeCount: body.workflow.nodes.length,
+    tabCount: body.tabs?.length,
   });
   turn.status(AGENT_OPENING_STATUS);
 
@@ -977,9 +1144,26 @@ async function runClaimedTurn(
     ...usage,
   });
 
-  if (pumped.outcome === "aborted") turn.abort();
-  else turn.finish();
+  if (pumped.outcome === "aborted") {
+    turn.abort();
+  } else {
+    if (pumped.outcome === "done" && turn.noticeCount === 0 && runtime?.runOffer) {
+      const offer = readRunOffer(runtime, logContext);
+      if (offer) turn.runOffer(offer);
+    }
+    turn.finish();
+  }
   return { settled: pumped.settled };
+}
+
+function readRunOffer(runtime: AgentToolRuntime, logContext: Record<string, unknown>): AgentRunOffer | null {
+  try {
+    return runtime.runOffer?.() ?? null;
+  } catch (error) {
+    // A broken offer costs the user a button, never the reply.
+    logger.error("api.error", "Agent run offer failed", logContext, asError(error));
+    return null;
+  }
 }
 
 function errorMessage(error: unknown): string {

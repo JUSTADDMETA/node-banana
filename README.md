@@ -15,7 +15,7 @@ Multi-provider support. Dynamic prompting features. Local, private, MIT, BYOK.
 
 <br />
 
-[**Download for Mac · Apple Silicon**](https://nodebanana.app/download/mac) &nbsp;&bull;&nbsp; Windows · coming soon
+[**Download for Mac · Apple Silicon**](https://nodebanana.app/download/mac) &nbsp;&bull;&nbsp; [**Download for Windows · x64**](https://nodebanana.app/download/windows)
 
 [Website](https://nodebanana.app/) &nbsp;&bull;&nbsp; [**Documentation**](https://node-banana-docs.vercel.app/) &nbsp;&bull;&nbsp; [Discord](https://discord.com/invite/89Nr6EKkTf) &nbsp;&bull;&nbsp; [All releases](https://github.com/shrimbly/node-banana/releases)
 
@@ -38,7 +38,7 @@ Node Banana is a node-based workflow editor for AI media generation. Drag nodes 
 
 | Feature | Description |
 |:--------|:------------|
-| **Desktop app** | A signed Mac app (Apple Silicon) that updates itself; Windows is coming soon. Keys are encrypted at rest; workflows and media stay on your disk |
+| **Desktop app** | A signed Mac app (Apple Silicon) and a Windows installer (x64) that update themselves. Keys are encrypted at rest; workflows and media stay on your disk |
 | **Agent** | A chat window that builds workflows, edits the canvas and changes node settings, running on your own Claude Code or Codex (ChatGPT) subscription through the vendor's CLI, never on API credits |
 | **Asset library** | Everything you generate is saved as it is made and browsable in the Assets view, with filters, favourites, tags, and the workflow that made it |
 | **Dynamic Prompting** | Build prompts with variables, LLM-powered text construction, and reusable prompt chains that adapt per run and per input |
@@ -71,7 +71,7 @@ Node Banana is a node-based workflow editor for AI media generation. Drag nodes 
 
 ### Install the desktop app
 
-Download the Mac app from [nodebanana.app](https://nodebanana.app/): **Apple Silicon, macOS 13 or later**, a signed and notarised DMG that keeps itself up to date from [GitHub Releases](https://github.com/shrimbly/node-banana/releases); every release lists SHA-256 checksums. **Windows is coming soon**: the installer was held back from 2.0 until it runs as well as the Mac app. Until then, Windows runs from source (below).
+Download the installer for your platform from [nodebanana.app](https://nodebanana.app/): **Mac (Apple Silicon, macOS 13 or later)** as a signed and notarised DMG, or **Windows (x64, Windows 10 or later)** as an installer. The Windows build is not code-signed, so SmartScreen may warn on first run. The app keeps itself up to date from [GitHub Releases](https://github.com/shrimbly/node-banana/releases); every release also lists SHA-256 checksums for its installers.
 
 Then open Settings → Providers and paste the API keys for the providers you use. Node Banana calls those providers directly with your keys, and their usage is billed to you by them. Keys are stored encrypted in your OS profile; workflows and generated media are files in the Node Banana folder (Documents by default). See the [desktop guide](docs/desktop-preview.md) for data locations, logs, recovery and updates.
 

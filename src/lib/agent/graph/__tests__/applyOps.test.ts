@@ -233,6 +233,14 @@ describe("applyGraphOps", () => {
     expect(result.clearedCanvas).toBe(false);
   });
 
+  it("has no way to start a run: a run op is skipped, and the edits beside it still land", () => {
+    const run = { op: "run", scope: { kind: "all" }, runs: 1 } as unknown as AgentGraphOp;
+    const result = applyGraphOps(state(), [{ op: "updateNode", id: "prompt-1", data: { prompt: "changed" } }, run], deps());
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toEqual(['unknown operation "run"']);
+    expect(result).not.toHaveProperty("run");
+  });
+
   it("does not mutate its input", () => {
     const input = state();
     const before = JSON.stringify(input);

@@ -1,12 +1,15 @@
 "use client";
 
 import { memo, useMemo } from "react";
-import { ViewportPortal, useStore, type Node } from "@xyflow/react";
+import { useStore, type Node } from "@xyflow/react";
+import { ViewportPortal } from "@/components/flowPortals";
 import { FloatingNodeHeader } from "./FloatingNodeHeader";
 import { selectMountedArea } from "./nodeCulling";
+import { useLowDetail } from "./lowDetail";
 import { ComfyWordmark } from "../icons/ComfyWordmark";
 import { defaultNodeDimensions } from "@/store/utils/nodeDefaults";
 import type { NodeType } from "@/types";
+import { requestComfyReplace } from "@/store/comfyAppRequestStore";
 
 interface HeaderActions {
   getNodeTitle: (node: Node) => string;
@@ -41,6 +44,9 @@ const INPUT_TYPES = new Set(["imageInput", "audioInput", "prompt"]);
 export const FloatingNodeHeaders = memo(function FloatingNodeHeaders({ nodes, hints, ...actions }: FloatingNodeHeadersProps) {
   const area = useStore(selectMountedArea);
   const [minX, minY, maxX, maxY] = useMemo(() => area.split(" ").map(Number), [area]);
+  // Zoomed out, nodes draw at low detail and carry no headers (see lowDetail.ts)
+  const lowDetail = useLowDetail();
+  if (lowDetail) return null;
 
   return (
     <ViewportPortal>
@@ -108,6 +114,7 @@ const NodeHeader = memo(function NodeHeader({
       comment={data?.comment}
       provider={data?.selectedModel?.provider}
       onBrowse={canBrowse ? onBrowse : undefined}
+      onReplaceWorkflow={type === "comfyApp" && data?.app ? requestComfyReplace : undefined}
       canFallback={canFallback}
       fallbackName={data?.fallbackModel?.displayName}
       onOpenFallback={onOpenFallback}

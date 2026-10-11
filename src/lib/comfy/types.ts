@@ -68,6 +68,12 @@ export interface ComfyAppInput {
   required: boolean;
   description?: string;
   /**
+   * The text the workflow was saved with, for a text input promoted from a
+   * widget. The author's prompts are often what makes a workflow run as
+   * intended, so attaching it to a node seeds a Prompt node with each.
+   */
+  default?: string;
+  /**
    * Extra graph bindings this one handle also writes.
    *
    * The same story as {@link ComfyAppParam.alsoBind}: a Blueprint's `STRING`
@@ -96,6 +102,9 @@ export interface ComfyCurve {
   /** ComfyUI's default is `monotone_cubic`; unknown values are passed through. */
   interpolation?: string;
 }
+
+/** What a seed the node shows becomes after each run: ComfyUI's "control after generate". */
+export type ComfySeedMode = "random" | "fixed" | "increment" | "decrement";
 
 export interface ComfyAppParam {
   /** Stable id — `${nodeId}:${inputKey}`. */

@@ -173,6 +173,7 @@ Returns `{ images: string[], text: string | null }`.
 - `H` - Stack selected nodes horizontally
 - `V` - Stack selected nodes vertically
 - `G` - Arrange selected nodes in grid
+- `C` - Show or hide the full-page agent chat (bare C, outside a text field)
 - `A` - Show or hide the Assets view (bare A; Shift+letters add nodes). In Assets: arrows, Enter, Space, `Cmd/Ctrl + A`, Delete (Trash), `Cmd/Ctrl + Z` (undo the last asset action), `F` (fullscreen detail), Esc
 - `?` - Show keyboard shortcuts
 
@@ -251,7 +252,7 @@ Discovery and settings are live; wire formats are data:
 - **Wire formats:** `src/lib/providers/comfyRouter/families.json` — one *family* per partner request format: a request template (`body`), the media handles it fills and how each is encoded (`base64`, `dataUrl`, or `url` = uploaded to Comfy storage first), where its settings live in the schema (`params.at`/`exclude`), per-setting `paramOverrides` (enum, default, value), and where the output or the partner's error sits in the response (`result.media`/`errors`). The binding language is documented at the top of `template.ts`. Models the app cannot drive are listed under `excluded` with the reason.
 - **New model of a known format:** add it to that family's `models` (id, name, description, capabilities, any per-model overrides). **New format:** add a family.
 - **Checks:** `npm run comfy:router-sync` downloads every schema into `.scratch/comfy-router-schemas` and lists Router models that are neither bound nor excluded. Then `npx vitest run src/lib/providers/comfyRouter/__tests__/routerSchemas.test.ts` validates the smallest and fullest request of every bound model against its schema (Ajv) and checks each result path exists in the response schema. `src/app/api/generate/providers/__tests__/comfy.test.ts` pins bodies and result readings for the main formats.
-- **Transport:** always the queue (`POST …/requests` → poll `…/requests/{id}/status` respecting `Retry-After` → `GET …/requests/{id}`), with an `Idempotency-Key` per submit — synchronous partners (OpenAI, Qwen) work through it too. The generate route returns the polling envelope with `pollProvider: "comfy"` and `/api/generate/poll` finishes the run. Binary answers (ElevenLabs) become audio; 3D models return as their URL.
+- **Transport:** the queue (`POST …/requests` → poll `…/requests/{id}/status` respecting `Retry-After` → `GET …/requests/{id}`), with an `Idempotency-Key` per submit — synchronous partners (OpenAI, Qwen) work through it too. The generate route returns the polling envelope with `pollProvider: "comfy"` and `/api/generate/poll` finishes the run. A family whose answer is the asset's own bytes (ElevenLabs) carries `"transport": "sync"`: the queue cannot store them and refuses with `403 not_enabled`, so the generate route runs it on the model's own route (`POST …/v2/models/{id}`) in one request and returns the finished output. Binary answers become audio; 3D models return as their URL.
 - **Masks:** partners disagree. OpenAI edits where the mask is transparent; FLUX Fill and Bria edit where it is white; Ideogram 4.5 edits where it is black.
 
 ## ComfyUI Integration
@@ -312,7 +313,10 @@ different workflow clears it.
 
 Dropping either format onto the canvas creates a `comfyApp` node at the drop
 point and opens the confirm step on it; our own workflow saves still replace the
-canvas, told apart by shape in `src/lib/comfy/detect.ts`.
+canvas, told apart by shape in `src/lib/comfy/detect.ts`. Attaching a workflow
+(drop, import or a saved node) also adds a Prompt node for each text input the
+workflow was saved with text in, holding that text and wired to the handle
+(`src/lib/comfy/promptNodes.ts`; the text rides on `ComfyAppInput.default`).
 
 Both upload formats are accepted. An **editor save** (the normal ComfyUI Save)
 is the one that carries App Mode, but it is not executable — widget values are
@@ -390,7 +394,72 @@ Flow: the panel sends a media-free canvas snapshot with each message →
 server-side draft and emit resolved graph ops → the browser applies them with
 `applyAgentGraphOps` (one undo step per tool call). Edits from a turn are
 dropped if the canvas is replaced mid-turn (`canvasGeneration`: load, clear,
-tab switch).
+tab switch), and the turn stops. The user's own ways of doing that (the tab
+strip, the menu, the chat's switcher, Open in canvas, Assets, a dropped
+workflow, the welcome dialog) ask first while a turn runs, and stop it only
+once they agree (`confirmStopAgent`, `src/lib/agent/client/stopGuard.ts`).
+
+Runs: the agent never starts one; the user does, with the chat's Run card.
+When the user asks, `run_workflow` sets the card up (scope `nodes`, `all` or
+`from`, and a run count), checked against the draft: refused while the
+snapshot says `running`, or when a node the run reads from holds nothing.
+There is no graph op for a run, so text injected into a workflow can't spend
+credits. A turn that builds or changes runnable nodes without `run_workflow`
+still ends with the card (a persisted `data-run-offer` part,
+`runtime.runOffer()`), scoped to the whole workflow, a group, or the changed
+nodes and what they feed. The model reports the outcome from the next
+message's node `status` and `error`.
+
+Chat view: the Chat toggle at the head of the tab strip (bare `C`) shows the
+full-page chat (`appView === "chat"`, `AgentChatView`). It and the floating
+window are two surfaces of one session (`AgentSessionProvider` in page.tsx;
+`useAgentSession`, and `useAgentPresence` for chrome that must not re-render
+per token; `useAgentSurface` sizes the transcript). Runs the chat starts (its
+Run card) are followed as `AgentRunRecord`s in
+`src/lib/agent/client/runs.ts`: progress, then outputs as asset ids and text,
+never media bytes, shown as results cards with the full-screen viewer. A
+`create_workflow` call's output carries its tab's graph in miniature (`graph`:
+node types and boxes, connections; the turn's later edits to that tab carry it
+too), which the full-page chat alone draws as a minimap (`AgentWorkflowPreview`),
+with Open in canvas. What a reply made (that minimap, then the Run card) comes
+after its text, so the summary reads first.
+
+Attachments: a results preview's corner button, or Add to chat in its viewer,
+adds that output to the unsent message (`attachments` in the session, shared by
+both composers like the draft, at most `AGENT_MAX_ATTACHMENTS`). Only an image,
+or a video with its poster frame, that the library holds can be added. The
+message carries asset ids and names in its metadata, never bytes; the chat
+route reads each picture from the library as `view_outputs` does
+(`attachedResults` in `src/lib/agent/tools/outputs.ts`), lists them in an
+`<attached>` block after the user's words, and sends the pictures after the
+prompt (Claude image blocks, Codex `image` inputs).
+
+Reviewing results: `view_outputs` shows the model what the nodes generated.
+The snapshot names each node's results by asset library id (`outputs`: the
+one it shows, then up to three newer, never bytes); the tool reads them from
+the library (`libraryOutputs.ts`: images downsized to 1024px webp, a video's
+captured frame) and returns them as images after their captions, MCP image
+blocks for Claude and `inputImage` data URLs for Codex. Uploads, audio and 3D
+cannot be viewed, and a run started in the same turn is not in it yet. A
+node that keeps no carousel of asset ids (a ComfyUI app, the image and video
+tools) is looked up by workflow and node instead (`newestFromNode` in
+`src/lib/assets/server`), and an Output, Output Gallery or Image Compare node
+through the nodes feeding it. Codex's
+models run tools from code-mode `exec` cells, where a tool's reply arrives as
+one string (images as `data:` URLs on their own lines) and the model sees a
+picture only when the cell passes it to `image()`: the harness's developer
+instructions show it how. Without them it describes images it never saw.
+
+Tabs: each request carries every open tab (`tabs`, `parkedWorkflows`); the
+runtime keeps a draft per tab and `switch_workflow`, `new_workflow` and
+`save_workflow` emit workspace steps (`AgentWorkspaceOp`) that `useAgentChat`
+applies in stream order with the graph batches (each batch names its
+`tabId`). The turn's own tab changes never stop it; a user's still do. A first
+save goes into the Node Banana folder by name (`saveLiveWorkflow`). A workflow
+the agent builds from scratch (on an empty canvas that was never saved, or in a
+tab it opened) it names and saves in the same turn, unless told not to: the
+prompt says so, and that `create_workflow` result reminds it. Other work it
+saves only when asked.
 
 | Purpose | Location |
 |---------|----------|
@@ -401,6 +470,8 @@ tab switch).
 | Harnesses (Claude Agent SDK, codex app-server), env, billing checks | `src/lib/agent/server/` |
 | UI message stream bridge | `src/lib/agent/server/chatStream.ts` |
 | Panel, button, sign-in card | `src/components/agent/`, `src/lib/agent/client/` |
+| Shared session, full-page chat, Run and results cards | `src/components/agent/AgentSession.tsx`, `AgentChatView.tsx`, `AgentRunCard.tsx`, `AgentRunResults.tsx` |
+| Chat-started runs, saves, request | `src/lib/agent/client/runs.ts`, `save.ts`, `request.ts` |
 | Chat UI kit (Vercel AI Elements + radix-nova primitives, scoped theme) | `src/components/ai-elements/`, `src/components/agent/ui/`, `src/app/agent-theme.css` |
 
 The agent routes only answer requests the server vouches for: `server.js`
@@ -537,9 +608,14 @@ All routes in `src/app/api/`:
 - `node-banana-nanoBanana-defaults` - Sticky generation settings
 - `node-banana-comfy-settings` - ComfyUI backend (cloud/local/remote), keys, job timeout
 - `node-banana-edge-appearance` - User default for connection line style and appearance (thickness, faded opacity, gradient, loading pulse)
+- `node-banana-low-detail` - Low detail when zoomed out (absent or `on` means on; Settings › Canvas)
+- `node-banana-low-detail-zoom` - The zoom low detail starts below (default 0.25)
+- `node-banana-perf-overlay` - The performance overlay is shown (`on`)
 - `node-banana-comfy-apps` - Saved Comfy nodes (workflow + contract + settings)
 - `node-banana-agent-settings` - Agent harness, and model and thinking-effort choice per harness
-- `node-banana-agent-conversations` - Agent chat history (messages, the agent's summary, workflow name; newest 50, size-capped)
+- `node-banana-agent-conversations` - Agent chat history (messages, the agent's summary, workflow name, tab and id; newest 50, size-capped)
+- `node-banana-agent-runs` - Runs the agent chat started and their outputs (asset ids and text; newest 100)
+- `node-banana-agent-chat-sidebar` - The chat view's sidebar collapsed or open
 - `node-banana-assets-tile-size` - Assets view tile size (S/M/L)
 - `node-banana-assets-rail-open` - Which filter groups in the Assets rail are open
 - `node-banana-assets-first-run-shown` - The one-time "Saved to …" hint after the first recorded asset has been shown

@@ -5,6 +5,7 @@
  */
 
 import { GenerationInput, GenerationOutput } from "@/lib/providers/types";
+import { fetchWithRetry } from "@/lib/providers/retry";
 import { validateMediaUrl } from "@/utils/urlValidation";
 import {
   getParameterTypesFromSchema,
@@ -132,7 +133,7 @@ export async function generateWithReplicate(
   }
 
   // Create a prediction
-  const createResponse = await fetch(`${REPLICATE_API_BASE}/predictions`, {
+  const createResponse = await fetchWithRetry(`${REPLICATE_API_BASE}/predictions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,

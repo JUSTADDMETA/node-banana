@@ -76,7 +76,9 @@ import {
 import { normalizeEdgeAppearance } from "@/lib/edges/appearance";
 import {
   captureWorkflowTabSnapshot,
+  claimTabId,
   createTabId,
+  markTabIdsUsed,
   emptyWorkflowTabSnapshot,
   isWorkflowTabPristine,
   tabToActivateAfterClose,
@@ -409,8 +411,8 @@ export interface WorkflowStore {
   setRunCount: (count: number) => void;
   /** The batch in progress, or null (a single run, or nothing running). */
   batch: RunBatch | null;
-  /** Run `scope` runCount times, one run after another. */
-  runBatch: (scope: RunScope) => Promise<void>;
+  /** Run `scope` runCount times (or `count` times, leaving runCount alone), one run after another. */
+  runBatch: (scope: RunScope, count?: number) => Promise<void>;
   /** The Run button's Stop: mid-batch the first press lets this run finish, the second stops now. */
   requestStop: () => void;
   mockTutorialExecution: () => Promise<void>;
@@ -436,8 +438,13 @@ export interface WorkflowStore {
   pendingMediaSaves: number;
   /** Why tab changes are refused right now, or null when they are allowed. */
   tabsBusyReason: () => string | null;
-  /** Park the live workflow and open an empty tab. Returns the new tab id, or null while a run or save is in flight. */
-  newTab: () => string | null;
+  /**
+   * Park the live workflow and open an empty tab. Returns the new tab id, or
+   * null while a run or save is in flight. `id` asks for that tab id (the
+   * agent names the tabs it opens): refused, null, when it is malformed or
+   * was ever used in this page. `name` labels the new, unsaved workflow.
+   */
+  newTab: (options?: { id?: string; name?: string }) => string | null;
   /** Park the live workflow and bring `tabId` into the canvas. False when nothing changed. */
   switchTab: (tabId: string) => boolean;
   /** Close a tab. Closing the only tab leaves an empty one. False when nothing changed. */
@@ -546,7 +553,8 @@ export interface WorkflowStore {
   /**
    * Applies one batch of resolved canvas changes from the agent as a single
    * undo step. Ops that no longer fit the live canvas are skipped and
-   * returned with reasons.
+   * returned with reasons. The agent never starts a run: the user does, from
+   * the chat's Run card.
    */
   applyAgentGraphOps: (batch: AgentGraphOpBatch) => { applied: number; skipped: string[] };
   /**
@@ -630,6 +638,21 @@ function abortNodeRuns(state: WorkflowStore, reason: string): void {
 // How the latest executeWorkflow / executeSelectedNodes went, for runBatch:
 // the serial moves when a run starts, `failed` is set when it ends in error.
 const lastRun = { serial: 0, failed: false };
+
+/**
+ * Put back to idle the nodes a run started that are still "loading" once it
+ * has ended: cut off by another node's failure or by Stop, their executors
+ * rethrew the abort without settling them. Only the run's own nodes, so a
+ * node's separate run alongside is left alone.
+ */
+function settleInterruptedNodes(get: () => WorkflowStore, launched: ReadonlySet<string>): void {
+  for (const id of launched) {
+    const node = get().nodes.find((n) => n.id === id);
+    if (node && (node.data as { status?: unknown }).status === "loading") {
+      get().updateNodeData(id, { status: "idle" } as Partial<WorkflowNodeData>);
+    }
+  }
+}
 
 // Counts every run started (workflow, selection, single node), so the
 // writes of a stopped run can tell whether a newer run has begun since.
@@ -2355,6 +2378,12 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     lastRun.failed = false;
     // Nodes that had nothing to work with, named for the end-of-run summary
     const unreadyNodes: string[] = [];
+    // Every node this run started. When the run ends early (a failure aborts
+    // the others, or Stop), the ones still "loading" were cut off mid-flight:
+    // an aborted executor rethrows without touching its node, so without this
+    // their spinners would stay on.
+    const launched = new Set<string>();
+    const settleInterrupted = () => settleInterruptedNodes(get, launched);
 
     // Start logging session
     await logger.startSession();
@@ -2596,7 +2625,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         setCurrentNodeIds: (ids) => {
           if (get()._abortController === abortController) set({ currentNodeIds: ids });
         },
-        runNode: (node, signal) => executeSingleNode(node, signal),
+        runNode: (node, signal) => { launched.add(node.id); return executeSingleNode(node, signal); },
         onNodeError: (node, err) => {
           logger.error('workflow.error', 'Node execution failed', {
             nodeId: node.id,
@@ -2738,6 +2767,8 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       if (!ownsRunState(get(), abortController)) return;
       // Reset skipped nodes' status back to idle
       resetSkippedNodes();
+      // Stop ends the run this way too, with its nodes cut off mid-flight
+      settleInterrupted();
 
       set({ isRunning: false, currentNodeIds: [], skippedNodeIds: new Set(), _abortController: null });
 
@@ -2759,6 +2790,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       }
       // Reset skipped nodes' status back to idle
       resetSkippedNodes();
+      settleInterrupted();
       set({ isRunning: false, currentNodeIds: [], skippedNodeIds: new Set(), _abortController: null });
 
       saveLogSession();
@@ -2782,7 +2814,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
     set({ runCount, hasUnsavedChanges: true });
   },
 
-  runBatch: async (scope: RunScope) => {
+  runBatch: async (scope: RunScope, countOverride?: number) => {
     if (get().isRunning || get().batch) return;
     const runOnce = async (): Promise<RunOutcome> => {
       const serial = lastRun.serial;
@@ -2791,7 +2823,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       else await get().executeSelectedNodes(scope.nodeIds);
       return { started: lastRun.serial !== serial, failed: lastRun.failed };
     };
-    const count = clampRunCount(get().runCount);
+    const count = clampRunCount(countOverride ?? get().runCount);
     if (count === 1) {
       await runOnce();
       return;
@@ -2809,9 +2841,13 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         },
         runOnce,
         // A hard Stop clears the batch; a pause edge, or a canvas replaced
-        // under the batch, ends it too.
+        // under the batch, ends it too. Selected nodes never pause: a pause
+        // the canvas holds is an earlier run's resume point.
         keepGoing: () =>
-          ours() && !get().batch?.stopping && !get().pausedAtNodeId && get().canvasGeneration === canvasGeneration,
+          ours() &&
+          !get().batch?.stopping &&
+          (scope.kind === "nodes" || !get().pausedAtNodeId) &&
+          get().canvasGeneration === canvasGeneration,
       });
     } finally {
       if (ours()) set({ batch: null });
@@ -3236,6 +3272,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       }
     };
 
+    const launched = new Set<string>();
     try {
       // Filter edges to only those within the selected set for topological sort.
       // Exclude loop edges (matching full execution) so looped nodes aren't
@@ -3259,7 +3296,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
         setCurrentNodeIds: (ids) => {
           if (get()._abortController === abortController) set({ currentNodeIds: ids });
         },
-        runNode: (node, signal) => executeNode(node, signal),
+        runNode: (node, signal) => { launched.add(node.id); return executeNode(node, signal); },
         onNodeError: (node, err) => {
           logger.error('node.error', 'Node execution failed in batch', {
             nodeId: node.id,
@@ -3305,6 +3342,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
 
       if (!ownsRunState(get(), abortController)) return;
       logger.info('node.execution', 'Selected nodes execution completed successfully');
+      settleInterruptedNodes(get, launched);
       set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
       saveLogSession();
@@ -3321,6 +3359,7 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
           "error"
         );
       }
+      settleInterruptedNodes(get, launched);
       set({ isRunning: false, currentNodeIds: [], _abortController: null });
 
       saveLogSession();
@@ -3573,15 +3612,17 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
   restoreDesktopSession: (tabs, activeTabId) => {
     const active = tabs.find(tab => tab.id === activeTabId);
     if (!active) return;
+    markTabIdsUsed(tabs.map((tab) => tab.id));
     set({ tabs: tabs.map(tab => ({ ...tab, snapshot: tab.id === activeTabId ? null : tab.snapshot })), activeTabId });
     applyTabSnapshot(set, get, active.snapshot);
   },
 
-  newTab: () => {
+  newTab: (options) => {
     if (get().tabsBusyReason()) return null;
     const { tabs, activeTabId, edgeStyle, edgeAppearance, useExternalImageStorage } = get();
+    if (options?.id !== undefined && !claimTabId(options.id)) return null;
     const parked = captureWorkflowTabSnapshot(get());
-    const id = createTabId();
+    const id = options?.id ?? createTabId();
     set({
       tabs: [
         ...tabs.map((tab) => (tab.id === activeTabId ? { ...tab, snapshot: parked } : tab)),
@@ -3590,6 +3631,8 @@ const workflowStoreImpl: StateCreator<WorkflowStore> = (set, get) => ({
       activeTabId: id,
     });
     applyTabSnapshot(set, get, emptyWorkflowTabSnapshot({ edgeStyle, edgeAppearance, useExternalImageStorage }));
+    const name = options?.name?.trim();
+    if (name) set({ workflowName: name });
     return id;
   },
 
