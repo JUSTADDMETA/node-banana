@@ -97,7 +97,7 @@ import { getNodeSize } from "@/utils/nodeDimensions";
 import { arrangeNodes } from "@/utils/arrangeNodes";
 import { FloatingNodeHeaders } from "./nodes/FloatingNodeHeaders";
 import { NodePlaceholder, setCanvasMoving, useNodeHasFocus, useNodeMounted } from "./nodes/nodeCulling";
-import { LOW_DETAIL_ZOOM, setZoomedOut, useLowDetail, useLowDetailEnabled } from "./nodes/lowDetail";
+import { setZoomedOut, useLowDetail, useLowDetailEnabled, useLowDetailZoom } from "./nodes/lowDetail";
 import { NodeLowDetail } from "./nodes/NodeLowDetail";
 import { detectAndSplitGrid } from "@/utils/gridSplitter";
 import { logger } from "@/utils/logger";
@@ -253,7 +253,6 @@ const edgeTypes: EdgeTypes = {
 };
 
 const OVERVIEW_EDGES: Edge[] = [];
-const selectZoomedOut = (state: ReactFlowState) => state.transform[2] < LOW_DETAIL_ZOOM;
 /** Pointer travel (px) under which a handle press counts as a click, not a drag. */
 const HANDLE_CLICK_SLOP = 4;
 /** Height is content-derived; a stored one must not reach React Flow's wrapper. */
@@ -487,7 +486,8 @@ export function WorkflowCanvas() {
   const isCanvasOverview = useStore(selectCanvasOverview);
   // Low detail when zoomed out: nodes read it from lowDetail.ts, fed from
   // this one subscription; React Flow then mounts only what is in view
-  const zoomedOut = useStore(selectZoomedOut);
+  const lowDetailZoom = useLowDetailZoom();
+  const zoomedOut = useStore(useCallback((state: ReactFlowState) => state.transform[2] < lowDetailZoom, [lowDetailZoom]));
   useLayoutEffect(() => setZoomedOut(zoomedOut), [zoomedOut]);
   const lowDetail = useLowDetailEnabled() && zoomedOut;
   const { show: showToast } = useToast();

@@ -3,25 +3,29 @@
 /**
  * Low detail when zoomed out (exp/zoomed-out-low-detail, for trying out).
  *
- * Below LOW_DETAIL_ZOOM every node draws as a card with its image as a
- * thumbnail (NodeLowDetail), the floating headers are hidden, and React Flow
- * mounts only the nodes and edges in view. Measured on a 909-node graph at
- * 25% zoom on a 180 Hz display: pans go from about 15 to about 130 screen
- * updates a second and drags from about 30 to about 155.
+ * Below the low-detail zoom (25% unless changed) every node draws as a card
+ * with its image as a thumbnail (NodeLowDetail), the floating headers are
+ * hidden, and React Flow mounts only the nodes and edges in view. Measured
+ * with the threshold at 45%, on a 909-node graph at 25% zoom on a 180 Hz
+ * display: pans went from about 14 to about 124 screen updates a second and
+ * drags from about 28 to about 120.
  *
  * WorkflowCanvas feeds the zoomed-out state from its one store subscription
  * and nodes read it here, so a pan frame runs no per-node selector.
  *
  * On by default. Turned off (and back on) for comparison with
  * localStorage "node-banana-low-detail" = "off", or at runtime from the
- * console: __bananaLowDetail(false).
+ * console: __bananaLowDetail(false). The zoom it starts below is
+ * __bananaLowDetailZoom(0.3) (kept in localStorage
+ * "node-banana-low-detail-zoom").
  */
 import { useSyncExternalStore } from "react";
 
-/** Below this zoom the canvas draws nodes at low detail. */
-export const LOW_DETAIL_ZOOM = 0.45;
+/** Below this zoom the canvas draws nodes at low detail, unless changed. */
+export const LOW_DETAIL_ZOOM = 0.25;
 
 const STORAGE_KEY = "node-banana-low-detail";
+const ZOOM_STORAGE_KEY = "node-banana-low-detail-zoom";
 
 function readEnabled(): boolean {
   try {
@@ -31,7 +35,17 @@ function readEnabled(): boolean {
   }
 }
 
+function readThreshold(): number {
+  try {
+    const stored = Number(localStorage.getItem(ZOOM_STORAGE_KEY));
+    return stored > 0 && stored < 2 ? stored : LOW_DETAIL_ZOOM;
+  } catch {
+    return LOW_DETAIL_ZOOM;
+  }
+}
+
 let enabled = typeof window === "undefined" ? true : readEnabled();
+let threshold = typeof window === "undefined" ? LOW_DETAIL_ZOOM : readThreshold();
 let zoomedOut = false;
 const listeners = new Set<() => void>();
 
@@ -39,7 +53,7 @@ function emit() {
   for (const listener of listeners) listener();
 }
 
-/** Called by WorkflowCanvas whenever the zoom crosses LOW_DETAIL_ZOOM. */
+/** Called by WorkflowCanvas whenever the zoom crosses the low-detail zoom. */
 export function setZoomedOut(next: boolean) {
   if (next === zoomedOut) return;
   zoomedOut = next;
@@ -56,8 +70,21 @@ export function setLowDetailEnabled(next: boolean) {
   emit();
 }
 
+/** The zoom low detail starts below; anything else resets it to LOW_DETAIL_ZOOM. */
+export function setLowDetailZoom(next: number) {
+  threshold = next > 0 && next < 2 ? next : LOW_DETAIL_ZOOM;
+  try {
+    localStorage.setItem(ZOOM_STORAGE_KEY, String(threshold));
+  } catch {
+    // Storage unavailable: the value lasts for this session
+  }
+  emit();
+}
+
 if (typeof window !== "undefined") {
-  (window as unknown as { __bananaLowDetail: typeof setLowDetailEnabled }).__bananaLowDetail = setLowDetailEnabled;
+  const w = window as unknown as { __bananaLowDetail: typeof setLowDetailEnabled; __bananaLowDetailZoom: typeof setLowDetailZoom };
+  w.__bananaLowDetail = setLowDetailEnabled;
+  w.__bananaLowDetailZoom = setLowDetailZoom;
 }
 
 function subscribe(listener: () => void) {
@@ -67,9 +94,14 @@ function subscribe(listener: () => void) {
   };
 }
 
-/** True while the canvas is zoomed out past LOW_DETAIL_ZOOM, with low detail on. */
+/** True while the canvas is zoomed out past the low-detail zoom, with low detail on. */
 export function useLowDetail(): boolean {
   return useSyncExternalStore(subscribe, () => enabled && zoomedOut, () => false);
+}
+
+/** The zoom low detail starts below. */
+export function useLowDetailZoom(): number {
+  return useSyncExternalStore(subscribe, () => threshold, () => LOW_DETAIL_ZOOM);
 }
 
 /** Whether low detail is switched on at all (zoom aside). */
