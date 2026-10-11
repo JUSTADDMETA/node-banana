@@ -4,21 +4,39 @@ All notable changes to Node Banana will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [2.1.0] - 2026-10-12
+
+The agent grows a full-page chat that runs workflows and looks at their
+results, ComfyUI workflows arrive with their prompts and keep their history,
+video players get sound, the canvas pans and drags more smoothly, and a run
+no longer fails on a provider's passing error.
 
 ### Added
 
-- **Prompts come with the workflow** — Attaching a ComfyUI workflow to a node now adds a Prompt node for each text input that the workflow was saved with text in, holding that text and wired to its handle. A workflow whose system prompt or example prompt matters runs as its author meant the first time.
+- **Full-page agent chat** — The floating window expands into a full-page chat (bare `C`): the workflow the agent built shown as a minimap with **Open in canvas**, a workflow built from scratch named and saved, tool calls folded under one line, a Copy button under each reply, and the conversation sidebar.
+- **Runs from the chat** — The agent never starts a run itself. When asked, `run_workflow` sets up a Run card scoped to the whole workflow, a group, the changed nodes or from a node, with a run count and options; a turn that builds runnable nodes ends with the card too. Progress and then the results show in the chat as previews with the full-screen viewer; a result can be attached to the next message.
+- **The agent sees results** — `view_outputs` shows the agent what the nodes generated, read from the library, so it can judge a result and change the workflow accordingly.
+- **Prompts come with the workflow** — Attaching a ComfyUI workflow to a node adds a Prompt node for each text input the workflow was saved with text in, holding that text and wired to its handle. A workflow whose system prompt or example prompt matters runs as its author meant the first time.
+- **Comfy app builder** — The import dialog's preview is the node as the canvas draws it, with more room; **Replace workflow** sits in the node header's menu; a seed setting says what it will do after each run; the dialog's gear opens Settings at its ComfyUI page.
 - **Sound in video players** — Every scrub row has a sound button after the time readout. Videos were always muted; now the button turns sound on for every player and remembers it, pins the video so it keeps playing, and opens a volume slider when the pointer rests on it. Hover previews stay silent.
+- **Low detail when zoomed out (trial)** — Below 25% zoom a node draws as a light card, so a large canvas pans and zooms without re-laying out every node; a click on the card selects the node, an edit in progress survives zooming out, and a running node still shows it. The threshold and the feature are in Settings › Canvas. A performance overlay (`node-banana-perf-overlay`) shows frame figures for diagnosis.
+
+### Changed
+
+- **Canvas performance** — React Flow 12.11.2; a press that becomes a pan or a node drag captures the pointer; a node drag's moves reach the store when it drops, not every frame; edges stop taking the pointer and the empty canvas is not text-selectable mid-gesture, so a pan stops hit-testing; interaction rules restyle only what they change; nodes leaving the view mid-pan keep their component until the canvas settles; edge store slices, socket connection lookups, node width lookups and portal containers are cached. Measured with the new performance runner (`npm run electron:performance`, `docs/canvas-performance.md`).
+- **Desktop, off the main thread** — Recovery checkpoints and window bounds are written asynchronously and never mid-drag, media chunks are hashed off the UI thread, and thumbnails are decoded off the main thread a few at a time. On Windows the caption buttons take clicks again and the window resizes from its top edge; the Windows build itself stays "coming soon".
+- **Media viewer** — The rail shows the whole prompt.
+- **Website** — Vercel Web Analytics, with a Download event per installer click.
 
 ### Fixed
 
-- **Comet keeps moving** — The running comet on a noodle no longer freezes while the canvas pans or a node drags.
 - **Spinners after a failed run** — When one node failed, the nodes running beside it kept their running animation: the run had cut them off, and nothing put them back. A run that ends early, by a failure or by Stop, now settles every node it started.
 - **Passing provider errors are retried** — A 502, 503 or 504, a dropped connection, or Gemini's "model overloaded" no longer fails a run on the first try. The submit of a generation (Comfy Router, Kie, fal, Replicate, WaveSpeed, OpenAI, Gemini) and the LLM calls are asked again, up to three times with a short backoff, honouring Retry-After. A Comfy Router submit carries the same idempotency key on every try, so a retry can never queue a run twice. Rate limits and refusals are reported as before.
 - **Comfy app history** — A node made from a ComfyUI workflow kept only its last result. It now has the same carousel as the image and video nodes: every run is kept, and the arrows under the picture go back through them, restoring each output the run produced.
 - **ElevenLabs on ComfyUI** — The ElevenLabs voices and sound effects served by Comfy Router failed with "cannot run this model on the queued route yet (not_enabled)": the Router's queue cannot store a partner's raw audio bytes. Those models now run on their own route in one request and the audio comes straight back.
 - **fal.ai settings** — A fal.ai model's settings card could come up blank, with no message, after the model browser had just been opened: fal's model API rate-limits bursts, the app read a refusal as "no settings" and remembered it for two days. The settings and the generate path now share one schema lookup per model, a rate limit is waited out and retried, a refusal shows its reason on the node with a Retry, and nothing empty is remembered.
+- **Canvas** — A marquee near the canvas edge no longer pans it; Lock canvas locks the nodes again on React Flow 12.11; the canvas shows store changes during a node drag, and a drag React Flow aborts hands the edges and culling back; the running comet's own pause rule during a pan is gone.
+- **Agent** — Opening another workflow while a turn runs asks first and stops the turn; a turn's queued steps fit only its own canvas, and Stop reaches them; a deleted conversation stays deleted; sidebar times follow the calendar; the chat view's keys are its own; an earlier run's audio keeps playing when the node makes something new; results the library had under another lookup are found.
 
 ## [2.0.0] - 2026-10-04
 
