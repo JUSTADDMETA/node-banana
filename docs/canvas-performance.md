@@ -106,6 +106,32 @@ In order of effect:
 - **Cars pan is GPU-bound.** Each frame re-rasterises the visible canvas: about 440 path draws and 155 offscreen layers per frame, from 335 squircle-cornered elements (`corner-shape: squircle` draws as a path, and a squircle that clips needs an offscreen layer). Drawing round corners while a pan is in progress measured +19% (72 → 85 updates a second); it changes the corner shape mid-pan, so it is not applied.
 - **Large canvases are bound by the renderer's main thread.** What remains is React Flow's own store fan-out on every viewport change, and Chromium's layer assignment and painting, which scale with how much is mounted.
 
+## Zoomed out — 12 October 2026
+
+Same machine and method as the Windows pass. Canvas: the stress workflow tiled three times (909 nodes, 1,194 edges, 12 groups) with an image on every image, generate and output node, at 25% zoom.
+
+Zoomed out, every pan frame ran React Flow's store selectors for every mounted node, edge, socket and floating header, then laid out and painted all of that DOM: the main thread was 97–100% busy and painting was a small share of it. What helped was mounting less.
+
+**Low detail** (`lowDetail.ts`, `NodeLowDetail.tsx`): below a zoom (25% by default; Settings › Canvas) every node draws as a card of its size with a stripe in its minimap colour, its image as a thumbnail and an outline while selected; the floating headers are hidden; React Flow mounts only the nodes and edges in view (`onlyRenderVisibleElements`, below the threshold only). Nodes read the zoomed-out state from one subscription in `WorkflowCanvas`, not a selector each. A node keeps its full component while it holds the focused field, and until React Flow has read its handles from it (a graph opened zoomed out), since the card's handle elements are built from them.
+
+Screen updates per second (the canvas's DOM moves per second, which tracked Chromium's presented frames within about 10% here), threshold at 45%:
+
+| Strategy | Pan | Drag |
+| --- | ---: | ---: |
+| Full nodes (before) | 14–16 | 25–32 |
+| Low-detail cards | 34 | 57 |
+| Cards, no headers | 70 | 82 |
+| Cards with thumbnails, no headers, only what is in view (shipped) | 124–128 | 120–155 |
+| Plain cards, no headers, only what is in view | 148–160 | 155–177 |
+| Cards, no headers, no edges | 172 | 178 |
+| The whole graph on one canvas, no DOM nodes or edges | 180 | ~172 |
+
+At 12% zoom, with all 909 nodes on screen, the cards with no headers reach 159–180 with or without the other changes; full nodes manage 12 and 23. Zooming out across the threshold used to cost a 700 ms frame on this canvas (the culling area takes in many more nodes at once); with only what is in view mounted it costs none, and zooming back in about 80 ms.
+
+Tried and not kept: the paint toggles (shadows, blur, squircle corners, hidden images, the dot grid, the minimap) moved it by ±15% at most; hiding node content in CSS alone (21), since the elements still lay out and hit-test; keeping React Flow's transform out of its store mid-pan (+15%); a tighter culling margin (worse); the viewport on its own layer (2× worse). Drawing the whole graph on one canvas has the most headroom (the main thread 25% busy at 180 updates a second) but would mean redoing selection, connections, context menus, groups and the minimap on that canvas, and zooming back in re-mounts every node (~500 ms).
+
+**Performance overlay** (`PerfOverlay.tsx`; Settings › Canvas, or `__bananaFps(true)`): frame rate now and over the last 10 seconds, frame-time percentiles, dropped frames and long frames, and the same for the last pan or drag, timed with `requestAnimationFrame`. It sees the frames the main thread renders, which is what bounds pans and drags here, not what the GPU drops after.
+
 ## Mac pass — 22 September 2026
 
 The performance branch kept the existing node design, edges, previews, minimap, culling margins and trailing-controls animation, and reduced the React and store work done during dragging and panning:
