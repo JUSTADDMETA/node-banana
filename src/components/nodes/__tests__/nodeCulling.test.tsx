@@ -124,6 +124,24 @@ describe("useNodeMounted", () => {
     }
   });
 
+  it("does not count focus on the node itself, which every press on a node takes", () => {
+    const host = document.createElement("div");
+    host.className = "react-flow__node";
+    host.setAttribute("data-id", "far");
+    host.tabIndex = 0;
+    document.body.appendChild(host);
+    try {
+      renderProbes(<Probe id="far" />);
+      act(() => {
+        host.focus();
+        fireEvent.focusIn(host);
+      });
+      expect(screen.getByTestId("probe-far")).toHaveTextContent("placeholder");
+    } finally {
+      host.remove();
+    }
+  });
+
   it("keeps a node that leaves the area while the canvas moves, and culls it once the canvas settles", () => {
     vi.useFakeTimers();
     try {
