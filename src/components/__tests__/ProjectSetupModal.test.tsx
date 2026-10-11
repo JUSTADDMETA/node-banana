@@ -1524,3 +1524,49 @@ describe("Storage page", () => {
     expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
   });
 });
+
+describe("Canvas tab: low detail and the performance overlay", () => {
+  // One stable object: the modal syncs it into local state in an effect
+  const navSettings = { panMode: "space", zoomMode: "altScroll", selectionMode: "click" };
+
+  it("switches low detail, sets the zoom it starts below and shows the overlay, all on Save", async () => {
+    const { getLowDetailSettings, setLowDetailEnabled, setLowDetailZoom } = await import("@/components/nodes/lowDetail");
+    const { getPerfOverlayVisible, setPerfOverlayVisible } = await import("@/components/PerfOverlay");
+    setLowDetailEnabled(true);
+    setLowDetailZoom(0.25);
+    setPerfOverlayVisible(false);
+    const updateCanvasNavigationSettings = vi.fn();
+    mockUseWorkflowStore.mockImplementation((selector) =>
+      selector(createDefaultState({ canvasNavigationSettings: navSettings, updateCanvasNavigationSettings }))
+    );
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    const onClose = vi.fn();
+    render(<ProjectSetupModal isOpen={true} onClose={onClose} onSave={vi.fn()} mode="settings" initialTab="canvas" />);
+
+    const lowDetail = screen.getByRole("switch", { name: "Low detail when zoomed out" });
+    const below = screen.getByRole("slider", { name: "Low detail below" });
+    expect(lowDetail).toHaveAttribute("aria-checked", "true");
+    expect(below).toHaveValue("25");
+    fireEvent.change(below, { target: { value: "40" } });
+    fireEvent.click(screen.getByRole("switch", { name: "Performance overlay" }));
+    // Nothing applies before Save
+    expect(getLowDetailSettings().zoom).toBe(0.25);
+    expect(getPerfOverlayVisible()).toBe(false);
+
+    fireEvent.click(screen.getByText("Save"));
+    expect(getLowDetailSettings()).toEqual({ enabled: true, zoom: 0.4 });
+    expect(getPerfOverlayVisible()).toBe(true);
+    expect(onClose).toHaveBeenCalled();
+    setPerfOverlayVisible(false);
+  });
+
+  it("greys the zoom out while low detail is off", () => {
+    mockUseWorkflowStore.mockImplementation((selector) =>
+      selector(createDefaultState({ canvasNavigationSettings: navSettings, updateCanvasNavigationSettings: vi.fn() }))
+    );
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    render(<ProjectSetupModal isOpen={true} onClose={vi.fn()} onSave={vi.fn()} mode="settings" initialTab="canvas" />);
+    fireEvent.click(screen.getByRole("switch", { name: "Low detail when zoomed out" }));
+    expect(screen.getByRole("slider", { name: "Low detail below" })).toBeDisabled();
+  });
+});

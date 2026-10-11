@@ -1,8 +1,7 @@
 "use client";
 
 /**
- * Performance overlay (exp/zoomed-out-low-detail, for trying out): frame
- * rate now, frame rate over the last 10 seconds, frame-time percentiles,
+ * Performance overlay: frame rate now, frame rate over the last 10 seconds, frame-time percentiles,
  * dropped frames and long frames, and the same figures for the last pan or
  * drag, so a change can be judged by what it does on screen.
  *
@@ -64,7 +63,7 @@ function usePerfOverlayVisible(): boolean {
   return useSyncExternalStore(subscribe, () => visible, () => false);
 }
 
-interface Summary {
+export interface FrameSummary {
   fps: number;
   p50: number;
   p95: number;
@@ -80,8 +79,8 @@ function percentile(sorted: Float64Array, p: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p))];
 }
 
-/** Frame figures for the frames ending in [from, to]. */
-function summarize(times: Float64Array, gaps: Float64Array, count: number, head: number, from: number, to: number, vsync: number): Summary | null {
+/** Frame figures for the frames ending in [from, to], read from the ring buffers. */
+function summarize(times: Float64Array, gaps: Float64Array, count: number, head: number, from: number, to: number, vsync: number): FrameSummary | null {
   const picked: number[] = [];
   const ends: number[] = [];
   for (let i = 0; i < count; i++) {
@@ -92,6 +91,15 @@ function summarize(times: Float64Array, gaps: Float64Array, count: number, head:
     picked.push(gaps[index]);
     ends.push(t);
   }
+  return summarizeFrames(picked, ends, vsync);
+}
+
+/**
+ * Frame figures for frames given newest first: each frame's gap since the
+ * one before (ms) and the time it ended. A gap spanning n display intervals
+ * dropped n - 1 frames.
+ */
+export function summarizeFrames(picked: number[], ends: number[], vsync: number): FrameSummary | null {
   if (picked.length < 2) return null;
   const sorted = Float64Array.from(picked).sort();
   const span = ends[0] - ends[ends.length - 1] + picked[picked.length - 1];
@@ -142,7 +150,7 @@ function Panel() {
     let vsync = 1000 / 60;
     // Gestures: spans while <html> carries canvas-interacting
     const spans: { start: number; end: number | null; drag: boolean }[] = [];
-    let lastGesture: { kind: string; ms: number; summary: Summary | null } | null = null;
+    let lastGesture: { kind: string; ms: number; summary: FrameSummary | null } | null = null;
     const longFrames: { t: number; ms: number }[] = [];
 
     resetRef.current = () => {

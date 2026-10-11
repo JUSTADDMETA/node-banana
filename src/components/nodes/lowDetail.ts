@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Low detail when zoomed out (exp/zoomed-out-low-detail, for trying out).
+ * Low detail when zoomed out.
  *
  * Below the low-detail zoom (25% unless changed) every node draws as a card
  * with its image as a thumbnail (NodeLowDetail), the floating headers are
@@ -13,11 +13,10 @@
  * WorkflowCanvas feeds the zoomed-out state from its one store subscription
  * and nodes read it here, so a pan frame runs no per-node selector.
  *
- * On by default. Turned off (and back on) for comparison with
- * localStorage "node-banana-low-detail" = "off", or at runtime from the
- * console: __bananaLowDetail(false). The zoom it starts below is
- * __bananaLowDetailZoom(0.3) (kept in localStorage
- * "node-banana-low-detail-zoom"). Both are in Settings › Canvas.
+ * On by default; both the switch and the zoom are in Settings › Canvas,
+ * kept in localStorage ("node-banana-low-detail", "node-banana-low-detail-zoom").
+ * For comparing from the console: __bananaLowDetail(false),
+ * __bananaLowDetailZoom(0.3).
  */
 import { useSyncExternalStore } from "react";
 
