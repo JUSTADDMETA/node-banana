@@ -41,6 +41,7 @@ import { shortenHomePath } from "@/components/assets/projectsFormat";
 import { APP_VERSION } from "@/lib/appVersion";
 import { cn } from "@/components/nodes/ui/cn";
 import { getLowDetailSettings, setLowDetailEnabled, setLowDetailZoom } from "@/components/nodes/lowDetail";
+import { getPerfOverlayVisible, setPerfOverlayVisible } from "@/components/PerfOverlay";
 import { ComfyMark } from "@/components/icons/ComfyMark";
 
 import { DEFAULT_LLM_MODEL, LLM_PROVIDER_OPTIONS, defaultLLMModel, llmModelLabel, llmModelOptions } from "@/lib/llm/catalog";
@@ -269,6 +270,7 @@ export function ProjectSetupModal({
   // Canvas tab state
   const [localCanvasSettings, setLocalCanvasSettings] = useState<CanvasNavigationSettings>(canvasNavigationSettings);
   const [localLowDetail, setLocalLowDetail] = useState(getLowDetailSettings);
+  const [localPerfOverlay, setLocalPerfOverlay] = useState(getPerfOverlayVisible);
 
   // Connection appearance draft (Canvas tab); applied on Save
   const [localEdgeStyle, setLocalEdgeStyle] = useState<EdgeStyle>(edgeStyle);
@@ -329,6 +331,7 @@ export function ProjectSetupModal({
       // Sync canvas settings
       setLocalCanvasSettings(canvasNavigationSettings);
       setLocalLowDetail(getLowDetailSettings());
+      setLocalPerfOverlay(getPerfOverlayVisible());
       setLocalEdgeStyle(edgeStyle);
       setLocalEdgeAppearance(edgeAppearance);
       setEdgeDefaultSaved(false);
@@ -559,6 +562,7 @@ export function ProjectSetupModal({
     updateCanvasNavigationSettings(localCanvasSettings);
     setLowDetailEnabled(localLowDetail.enabled);
     setLowDetailZoom(localLowDetail.zoom);
+    setPerfOverlayVisible(localPerfOverlay);
     onClose();
   };
 
@@ -1161,6 +1165,13 @@ export function ProjectSetupModal({
                 readout={`${Math.round(localLowDetail.zoom * 100)}%`}
                 disabled={!localLowDetail.enabled}
               />
+            </DialogRow>
+            <DialogRow
+              title="Performance overlay"
+              description="Frame rate, frame times and dropped frames, live and for the last pan or drag"
+              className="py-[18px]"
+            >
+              <Switch label="Performance overlay" checked={localPerfOverlay} onChange={setLocalPerfOverlay} />
             </DialogRow>
           </div>
         )}

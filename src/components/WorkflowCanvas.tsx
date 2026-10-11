@@ -99,6 +99,7 @@ import { FloatingNodeHeaders } from "./nodes/FloatingNodeHeaders";
 import { NodePlaceholder, setCanvasMoving, useNodeHasFocus, useNodeMounted } from "./nodes/nodeCulling";
 import { setZoomedOut, useLowDetail, useLowDetailEnabled, useLowDetailZoom } from "./nodes/lowDetail";
 import { NodeLowDetail } from "./nodes/NodeLowDetail";
+import { PerfOverlay } from "./PerfOverlay";
 import { detectAndSplitGrid } from "@/utils/gridSplitter";
 import { logger } from "@/utils/logger";
 import { WelcomeModal } from "./quickstart";
@@ -2737,6 +2738,7 @@ export function WorkflowCanvas() {
       >
         <SharedEdgeGradients />
         <GroupBackgroundsPortal />
+        <PerfOverlay />
         <GroupControlsOverlay />
         <Background
           color="#404040"
