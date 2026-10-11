@@ -6,12 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [2.1.0] - 2026-10-12
 
-The agent grows a full-page chat that runs workflows and looks at their
-results, ComfyUI workflows arrive with their prompts and keep their history,
-video players get sound, the canvas pans and drags more smoothly, and a run
-no longer fails on a provider's passing error.
+Windows is back, the agent grows a full-page chat that runs workflows and
+looks at their results, ComfyUI workflows arrive with their prompts and keep
+their history, video players get sound, the canvas pans and drags more
+smoothly, and a run no longer fails on a provider's passing error.
 
 ### Added
+
+- **Windows** — The x64 installer (Windows 10 or later) returns, after the canvas performance pass was measured on Windows and the window chrome fixed: the caption buttons take clicks again, the window resizes from its top edge, and recovery checkpoints no longer stall input. The installer is unsigned, so SmartScreen warns on first run; updates install silently afterwards.
 
 - **Full-page agent chat** — The floating window expands into a full-page chat (bare `C`): the workflow the agent built shown as a minimap with **Open in canvas**, a workflow built from scratch named and saved, tool calls folded under one line, a Copy button under each reply, and the conversation sidebar.
 - **Runs from the chat** — The agent never starts a run itself. When asked, `run_workflow` sets up a Run card scoped to the whole workflow, a group, the changed nodes or from a node, with a run count and options; a turn that builds runnable nodes ends with the card too. Progress and then the results show in the chat as previews with the full-screen viewer; a result can be attached to the next message.
@@ -24,7 +26,7 @@ no longer fails on a provider's passing error.
 ### Changed
 
 - **Canvas performance** — React Flow 12.11.2; a press that becomes a pan or a node drag captures the pointer; a node drag's moves reach the store when it drops, not every frame; edges stop taking the pointer and the empty canvas is not text-selectable mid-gesture, so a pan stops hit-testing; interaction rules restyle only what they change; nodes leaving the view mid-pan keep their component until the canvas settles; edge store slices, socket connection lookups, node width lookups and portal containers are cached. Measured with the new performance runner (`npm run electron:performance`, `docs/canvas-performance.md`).
-- **Desktop, off the main thread** — Recovery checkpoints and window bounds are written asynchronously and never mid-drag, media chunks are hashed off the UI thread, and thumbnails are decoded off the main thread a few at a time. On Windows the caption buttons take clicks again and the window resizes from its top edge; the Windows build itself stays "coming soon".
+- **Desktop, off the main thread** — Recovery checkpoints and window bounds are written asynchronously and never mid-drag, media chunks are hashed off the UI thread, and thumbnails are decoded off the main thread a few at a time. On Windows the caption buttons take clicks again and the window resizes from its top edge.
 - **Media viewer** — The rail shows the whole prompt.
 - **Website** — Vercel Web Analytics, with a Download event per installer click.
 

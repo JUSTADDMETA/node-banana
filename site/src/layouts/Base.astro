@@ -8,9 +8,9 @@ const site = Astro.site ?? new URL("https://nodebanana.app");
 const pageUrl = new URL(Astro.url.pathname, site).href;
 const ogImage = new URL("/assets/og.png", site).href;
 
-const title = "Node Banana: free, open source generative media canvas for Mac";
+const title = "Node Banana: free, open source generative media canvas for Mac and Windows";
 const description =
-  "Node Banana is a free, open source generative media canvas for Mac, with Windows coming soon. Bring your own API keys and generate images, video, audio and 3D on one node graph, with an agent that builds workflows for you.";
+  "Node Banana is a free, open source generative media canvas for Mac and Windows. Bring your own API keys and generate images, video, audio and 3D on one node graph, with an agent that builds workflows for you.";
 
 // What search engines show beside the result: a free desktop app, its platforms, where it comes from.
 const structuredData = {
@@ -20,9 +20,9 @@ const structuredData = {
   url: site.href,
   description,
   applicationCategory: "MultimediaApplication",
-  operatingSystem: "macOS 13 or later (Apple Silicon); Windows coming soon",
+  operatingSystem: "macOS 13 or later (Apple Silicon), Windows 10 or later (x64)",
   softwareVersion: version,
-  downloadUrl: [new URL("/download/mac", site).href],
+  downloadUrl: [new URL("/download/mac", site).href, new URL("/download/windows", site).href],
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
   license: "https://github.com/shrimbly/node-banana/blob/master/LICENSE",
   screenshot: ogImage,
@@ -33,7 +33,7 @@ const structuredData = {
     "An agent that builds and edits workflows on your Claude Code or Codex subscription",
     "ComfyUI workflows run as nodes",
     "Every generated asset saved and browsable in an asset library",
-    "Automatic updates",
+    "Automatic updates on Mac and Windows",
   ],
   sameAs: ["https://github.com/shrimbly/node-banana", "https://discord.com/invite/89Nr6EKkTf", "https://node-banana-docs.vercel.app/"],
 };
@@ -52,7 +52,7 @@ const structuredData = {
   <meta property="og:site_name" content="Node Banana">
   <meta property="og:locale" content="en_US">
   <meta property="og:title" content="Node Banana">
-  <meta property="og:description" content="Free, open source, bring your own key. A generative media canvas for Mac, with Windows coming soon.">
+  <meta property="og:description" content="Free, open source, bring your own key. A generative media canvas for Mac and Windows.">
   <link rel="canonical" href={pageUrl}>
   <meta property="og:url" content={pageUrl}>
   <meta property="og:image" content={ogImage}>
@@ -61,7 +61,7 @@ const structuredData = {
   <meta property="og:image:alt" content="The Node Banana app window: a car photo feeds Generate Image and Generate Video nodes, above the NODE BANANA wordmark.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Node Banana">
-  <meta name="twitter:description" content="Free, open source, bring your own key. A generative media canvas for Mac, with Windows coming soon.">
+  <meta name="twitter:description" content="Free, open source, bring your own key. A generative media canvas for Mac and Windows.">
   <meta name="twitter:image" content={ogImage}>
   <meta name="twitter:image:alt" content="The Node Banana app window: a car photo feeds Generate Image and Generate Video nodes, above the NODE BANANA wordmark.">
 

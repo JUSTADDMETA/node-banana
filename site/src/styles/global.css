@@ -556,10 +556,6 @@ ul { margin: 0; padding: 0; list-style: none; }
 .menu__item[aria-current="true"] .menu__name::after { content: " ·"; color: var(--ink-3); }
 .menu__name { font-family: var(--font-display); font-size: 13px; line-height: 16px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
 .menu__meta { color: var(--ink-3); }
-.menu__item--soon { cursor: default; color: var(--ink-3); }
-.menu__item--soon:hover { background: none; }
-.btn--soon { cursor: default; opacity: 0.6; }
-.btn--soon:hover { background: var(--card); }
 
 /* ---------- Wordmark ---------------------------------------------------- */
 

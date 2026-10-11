@@ -30,14 +30,13 @@
     };
   }
 
-  /* 2. Platform. Only the label and the target change; every platform stays in the menu.
-     While Windows is "coming soon" it has no download item, so the Mac download is the main button everywhere. */
+  /* 2. Platform. Only the label and the target change; both platforms stay in the menu. */
   var main = document.querySelector("[data-download-main]");
   var label = document.querySelector("[data-platform-label]");
   var items = Array.prototype.slice.call(document.querySelectorAll(".menu__item[data-platform]"));
   var platformHint = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
   var isWindows = /win/i.test(platformHint) || /Windows NT/.test(navigator.userAgent);
-  var current = isWindows && items.some(function (item) { return item.getAttribute("data-platform") === "windows"; }) ? "windows" : "mac";
+  var current = isWindows ? "windows" : "mac";
   items.forEach(function (item) {
     var mine = item.getAttribute("data-platform") === current;
     if (mine) {
