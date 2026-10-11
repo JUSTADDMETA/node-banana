@@ -3,7 +3,8 @@
 /**
  * A node drawn at low detail while the canvas is zoomed out (see
  * lowDetail.ts): a plain card the node's size, a stripe in the node type's
- * minimap colour, the node's image as a thumbnail, and an outline while selected.
+ * minimap colour, the node's image as a thumbnail, an outline while selected,
+ * and a pulsing tint while it runs.
  * It carries the same handle elements as the culling placeholder, built
  * from the handles React Flow last read, so edges stay attached and React
  * Flow sees the same node.
@@ -11,6 +12,7 @@
 import { useStoreApi } from "@xyflow/react";
 import { exactNodeSize } from "./nodeCulling";
 import { useAdaptiveImageSrc } from "@/hooks/useAdaptiveImageSrc";
+import { useWorkflowStore } from "@/store/workflowStore";
 import { miniMapTypeColor } from "@/components/CanvasMinimap";
 
 interface NodeLowDetailProps {
@@ -46,6 +48,10 @@ export function NodeLowDetail({ id, type, width, height, selected, data }: NodeL
   const handles = [...(handleBounds?.source ?? []), ...(handleBounds?.target ?? [])];
   const exact = exactNodeSize(id);
   const image = nodeImage(data);
+  // Running in a run (currentNodeIds), or on its own. Not the full node's
+  // isExecuting, which most nodes set for any run and would light every card.
+  const inRun = useWorkflowStore((state) => state.currentNodeIds?.includes(id) ?? false);
+  const running = inRun || data.status === "loading";
   return (
     <div style={{ position: "relative", width: exact?.width ?? width, height: exact?.height ?? height }}>
       <div
@@ -53,7 +59,7 @@ export function NodeLowDetail({ id, type, width, height, selected, data }: NodeL
           position: "absolute",
           inset: 0,
           background: "#262626",
-          border: selected ? "3px solid #e5e5e5" : "1px solid #404040",
+          border: selected ? "3px solid #e5e5e5" : running ? "4px solid var(--color-running)" : "1px solid #404040",
           borderRadius: 12,
         }}
       />
@@ -69,6 +75,7 @@ export function NodeLowDetail({ id, type, width, height, selected, data }: NodeL
         }}
       />
       {image && <Thumbnail id={id} src={image} />}
+      {running && <div data-running className="node-low-detail-running" style={{ position: "absolute", inset: 0, borderRadius: 12 }} />}
       {handles.map((h) => (
         <div
           key={`${h.type}-${h.id ?? ""}`}

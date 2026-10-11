@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { useLayoutEffect, useState } from "react";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { ReactFlowProvider, useStoreApi, Position } from "@xyflow/react";
 import { NodeLowDetail } from "@/components/nodes/NodeLowDetail";
+import { useWorkflowStore } from "@/store/workflowStore";
 
 vi.mock("@/hooks/useAdaptiveImageSrc", () => ({ useAdaptiveImageSrc: (value: string) => value }));
 
@@ -51,5 +52,27 @@ describe("NodeLowDetail", () => {
     expect(card(false).style.borderWidth).toBe("1px");
     expect(card(true).style.borderWidth).toBe("3px");
     expect(card(true).style.borderColor).toBe("rgb(229, 229, 229)");
+  });
+
+  it("tints the node while it runs, in a run or on its own, and not for another node's run", () => {
+    const tinted = (container: HTMLElement) => !!container.querySelector("[data-running]");
+    try {
+      const idle = renderSeeded();
+      expect(tinted(idle.container)).toBe(false);
+
+      act(() => useWorkflowStore.setState({ isRunning: true, currentNodeIds: ["other"] }));
+      expect(tinted(idle.container)).toBe(false);
+
+      act(() => useWorkflowStore.setState({ currentNodeIds: ["other", "n"] }));
+      expect(tinted(idle.container)).toBe(true);
+      // The selection outline stays; the tint shows the run under it
+      expect(tinted(renderSeeded({ selected: true }).container)).toBe(true);
+
+      act(() => useWorkflowStore.setState({ isRunning: false, currentNodeIds: [] }));
+      expect(tinted(idle.container)).toBe(false);
+      expect(tinted(renderSeeded({ data: { status: "loading" } }).container)).toBe(true);
+    } finally {
+      act(() => useWorkflowStore.setState({ isRunning: false, currentNodeIds: [] }));
+    }
   });
 });
