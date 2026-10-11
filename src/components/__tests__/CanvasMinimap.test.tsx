@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { ReactFlow, ReactFlowProvider, type Node } from "@xyflow/react";
 import {
   CanvasMinimap,
@@ -21,7 +22,7 @@ vi.mock("@xyflow/react", async () => {
   };
 });
 
-function renderNavigator(props: { disabled?: boolean } = {}) {
+function renderNavigator(props: ComponentProps<typeof CanvasMinimap> = {}) {
   return render(
     <ReactFlowProvider>
       <ReactFlow nodes={[]} edges={[]}>
@@ -93,15 +94,20 @@ describe("CanvasMinimap", () => {
     expect(screen.getByLabelText("Zoom level")).toHaveTextContent("100%");
   });
 
-  it("locks and unlocks canvas interaction", () => {
-    renderNavigator();
+  it("asks the canvas to lock and unlock, and shows which it is", () => {
+    const onLockedChange = vi.fn();
+    const { unmount } = renderNavigator({ locked: false, onLockedChange });
+    const lock = screen.getByRole("button", { name: "Lock canvas" });
+    expect(lock).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(lock);
+    expect(onLockedChange).toHaveBeenLastCalledWith(true);
+    unmount();
 
-    fireEvent.click(screen.getByRole("button", { name: "Lock canvas" }));
+    renderNavigator({ locked: true, onLockedChange });
     const unlock = screen.getByRole("button", { name: "Unlock canvas" });
     expect(unlock).toHaveAttribute("aria-pressed", "true");
-
     fireEvent.click(unlock);
-    expect(screen.getByRole("button", { name: "Lock canvas" })).toHaveAttribute("aria-pressed", "false");
+    expect(onLockedChange).toHaveBeenLastCalledWith(false);
   });
 
   it("is inert while the tutorial locks features", () => {
