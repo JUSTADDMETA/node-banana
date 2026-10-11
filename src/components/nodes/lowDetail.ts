@@ -17,7 +17,7 @@
  * localStorage "node-banana-low-detail" = "off", or at runtime from the
  * console: __bananaLowDetail(false). The zoom it starts below is
  * __bananaLowDetailZoom(0.3) (kept in localStorage
- * "node-banana-low-detail-zoom").
+ * "node-banana-low-detail-zoom"). Both are in Settings › Canvas.
  */
 import { useSyncExternalStore } from "react";
 
@@ -97,6 +97,11 @@ function subscribe(listener: () => void) {
 /** True while the canvas is zoomed out past the low-detail zoom, with low detail on. */
 export function useLowDetail(): boolean {
   return useSyncExternalStore(subscribe, () => enabled && zoomedOut, () => false);
+}
+
+/** Whether low detail is switched on, and the zoom it starts below, as they stand. */
+export function getLowDetailSettings(): { enabled: boolean; zoom: number } {
+  return { enabled, zoom: threshold };
 }
 
 /** The zoom low detail starts below. */

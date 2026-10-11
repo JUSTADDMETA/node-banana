@@ -40,6 +40,7 @@ import type { ProjectFolderName } from "@/lib/assets/types";
 import { shortenHomePath } from "@/components/assets/projectsFormat";
 import { APP_VERSION } from "@/lib/appVersion";
 import { cn } from "@/components/nodes/ui/cn";
+import { getLowDetailSettings, setLowDetailEnabled, setLowDetailZoom } from "@/components/nodes/lowDetail";
 import { ComfyMark } from "@/components/icons/ComfyMark";
 
 import { DEFAULT_LLM_MODEL, LLM_PROVIDER_OPTIONS, defaultLLMModel, llmModelLabel, llmModelOptions } from "@/lib/llm/catalog";
@@ -267,6 +268,7 @@ export function ProjectSetupModal({
 
   // Canvas tab state
   const [localCanvasSettings, setLocalCanvasSettings] = useState<CanvasNavigationSettings>(canvasNavigationSettings);
+  const [localLowDetail, setLocalLowDetail] = useState(getLowDetailSettings);
 
   // Connection appearance draft (Canvas tab); applied on Save
   const [localEdgeStyle, setLocalEdgeStyle] = useState<EdgeStyle>(edgeStyle);
@@ -326,6 +328,7 @@ export function ProjectSetupModal({
 
       // Sync canvas settings
       setLocalCanvasSettings(canvasNavigationSettings);
+      setLocalLowDetail(getLowDetailSettings());
       setLocalEdgeStyle(edgeStyle);
       setLocalEdgeAppearance(edgeAppearance);
       setEdgeDefaultSaved(false);
@@ -554,6 +557,8 @@ export function ProjectSetupModal({
 
   const handleSaveCanvas = () => {
     updateCanvasNavigationSettings(localCanvasSettings);
+    setLowDetailEnabled(localLowDetail.enabled);
+    setLowDetailZoom(localLowDetail.zoom);
     onClose();
   };
 
@@ -1125,6 +1130,36 @@ export function ProjectSetupModal({
                 options={SELECTION_MODES}
                 value={localCanvasSettings.selectionMode}
                 onChange={(selectionMode) => setLocalCanvasSettings({ ...localCanvasSettings, selectionMode })}
+              />
+            </DialogRow>
+
+            {/* Low detail when zoomed out */}
+            <DialogRow
+              title="Low detail when zoomed out"
+              description="Nodes show as cards with thumbnails, without headers or controls, so large workflows pan and drag smoothly"
+              className="py-[18px]"
+            >
+              <Switch
+                label="Low detail when zoomed out"
+                checked={localLowDetail.enabled}
+                onChange={(enabled) => setLocalLowDetail({ ...localLowDetail, enabled })}
+              />
+            </DialogRow>
+            <DialogRow
+              title="Low detail below"
+              description="The zoom level where nodes switch to cards"
+              className="py-[18px]"
+            >
+              <Slider
+                className="w-[232px] shrink-0"
+                min={10}
+                max={60}
+                step={5}
+                value={Math.round(localLowDetail.zoom * 100)}
+                onChange={(value) => setLocalLowDetail({ ...localLowDetail, zoom: value / 100 })}
+                label="Low detail below"
+                readout={`${Math.round(localLowDetail.zoom * 100)}%`}
+                disabled={!localLowDetail.enabled}
               />
             </DialogRow>
           </div>
