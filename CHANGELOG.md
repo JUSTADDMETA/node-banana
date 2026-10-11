@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Comet keeps moving** — The running comet on a noodle no longer freezes while the canvas pans or a node drags.
 - **Spinners after a failed run** — When one node failed, the nodes running beside it kept their running animation: the run had cut them off, and nothing put them back. A run that ends early, by a failure or by Stop, now settles every node it started.
 - **Passing provider errors are retried** — A 502, 503 or 504, a dropped connection, or Gemini's "model overloaded" no longer fails a run on the first try. The submit of a generation (Comfy Router, Kie, fal, Replicate, WaveSpeed, OpenAI, Gemini) and the LLM calls are asked again, up to three times with a short backoff, honouring Retry-After. A Comfy Router submit carries the same idempotency key on every try, so a retry can never queue a run twice. Rate limits and refusals are reported as before.
 - **Comfy app history** — A node made from a ComfyUI workflow kept only its last result. It now has the same carousel as the image and video nodes: every run is kept, and the arrows under the picture go back through them, restoring each output the run produced.

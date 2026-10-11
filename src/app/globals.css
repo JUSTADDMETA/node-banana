@@ -631,15 +631,10 @@ html {
   82%, 100% { stroke-dashoffset: -112; }
 }
 
-/* Hold the comet where it is while the canvas pans or a node drags */
-.canvas-interacting .edge-running-tail,
-.canvas-interacting .edge-running-head,
-.canvas-native-navigation-active .edge-running-tail,
-.canvas-native-navigation-active .edge-running-head,
-.canvas-wheel-navigation-active .edge-running-tail,
-.canvas-wheel-navigation-active .edge-running-head {
-  animation-play-state: paused;
-}
+/* The comet keeps travelling while the canvas pans or a node drags: a run
+   in progress should read as one from any view. (It used to hold still
+   during interaction as a repaint saving; the node's low-detail mark still
+   does.) */
 
 /* Reduced motion: nothing travels; the noodle holds a static highlight, the
    head drawn along its whole length over a faint glow from the tail */
