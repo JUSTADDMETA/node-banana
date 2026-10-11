@@ -565,12 +565,11 @@ describe("EditableEdge appearance settings", () => {
 describe("running noodle styles", () => {
   const css = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
 
-  it("pauses the comet while the canvas pans or a node drags", () => {
+  it("keeps the comet travelling while the canvas pans or a node drags", () => {
     for (const cls of ["canvas-interacting", "canvas-native-navigation-active", "canvas-wheel-navigation-active"]) {
-      expect(css).toContain(`.${cls} .edge-running-tail`);
-      expect(css).toContain(`.${cls} .edge-running-head`);
+      expect(css).not.toContain(`.${cls} .edge-running-tail`);
+      expect(css).not.toContain(`.${cls} .edge-running-head`);
     }
-    expect(css).toMatch(/\.canvas-wheel-navigation-active \.edge-running-head \{\s*animation-play-state: paused;/);
   });
 
   it("holds a static highlight under reduced motion", () => {
