@@ -97,8 +97,12 @@ export const selectMountedArea = (s: ReactFlowState): string => mountedArea(s.tr
 let focusedNodeId: string | null = null;
 const focusListeners = new Set<() => void>();
 
+// The node wrapper itself is left out: React Flow makes it focusable, so every
+// press on a node focuses it, and it holds no edit. Counting it would swap a
+// low-detail card for the full node under the pointer, losing the click.
 function nodeIdOf(target: EventTarget | null): string | null {
-  return target instanceof Element ? target.closest(".react-flow__node")?.getAttribute("data-id") ?? null : null;
+  if (!(target instanceof Element) || target.classList.contains("react-flow__node")) return null;
+  return target.closest(".react-flow__node")?.getAttribute("data-id") ?? null;
 }
 
 function setFocusedNode(id: string | null) {
@@ -126,11 +130,20 @@ function subscribeFocus(listener: () => void) {
   };
 }
 
-/** True while the node contains the focused element. */
+/** True while an element inside the node (not the node itself) has focus. */
 export function useNodeHasFocus(id: string): boolean {
   return useSyncExternalStore(
     subscribeFocus,
     () => focusedNodeId === id,
+    () => false
+  );
+}
+
+/** While `active`, true when an element inside any node has focus. */
+export function useAnyNodeHasFocus(active: boolean): boolean {
+  return useSyncExternalStore(
+    subscribeFocus,
+    () => active && focusedNodeId !== null,
     () => false
   );
 }
