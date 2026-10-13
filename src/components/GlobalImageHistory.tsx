@@ -48,7 +48,7 @@ export function setHistoryDragData(
  */
 export function describeProducer(model: string): string {
   if (model === "nano-banana-pro") return "Pro";
-  if (model === "nano-banana" || model === "nano-banana-2" || model === "nano-banana-2-lite") {
+  if (model === "nano-banana" || model === "nano-banana-2" || model === "nano-banana-2.1" || model === "nano-banana-2-lite") {
     return "Standard";
   }
   return model;
@@ -60,6 +60,7 @@ export function producerName(model: string): string {
     case "nano-banana-pro": return "Nano Banana Pro";
     case "nano-banana": return "Nano Banana";
     case "nano-banana-2": return "Nano Banana 2";
+    case "nano-banana-2.1": return "Nano Banana 2.1";
     case "nano-banana-2-lite": return "Nano Banana 2 Lite";
     default: return model;
   }

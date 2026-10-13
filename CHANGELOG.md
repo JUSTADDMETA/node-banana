@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Nano Banana 2.1 on Gemini** — Google's Nano Banana 2.1 joins the Generate Image node's Gemini models, at 1K, 2K or 4K, with Nano Banana 2's wide 1:4 to 8:1 ratios and its Google and Image Search grounding, from $0.034 an image. The node, the split-grid editor, the Gemini request and the agent now read each Gemini model's settings from one table.
 - **Comfy Router models brought up to date** — Nano Banana 2.1; Pika's own routes for Nano Banana Pro, Nano Banana 2, GPT Image 2, Pika 2.5 (text and image to video) and Seedance 2.0; and Higgsfield's Genjutsu Motion Transfer, which recasts a video with up to eight reference images. Imagen 3, Imagen 3 Fast, Veo 3 and Veo 3 Fast, which the Router no longer serves, are gone.
 
 ### Fixed
