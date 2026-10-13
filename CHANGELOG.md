@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Comfy Router models brought up to date** — Nano Banana 2.1; Pika's own routes for Nano Banana Pro, Nano Banana 2, GPT Image 2, Pika 2.5 (text and image to video) and Seedance 2.0; and Higgsfield's Genjutsu Motion Transfer, which recasts a video with up to eight reference images. Imagen 3, Imagen 3 Fast, Veo 3 and Veo 3 Fast, which the Router no longer serves, are gone.
+
 ### Fixed
 
 - **"Keys could not be saved securely: Invalid credential field"** — On the desktop, entering the Comfy key under Settings → Providers refused the whole save, and with it any other key saved at the same time, because the secure store did not know that provider's name. It does now.
