@@ -5400,6 +5400,40 @@
      ]
     },
     {
+     "id": "vertexai/gemini-nano-banana-2.1",
+     "name": "Nano Banana 2.1",
+     "description": "Google's update to Nano Banana 2, with better realism, prompt adherence and text rendering at Flash speed and output up to 4K.",
+     "capabilities": [
+      "text-to-image",
+      "image-to-image"
+     ],
+     "paramOverrides": {
+      "aspectRatio": {
+       "enum": [
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "4:5",
+        "5:4",
+        "9:16",
+        "16:9",
+        "21:9"
+       ],
+       "default": "1:1"
+      },
+      "imageSize": {
+       "enum": [
+        "1K",
+        "2K",
+        "4K"
+       ],
+       "default": "1K"
+      }
+     }
+    },
+    {
      "id": "vertexai/gemini-3.1-flash-lite-image",
      "name": "Gemini 3.1 Flash-Lite Image",
      "description": "The low-cost Flash-Lite tier of Gemini 3.1 image generation and editing.",
@@ -5464,7 +5498,7 @@
      }
     }
    ],
-   "notes": "Same Vertex generateContent wire format as the hand-verified geminiImage family. aspectRatio and imageSize are free strings in the schema (no enum): the UI should offer 1:1 2:3 3:2 3:4 4:3 4:5 5:4 9:16 16:9 21:9 and 1K/2K/4K (3-pro-image, 3.1-flash-image); 2.5-flash-image is 1K only so imageSize is excluded there; 3.1-flash-lite-image sizes unverified. Inline images: raw base64 + inlineData.mimeType, which must be in the GeminiMimeType enum (png/jpeg/webp/heic/heif OK; gif is not). Image count max (14 / 3) comes from Google's docs, not the schema. uploadImagesToStorage is left unset so images come back as inlineData base64; fileData.fileUri path is only a fallback. A response may contain a text part before the image part, hence parts[*]. If thinking output were ever returned with includeThoughts, a thought image could match first; we never set thinkingConfig."
+   "notes": "Same Vertex generateContent wire format as the hand-verified geminiImage family. aspectRatio and imageSize are free strings in the schema (no enum): the UI should offer 1:1 2:3 3:2 3:4 4:3 4:5 5:4 9:16 16:9 21:9 and 1K/2K/4K (3-pro-image, 3.1-flash-image, nano-banana-2.1); 2.5-flash-image is 1K only so imageSize is excluded there; 3.1-flash-lite-image sizes unverified. Inline images: raw base64 + inlineData.mimeType, which must be in the GeminiMimeType enum (png/jpeg/webp/heic/heif OK; gif is not). Image count max (14 / 3) comes from Google's docs, not the schema. uploadImagesToStorage is left unset so images come back as inlineData base64; fileData.fileUri path is only a fallback. A response may contain a text part before the image part, hence parts[*]. If thinking output were ever returned with includeThoughts, a thought image could match first; we never set thinkingConfig."
   },
   {
    "family": "veo",
