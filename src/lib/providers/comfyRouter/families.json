@@ -7720,6 +7720,90 @@
     }
    ],
    "notes": "Pika's text-to-video route for Seedance 2.0: a flat body, unlike byteplus/dreamina-seedance-2-0-260128 (content[] with frames), which Pika also serves through ?model_provider=pika. duration and resolution are REQUIRED with no default: 5 and 720p. duration is oneOf 4-15 or \"auto\"; the range is offered, auto is not. watermark pinned false. No image, video or audio reference on this route."
+  },
+  {
+   "family": "higgsfieldGenjutsu",
+   "provider": "higgsfield",
+   "output": "video",
+   "inputs": [
+    {
+     "name": "prompt",
+     "type": "text",
+     "required": false,
+     "label": "Prompt"
+    },
+    {
+     "name": "video",
+     "type": "video",
+     "required": true,
+     "label": "Source video",
+     "max": 1,
+     "encoding": "url"
+    },
+    {
+     "name": "image",
+     "type": "image",
+     "required": true,
+     "label": "Reference images",
+     "max": 8,
+     "encoding": "url"
+    }
+   ],
+   "params": {
+    "at": "",
+    "exclude": [
+     "prompt",
+     "video_url",
+     "image_urls"
+    ],
+    "extra": []
+   },
+   "paramOverrides": {
+    "resolution": {
+     "enum": [
+      "480p",
+      "720p",
+      "1080p"
+     ],
+     "default": "720p"
+    }
+   },
+   "body": {
+    "prompt": "{{prompt}}",
+    "video_url": "{{input.video[0]}}",
+    "image_urls": "{{input.image}}",
+    "$params": true
+   },
+   "result": {
+    "media": [
+     "video.url"
+    ],
+    "errors": [
+     {
+      "path": "error",
+      "message": "Higgsfield: {value}"
+     },
+     {
+      "path": "status",
+      "notIn": [
+       "completed"
+      ],
+      "message": "Higgsfield: generation {value}"
+     }
+    ]
+   },
+   "models": [
+    {
+     "id": "higgsfield/higgsfield-genjutsu-motion-transfer-v1.0",
+     "name": "Genjutsu Motion Transfer",
+     "description": "Higgsfield's motion transfer: recasts a source video with the people, place and style of up to 8 reference images, keeping its motion, camera and timing.",
+     "capabilities": [
+      "video-to-video"
+     ],
+     "uploads": true
+    }
+   ],
+   "notes": "Source video and 1-8 reference images, both by URL (uploaded to Comfy storage first). The video must be at least 4 s; a longer one is trimmed to 30 s. resolution is a free string in the schema; its description lists 480p, 720p and 1080p (default 720p). The prompt is optional guidance. Same Higgsfield status envelope as higgsfieldKling3: completed with video.url, or nsfw/failed/canceled. The public docs copy of this schema 404s; the Router's own GET /v2/models/{id}/openapi.json answers with the key."
   }
  ],
  "excluded": {

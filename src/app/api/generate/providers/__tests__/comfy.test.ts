@@ -179,6 +179,30 @@ describe("Router request bodies", () => {
     expect(body).toEqual({ prompt: "a photo of a cat", watermark: false, duration: 4, resolution: "480p" });
   });
 
+  it("Genjutsu: the source video and every reference image by URL", async () => {
+    const original = global.fetch;
+    global.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith("/customers/storage")) {
+        const { content_type: type } = JSON.parse(String(init?.body)) as { content_type: string };
+        return new Response(JSON.stringify({ upload_url: "https://up/genjutsu", download_url: `https://cdn.comfy/${type.replace("/", ".")}` }));
+      }
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const body = await bodyFor("higgsfield/higgsfield-genjutsu-motion-transfer-v1.0", {
+        images: ["data:image/webp;base64,UklGRg==", "data:image/gif;base64,R0lGODlh"],
+        dynamicInputs: { video: "data:video/mp4;base64,AAAAIGZ0eXA=" },
+      });
+      expect(body).toEqual({
+        prompt: "a photo of a cat",
+        video_url: "https://cdn.comfy/video.mp4",
+        image_urls: ["https://cdn.comfy/image.webp", "https://cdn.comfy/image.gif"],
+      });
+    } finally {
+      global.fetch = original;
+    }
+  });
+
   it("downloads an http input for a partner that takes bytes", async () => {
     const original = global.fetch;
     global.fetch = vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/jpeg" } })) as unknown as typeof fetch;
@@ -257,6 +281,14 @@ describe("readRouterResult", () => {
     expect(() =>
       readRouterResult(binding("pika/pika-2.5-text-to-video"), { id: "j", status: "failed", error: { code: "content_moderation", message: "prompt flagged" } })
     ).toThrow("Pika: prompt flagged");
+  });
+
+  it("Genjutsu: video.url, or the terminal status Higgsfield ended on", () => {
+    const genjutsu = binding("higgsfield/higgsfield-genjutsu-motion-transfer-v1.0");
+    expect(readRouterResult(genjutsu, { status: "completed", request_id: "r", video: { url: "https://example.com/g.mp4" } }).source).toBe(
+      "https://example.com/g.mp4"
+    );
+    expect(() => readRouterResult(genjutsu, { status: "nsfw", request_id: "r" })).toThrow("Higgsfield: generation nsfw");
   });
 
   it("Wan: output.video_url, and the failure message", () => {
