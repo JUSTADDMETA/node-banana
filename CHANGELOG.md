@@ -4,6 +4,12 @@ All notable changes to Node Banana will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **"Keys could not be saved securely: Invalid credential field"** — On the desktop, entering the Comfy key under Settings → Providers refused the whole save, and with it any other key saved at the same time, because the secure store did not know that provider's name. It does now.
+
 ## [2.1.0] - 2026-10-12
 
 Windows is back, the agent grows a full-page chat that runs workflows and
