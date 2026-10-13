@@ -5663,7 +5663,7 @@
      }
     }
    ],
-   "notes": "Matches the hand-verified veo family. The three Veo 3.1 ids share one schema; per-model limits are NOT in the schema: durationSeconds is a free number (Veo 3.1 accepts 4, 6, 8), resolution enum lists 4k but only veo-3.1-generate-001 is known to do 4k (fast/lite: 720p/1080p). Image mimeType enum is image/jpeg|image/png only: a webp/gif first or last frame will be rejected unless the interpreter transcodes. enhancePrompt excluded (Veo 3 does not allow disabling it), fps excluded (fixed 24), task excluded (Vertex infers it). Not exposed: referenceImages (up to 3 asset refs on 3.1, mutually exclusive with a first frame), video extend/edit via instances[].video and mask, and instances[].cameraControl (lives inside the instances array, which params.at cannot address). gcsUri is normally a signed https URL; it is a gs:// URI only on BYOK or custom storageUri, which the app never sets - the interpreter should still reject a gs:// value as 'no output'. Only veo-2.0 uses the legacy route; its schema lacks lastFrame/resolution/generateAudio and allows personGeneration ALLOW/BLOCK."
+   "notes": "Matches the hand-verified veo family. The three Veo 3.1 ids share one schema; per-model limits are NOT in the schema: durationSeconds is a free number (Veo 3.1 accepts 4, 6, 8), resolution enum lists 4k but only veo-3.1-generate-001 is known to do 4k (fast/lite: 720p/1080p). Image mimeType enum is image/jpeg|image/png only: a webp/gif first or last frame will be rejected unless the interpreter transcodes. enhancePrompt excluded (Veo 3 does not allow disabling it), fps excluded (fixed 24), task excluded (Vertex infers it). Not exposed: referenceImages (up to 3 asset refs on 3.1, mutually exclusive with a first frame), video extend/edit via instances[].video and mask, and instances[].cameraControl (lives inside the instances array, which params.at cannot address). gcsUri is normally a signed https URL; it is a gs:// URI only on BYOK or custom storageUri, which the app never sets - the interpreter should still reject a gs:// value as 'no output'."
   },
   {
    "family": "grokImage",
@@ -7824,6 +7824,7 @@
   "byteplus/seed-2-0-lite-260228": "text model; out of scope",
   "byteplus/seed-2-0-mini-260215": "text model; out of scope",
   "byteplus/seed-2-0-pro-260328": "text model; out of scope",
+  "fal/crystal-upscaler": "Comfy Router refuses POST /v2/models/fal/crystal-upscaler with 403 not_enabled, and the schema states it does not run this model today (no result classification). The binding is simple once it is enabled: one image by URL (`image_url`), output at `images[0].url`.",
   "fal/fal-gpt-image-2": "Router has not authored this alias's input or output schema (x-comfy-input-schema-authored: false); it forwards fal's own native request body and returns an undescribed */* result, so there is no source of truth to bind. Use the canonical openai/gpt-image-2 instead (Router documents a `?model_provider=` alternate-provider leg for some models; unverified for this one).",
   "fal/fal-gpt-image-2.5-flare": "Router has not authored this alias's input or output schema (x-comfy-input-schema-authored: false); it forwards fal's own native request body and returns an undescribed */* result, so there is no source of truth to bind. Use the canonical openai/gpt-image-2.5-flare instead (Router documents a `?model_provider=` alternate-provider leg for some models; unverified for this one).",
   "fal/fal-gpt-image-2.5-sunburst": "Router has not authored this alias's input or output schema (x-comfy-input-schema-authored: false); it forwards fal's own native request body and returns an undescribed */* result, so there is no source of truth to bind. Use the canonical openai/gpt-image-2.5-sunburst instead (Router documents a `?model_provider=` alternate-provider leg for some models; unverified for this one).",
@@ -7876,7 +7877,6 @@
   "tencent/hunyuan-3d-smart-topology": "Needs an OBJ or GLB 3D file URL as input; the app has no 3D input handle.",
   "tencent/hunyuan-3d-texture-edit": "Needs an FBX 3D file URL as input; the app has no 3D input handle.",
   "tencent/hunyuan-3d-uv": "Needs a 3D file URL as input; the app has no 3D input handle.",
-  "veo/veo-2.0-generate-001": "The schema states Router refuses this id before dispatch (no return-mode classification for the legacy /proxy/veo/generate operation) until enablement lands.",
   "vertexai/gemini-2.5-flash": "text model; out of scope",
   "vertexai/gemini-2.5-pro": "text model; out of scope",
   "vertexai/gemini-3.1-flash-lite": "text model; out of scope",
