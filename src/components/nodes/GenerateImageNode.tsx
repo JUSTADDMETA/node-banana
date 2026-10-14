@@ -6,7 +6,7 @@ import { NodeShell } from "./NodeShell";
 import { ModelParameters } from "./ModelParameters";
 import { useWorkflowStore, saveNanoBananaDefaults, useProviderApiKeys } from "@/store/workflowStore";
 import { deduplicatedFetch } from "@/utils/deduplicatedFetch";
-import { NanoBananaNodeData, AspectRatio, Resolution, MODEL_DISPLAY_NAMES, ProviderType, SelectedModel, ModelInputDef, GEMINI_IMAGE_MODELS, ModelType } from "@/types";
+import { NanoBananaNodeData, AspectRatio, Resolution, MODEL_DISPLAY_NAMES, ProviderType, SelectedModel, ModelInputDef, GEMINI_IMAGE_MODELS, ModelType, geminiImageOptions } from "@/types";
 import { ProviderModel, ModelCapability } from "@/lib/providers/types";
 import { ModelSearchDialog } from "@/components/modals/ModelSearchDialog";
 import { modelSelectionData } from "@/store/utils/modelSelection";
@@ -42,16 +42,6 @@ const INPUT_SOCKETS: SocketSpec[] = [
   { id: "text", type: "text", label: "Prompt", dataTutorial: "generate-text-input-handle" },
 ];
 const OUTPUT_SOCKETS: SocketSpec[] = [{ id: "image", type: "image", label: "Image" }];
-
-// Base 10 aspect ratios (all Gemini image models)
-const BASE_ASPECT_RATIOS: AspectRatio[] = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
-
-// Extended 14 aspect ratios (Nano Banana 2 adds extreme ratios)
-const EXTENDED_ASPECT_RATIOS: AspectRatio[] = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
-
-// Resolutions per model (nano-banana-pro: 1K-4K, nano-banana-2: 512-4K)
-const RESOLUTIONS_PRO: Resolution[] = ["1K", "2K", "4K"];
-const RESOLUTIONS_NB2: Resolution[] = ["512", "1K", "2K", "4K"];
 
 // Image generation capabilities
 const IMAGE_CAPABILITIES: ModelCapability[] = ["text-to-image", "image-to-image"];
@@ -335,9 +325,8 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
 
   // Use selectedModel.modelId for Gemini models, fallback to legacy model field
   const currentModelId = isGeminiProvider ? (nodeData.selectedModel?.modelId || nodeData.model) : null;
-  const supportsResolution = currentModelId === "nano-banana-pro" || currentModelId === "nano-banana-2";
-  const aspectRatios = currentModelId === "nano-banana-2" ? EXTENDED_ASPECT_RATIOS : BASE_ASPECT_RATIOS;
-  const resolutions = currentModelId === "nano-banana-2" ? RESOLUTIONS_NB2 : RESOLUTIONS_PRO;
+  const modelOptions = geminiImageOptions(currentModelId);
+  const supportsResolution = modelOptions.resolutions.length > 0;
   const hasCarouselImages = (nodeData.imageHistory || []).length > 1;
 
   // Show toast when generation fails
@@ -392,21 +381,21 @@ export function GenerateImageNode({ id, data, selected }: NodeProps<NanoBananaNo
           <SelectField
             label="Aspect ratio"
             value={nodeData.aspectRatio || "1:1"}
-            options={aspectRatios}
+            options={modelOptions.aspectRatios}
             onChange={handleAspectRatioChange}
           />
           {supportsResolution && (
             <SelectField
               label="Resolution"
               value={nodeData.resolution || "2K"}
-              options={resolutions}
+              options={modelOptions.resolutions}
               onChange={handleResolutionChange}
             />
           )}
-          {(currentModelId === "nano-banana-pro" || currentModelId === "nano-banana-2") && (
+          {modelOptions.googleSearch && (
             <CheckboxField label="Google Search" checked={nodeData.useGoogleSearch || false} onChange={handleGoogleSearchToggle} />
           )}
-          {currentModelId === "nano-banana-2" && (
+          {modelOptions.imageSearch && (
             <CheckboxField label="Image Search" checked={nodeData.useImageSearch || false} onChange={handleImageSearchToggle} />
           )}
         </>

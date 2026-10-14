@@ -151,6 +151,58 @@ describe("Router request bodies", () => {
     expect(body).toEqual({ prompt: "a photo of a cat", negative_prompt: "blurry", watermark_info: { enabled: false } });
   });
 
+  it("Pika: a flat body of prompt and settings", async () => {
+    const body = await bodyFor("pika/pika-nano-banana-2", { parameters: { aspect_ratio: "16:9", resolution: "512" } }, ["aspect_ratio", "resolution"]);
+    expect(body).toEqual({ prompt: "a photo of a cat", aspect_ratio: "16:9", resolution: "512" });
+  });
+
+  it("Pika image to video: the source image by URL, negative prompt from its handle", async () => {
+    const original = global.fetch;
+    global.fetch = vi.fn(async (url: string) => {
+      if (String(url).endsWith("/customers/storage")) return new Response(JSON.stringify({ upload_url: "https://up/pika", download_url: "https://cdn.comfy/pika.jpg" }));
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const body = await bodyFor(
+        "pika/pika-2.5-image-to-video",
+        { images: [JPG_URL], dynamicInputs: { negative_prompt: "blurry" }, parameters: { duration_s: 10 } },
+        ["duration_s"]
+      );
+      expect(body).toEqual({ prompt: "a photo of a cat", negative_prompt: "blurry", image: "https://cdn.comfy/pika.jpg", duration_s: 10 });
+    } finally {
+      global.fetch = original;
+    }
+  });
+
+  it("Seedance through Pika: a flat body, no watermark", async () => {
+    const body = await bodyFor("pika/pika-seedance-2.0", { parameters: { duration: 4, resolution: "480p" } }, ["duration", "resolution"]);
+    expect(body).toEqual({ prompt: "a photo of a cat", watermark: false, duration: 4, resolution: "480p" });
+  });
+
+  it("Genjutsu: the source video and every reference image by URL", async () => {
+    const original = global.fetch;
+    global.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith("/customers/storage")) {
+        const { content_type: type } = JSON.parse(String(init?.body)) as { content_type: string };
+        return new Response(JSON.stringify({ upload_url: "https://up/genjutsu", download_url: `https://cdn.comfy/${type.replace("/", ".")}` }));
+      }
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const body = await bodyFor("higgsfield/higgsfield-genjutsu-motion-transfer-v1.0", {
+        images: ["data:image/webp;base64,UklGRg==", "data:image/gif;base64,R0lGODlh"],
+        dynamicInputs: { video: "data:video/mp4;base64,AAAAIGZ0eXA=" },
+      });
+      expect(body).toEqual({
+        prompt: "a photo of a cat",
+        video_url: "https://cdn.comfy/video.mp4",
+        image_urls: ["https://cdn.comfy/image.webp", "https://cdn.comfy/image.gif"],
+      });
+    } finally {
+      global.fetch = original;
+    }
+  });
+
   it("downloads an http input for a partner that takes bytes", async () => {
     const original = global.fetch;
     global.fetch = vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/jpeg" } })) as unknown as typeof fetch;
@@ -211,6 +263,32 @@ describe("readRouterResult", () => {
     expect(
       readRouterResult(binding("veo/veo-3.1-generate-001"), { response: { videos: [{ bytesBase64Encoded: "AAAA", mimeType: "video/mp4" }] } }).source
     ).toBe("data:video/mp4;base64,AAAA");
+  });
+
+  it("Pika: the finished job's image, video or list of videos", () => {
+    expect(
+      readRouterResult(binding("pika/pika-gpt-image-2"), { id: "j", status: "completed", output: { media_type: "image", images: [{ url: "https://example.com/p.png" }] } })
+        .source
+    ).toBe("https://example.com/p.png");
+    expect(
+      readRouterResult(binding("pika/pika-2.5-text-to-video"), { id: "j", status: "completed", output: { media_type: "video", video: { url: "https://example.com/p.mp4" } } })
+        .source
+    ).toBe("https://example.com/p.mp4");
+    expect(
+      readRouterResult(binding("pika/pika-seedance-2.0"), { id: "j", status: "completed", output: { media_type: "videos", videos: [{ url: "https://example.com/s.mp4" }] } })
+        .source
+    ).toBe("https://example.com/s.mp4");
+    expect(() =>
+      readRouterResult(binding("pika/pika-2.5-text-to-video"), { id: "j", status: "failed", error: { code: "content_moderation", message: "prompt flagged" } })
+    ).toThrow("Pika: prompt flagged");
+  });
+
+  it("Genjutsu: video.url, or the terminal status Higgsfield ended on", () => {
+    const genjutsu = binding("higgsfield/higgsfield-genjutsu-motion-transfer-v1.0");
+    expect(readRouterResult(genjutsu, { status: "completed", request_id: "r", video: { url: "https://example.com/g.mp4" } }).source).toBe(
+      "https://example.com/g.mp4"
+    );
+    expect(() => readRouterResult(genjutsu, { status: "nsfw", request_id: "r" })).toThrow("Higgsfield: generation nsfw");
   });
 
   it("Wan: output.video_url, and the failure message", () => {
